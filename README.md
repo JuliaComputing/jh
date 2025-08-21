@@ -26,7 +26,7 @@ Available for:
 ### Build from Source
 
 ```bash
-git clone https://github.com/yourusername/jh
+git clone https://github.com/JuliaComputing/gojuliahub
 cd jh
 go build -o jh .
 ```
@@ -61,7 +61,7 @@ go build -o jh .
    ```bash
    jh git-credential setup
    # Now you can use standard Git commands with JuliaHub repositories
-   git clone https://juliahub.com/git/projects/username/project.git
+   git clone https://juliahub.com/git/projects/uuid.git
    ```
 
 ## Commands
@@ -116,6 +116,8 @@ Configuration is stored in `~/.juliahub` with 0600 permissions. The file contain
 - User information (name, email)
 
 Default server: `juliahub.com`
+
+Currently, you will only be logged in one server at a time.
 
 ## Examples
 
