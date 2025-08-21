@@ -1,0 +1,100 @@
+query Projects(
+  $limit: Int
+    $offset: Int
+      $orderBy: [projects_order_by!]
+        $ownerId: bigint
+          $filter: projects_bool_exp
+            ) {
+              aggregate: projects_aggregate(where: $filter) {
+                aggregate {
+                  count
+                }
+              }
+              projects(limit: $limit, offset: $offset, order_by: $orderBy, where: $filter) {
+                id: project_id
+                project_id
+                name
+                owner {
+                  username
+                  name
+                }
+                created_at
+                product_id
+                finished
+                is_archived
+                instance_default_role
+                deployable
+                project_deployments_aggregate {
+                  aggregate {
+                    count
+                  }
+                }
+                running_deployments: project_deployments_aggregate(
+                  where: {
+                    status: { _eq: "JobQueued" }
+                    job: { status: { _eq: "Running" } }
+                  }
+                ) {
+                  aggregate {
+                    count
+                  }
+                }
+                pending_deployments: project_deployments_aggregate(
+                  where: {
+                    status: { _eq: "JobQueued" }
+                    job: { status: { _in: ["SubmitInitialized", "Submitted", "Pending"] } }
+                  }
+                ) {
+                  aggregate {
+                    count
+                  }
+                }
+                resources(order_by: [{ sorting_order: asc_nulls_last }]) {
+                  sorting_order
+                  instance_default_role
+                  giturl
+                  name
+                  resource_id
+                  resource_type
+                }
+                product {
+                  id
+                  displayName: display_name
+                  name
+                }
+                visibility
+                description
+                users: groups(where: { group_id: { _is_null: true } }) {
+                  user {
+                    name
+                  }
+                  id
+                  assigned_role
+                }
+                groups(where: { group_id: { _is_null: false } }) {
+                  group {
+                    name
+                    group_id
+                  }
+                  id: group_id
+                  group_id
+                  project_id
+                  assigned_role
+                }
+                tags
+                userRole: access_control_users_aggregate(
+                  where: { user_id: { _eq: $ownerId } }
+                ) {
+                  aggregate {
+                    max {
+                      assigned_role
+                    }
+                  }
+                }
+                is_simple_mode
+                projects_current_editor_user_id {
+                  name
+                  id
+                }
+              }
+            }
