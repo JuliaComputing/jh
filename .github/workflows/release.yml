@@ -62,7 +62,7 @@ jobs:
         fi
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: jh-${{ matrix.os }}-${{ matrix.arch }}
         path: jh-*
@@ -74,7 +74,7 @@ jobs:
     
     steps:
     - name: Download all artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       
     - name: Create Release
       uses: softprops/action-gh-release@v1
