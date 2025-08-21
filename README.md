@@ -15,7 +15,7 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 
 ### Download Binary
 
-Download the latest release from the [GitHub releases page](https://github.com/yourusername/jh/releases).
+Download the latest release from the [GitHub releases page](https://github.com/JuliaComputing/gojuliahub/releases).
 
 Available for:
 
