@@ -204,3 +204,25 @@ go vet ./...
 3. Make changes with tests
 4. Run `go fmt ./...` and `go vet ./...`
 5. Submit a pull request
+
+### Releasing
+
+To create a new release:
+
+1. Create and push a version tag:
+
+   ```bash
+   git tag v1.0.0
+   git push origin v1.0.0
+   ```
+
+2. GitHub Actions will automatically:
+
+   - Build binaries for all platforms
+   - Create a GitHub release with the binaries
+   - Include version information in the binaries
+
+3. Version information is embedded in binaries:
+   ```bash
+   jh --version  # Shows version, commit, and build date
+   ```

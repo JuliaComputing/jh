@@ -10,6 +10,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Version information (set during build)
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
+)
+
 func getConfigFilePath() string {
 	homeDir, _ := os.UserHomeDir()
 	return filepath.Join(homeDir, ".juliahub")
@@ -143,8 +150,9 @@ func normalizeServer(server string) string {
 }
 
 var rootCmd = &cobra.Command{
-	Use:   "jh",
-	Short: "JuliaHub CLI",
+	Use:     "jh",
+	Short:   "JuliaHub CLI",
+	Version: version,
 	Long: `A command line interface for interacting with JuliaHub.
 
 JuliaHub is a platform for Julia computing that provides dataset management,

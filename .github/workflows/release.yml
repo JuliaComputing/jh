@@ -55,10 +55,18 @@ jobs:
         GOARCH: ${{ matrix.goarch }}
         CGO_ENABLED: 0
       run: |
+        # Extract version from tag (remove 'v' prefix)
+        VERSION=${GITHUB_REF#refs/tags/v}
+        if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF" ]; then
+          VERSION="dev-$(git rev-parse --short HEAD)"
+        fi
+        
+        LDFLAGS="-s -w -X main.version=$VERSION -X main.commit=$(git rev-parse HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        
         if [ "${{ matrix.goos }}" = "windows" ]; then
-          go build -ldflags="-s -w" -o jh-${{ matrix.os }}-${{ matrix.arch }}.exe .
+          go build -ldflags="$LDFLAGS" -o jh-${{ matrix.os }}-${{ matrix.arch }}.exe .
         else
-          go build -ldflags="-s -w" -o jh-${{ matrix.os }}-${{ matrix.arch }} .
+          go build -ldflags="$LDFLAGS" -o jh-${{ matrix.os }}-${{ matrix.arch }} .
         fi
 
     - name: Upload artifact
