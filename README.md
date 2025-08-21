@@ -13,12 +13,36 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 
 ## Installation
 
-### Download Binary
+### Quick Install (Recommended)
+
+Install the latest release automatically:
+
+```bash
+curl -sSfL https://raw.githubusercontent.com/JuliaComputing/gojuliahub/main/install.sh | sh
+```
+
+Or download and run the script manually:
+
+```bash
+wget https://raw.githubusercontent.com/JuliaComputing/gojuliahub/main/install.sh
+chmod +x install.sh
+./install.sh
+```
+
+**Options:**
+- `--install-dir DIR`: Custom installation directory (default: `$HOME/.local/bin`)
+- `--help`: Show help message
+
+**Custom installation directory example:**
+```bash
+curl -sSfL https://raw.githubusercontent.com/JuliaComputing/gojuliahub/main/install.sh | sh -s -- --install-dir /usr/local/bin
+```
+
+### Download Binary Manually
 
 Download the latest release from the [GitHub releases page](https://github.com/JuliaComputing/gojuliahub/releases).
 
 Available for:
-
 - Linux (amd64, arm64)
 - macOS (amd64, arm64)
 - Windows (amd64, arm64)
@@ -27,7 +51,7 @@ Available for:
 
 ```bash
 git clone https://github.com/JuliaComputing/gojuliahub
-cd jh
+cd gojuliahub
 go build -o jh .
 ```
 
