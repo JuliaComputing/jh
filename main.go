@@ -183,11 +183,7 @@ This command will:
 1. Request a device code from the authentication server
 2. Display a verification URL for you to visit
 3. Wait for you to authorize the device in your browser
-4. Store the authentication tokens locally
-
-Example:
-  jh auth login
-  jh auth login -s custom-server.com`,
+4. Store the authentication tokens locally`,
 	Example: "  jh auth login\n  jh auth login -s custom-server.com",
 	Run: func(cmd *cobra.Command, args []string) {
 		server, _ := cmd.Flags().GetString("server")
@@ -228,10 +224,7 @@ var authRefreshCmd = &cobra.Command{
 
 This command manually refreshes your authentication token. Tokens are
 automatically refreshed when needed, but you can use this command to
-refresh them proactively.
-
-Example:
-  jh auth refresh`,
+refresh them proactively.`,
 	Example: "  jh auth refresh",
 	Run: func(cmd *cobra.Command, args []string) {
 		// Read the current stored token
@@ -275,10 +268,7 @@ Shows details including:
 - Token validity status
 - User information
 - Token expiration times
-- Available refresh capabilities
-
-Example:
-  jh auth status`,
+- Available refresh capabilities`,
 	Example: "  jh auth status",
 	Run: func(cmd *cobra.Command, args []string) {
 		// Read the current stored token
@@ -300,11 +290,7 @@ var authEnvCmd = &cobra.Command{
 	Long: `Print environment variables for authentication in shell format.
 
 This command ensures you have a valid authentication token and outputs
-environment variables that can be used by other tools or scripts.
-
-Example:
-  jh auth env
-  eval $(jh auth env)`,
+environment variables that can be used by other tools or scripts.`,
 	Example: "  jh auth env\n  eval $(jh auth env)",
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := authEnvCommand(); err != nil {
@@ -333,10 +319,7 @@ var jobListCmd = &cobra.Command{
 Displays information about your submitted jobs including status,
 creation time, and resource usage.
 
-Note: This functionality is currently in development.
-
-Example:
-  jh job list`,
+Note: This functionality is currently in development.`,
 	Example: "  jh job list",
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
@@ -357,10 +340,7 @@ var jobStartCmd = &cobra.Command{
 Submit a computational job to run on JuliaHub's infrastructure.
 Jobs can include Julia scripts, notebooks, or other computational tasks.
 
-Note: This functionality is currently in development.
-
-Example:
-  jh job start`,
+Note: This functionality is currently in development.`,
 	Example: "  jh job start",
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
@@ -400,11 +380,7 @@ Displays information including:
 - Owner information
 - Size and version
 - Visibility and tags
-- Last modification date
-
-Example:
-  jh dataset list
-  jh dataset list -s custom-server.com`,
+- Last modification date`,
 	Example: "  jh dataset list\n  jh dataset list -s custom-server.com",
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
@@ -431,12 +407,7 @@ Dataset identifier can be:
 - User/dataset format (e.g., username/my-dataset)
 
 Version format: v1, v2, v3, etc. If not provided, downloads latest version.
-Local path is optional - if not provided, uses dataset name with .tar.gz extension.
-
-Examples:
-  jh dataset download my-dataset
-  jh dataset download username/my-dataset v2
-  jh dataset download 12345678-1234-5678-9abc-123456789abc v1 ./local-file.tar.gz`,
+Local path is optional - if not provided, uses dataset name with .tar.gz extension.`,
 	Example: "  jh dataset download my-dataset\n  jh dataset download username/my-dataset v2\n  jh dataset download 12345678-1234-5678-9abc-123456789abc v1 ./local-file.tar.gz",
 	Args:    cobra.RangeArgs(1, 3),
 	Run: func(cmd *cobra.Command, args []string) {
@@ -485,12 +456,7 @@ Dataset identifier can be:
 - Dataset name (e.g., my-dataset)
 - User/dataset format (e.g., username/my-dataset)
 
-The upload process uses a secure 3-step presigned URL workflow.
-
-Examples:
-  jh dataset upload --new ./my-data.tar.gz
-  jh dataset upload my-dataset ./new-version.tar.gz
-  jh dataset upload username/my-dataset ./update.tar.gz`,
+The upload process uses a secure 3-step presigned URL workflow.`,
 	Example: "  jh dataset upload --new ./my-data.tar.gz\n  jh dataset upload my-dataset ./new-version.tar.gz\n  jh dataset upload username/my-dataset ./update.tar.gz",
 	Args:    cobra.RangeArgs(1, 2),
 	Run: func(cmd *cobra.Command, args []string) {
@@ -543,12 +509,7 @@ Version format: v1, v2, v3, etc. If not provided, shows latest version.
 Displays:
 - Dataset name and version
 - Download URL (presigned)
-- Availability status
-
-Examples:
-  jh dataset status my-dataset
-  jh dataset status username/my-dataset v2
-  jh dataset status 12345678-1234-5678-9abc-123456789abc`,
+- Availability status`,
 	Example: "  jh dataset status my-dataset\n  jh dataset status username/my-dataset v2\n  jh dataset status 12345678-1234-5678-9abc-123456789abc",
 	Args:    cobra.RangeArgs(1, 2),
 	Run: func(cmd *cobra.Command, args []string) {
@@ -599,12 +560,7 @@ Displays comprehensive information about your projects including:
 - Tags and user roles
 - Archive and deployment status
 
-Uses GraphQL API to fetch detailed project information.
-
-Examples:
-  jh project list                    # List all accessible projects
-  jh project list --user            # List only your own projects
-  jh project list --user john       # List only john's projects`,
+Uses GraphQL API to fetch detailed project information.`,
 	Example: "  jh project list\n  jh project list --user\n  jh project list --user john",
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
@@ -643,10 +599,7 @@ Installation methods by platform:
 - Windows: Uses winget to install from Microsoft Store
 - macOS/Linux: Uses the official Julia installer script
 
-If Julia is already installed, this command will report the current version.
-
-Example:
-  jh julia install`,
+If Julia is already installed, this command will report the current version.`,
 	Example: "  jh julia install",
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := juliaInstallCommand(); err != nil {
@@ -682,10 +635,7 @@ Displays comprehensive information about the current user including:
 - Group memberships
 - Roles and permissions
 - Terms of service acceptance status
-- Survey submission status
-
-Example:
-  jh user info`,
+- Survey submission status`,
 	Example: "  jh user info",
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
@@ -714,11 +664,7 @@ This command:
 The project identifier must be in the format 'username/project'.
 The local path is optional - if not provided, clones to './project-name'.
 
-Requires Git to be installed and available in PATH.
-
-Examples:
-  jh clone john/my-project
-  jh clone jane/data-analysis ./my-local-folder`,
+Requires Git to be installed and available in PATH.`,
 	Example: "  jh clone john/my-project\n  jh clone jane/data-analysis ./my-local-folder",
 	Args:    cobra.RangeArgs(1, 2),
 	Run: func(cmd *cobra.Command, args []string) {
@@ -756,14 +702,7 @@ This command is a wrapper around 'git push' that automatically adds the
 required authentication headers for JuliaHub. All arguments are passed
 through to the underlying git push command.
 
-This command must be run from within a cloned JuliaHub project directory.
-
-Examples:
-  jh push                           # Push current branch to origin
-  jh push origin main               # Push main branch to origin
-  jh push --force                   # Force push with authentication
-  jh push origin feature-branch    # Push specific branch
-  jh push --set-upstream origin main # Push and set upstream`,
+This command must be run from within a cloned JuliaHub project directory.`,
 	Example: "  jh push\n  jh push origin main\n  jh push --force\n  jh push origin feature-branch\n  jh push --set-upstream origin main",
 	Run: func(cmd *cobra.Command, args []string) {
 		// Check if git is installed
@@ -794,14 +733,7 @@ This command is a wrapper around 'git fetch' that automatically adds the
 required authentication headers for JuliaHub. All arguments are passed
 through to the underlying git fetch command.
 
-This command must be run from within a cloned JuliaHub project directory.
-
-Examples:
-  jh fetch                          # Fetch from default remote
-  jh fetch origin                   # Fetch from origin remote
-  jh fetch --all                    # Fetch from all remotes
-  jh fetch origin main              # Fetch specific branch
-  jh fetch --prune                  # Fetch and prune deleted branches`,
+This command must be run from within a cloned JuliaHub project directory.`,
 	Example: "  jh fetch\n  jh fetch origin\n  jh fetch --all\n  jh fetch origin main\n  jh fetch --prune",
 	Run: func(cmd *cobra.Command, args []string) {
 		// Check if git is installed
@@ -832,14 +764,7 @@ This command is a wrapper around 'git pull' that automatically adds the
 required authentication headers for JuliaHub. All arguments are passed
 through to the underlying git pull command.
 
-This command must be run from within a cloned JuliaHub project directory.
-
-Examples:
-  jh pull                           # Pull from default remote/branch
-  jh pull origin main               # Pull from origin main branch
-  jh pull --rebase                  # Pull with rebase
-  jh pull --no-commit               # Pull without committing
-  jh pull origin feature-branch    # Pull specific branch`,
+This command must be run from within a cloned JuliaHub project directory.`,
 	Example: "  jh pull\n  jh pull origin main\n  jh pull --rebase\n  jh pull --no-commit\n  jh pull origin feature-branch",
 	Run: func(cmd *cobra.Command, args []string) {
 		// Check if git is installed
@@ -876,10 +801,7 @@ Environment variables set:
 - JULIA_PKG_SERVER: Points to your JuliaHub server
 - JULIA_PKG_USE_CLI_GIT: Enables CLI git usage
 
-Requires Julia to be installed (use 'jh julia install' if needed).
-
-Example:
-  jh run`,
+Requires Julia to be installed (use 'jh julia install' if needed).`,
 	Example: "  jh run",
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := runJulia(); err != nil {
@@ -972,11 +894,7 @@ for JuliaHub repositories on this machine.
 
 After running this command, you can use standard Git commands
 (git clone, git push, git pull, git fetch) with JuliaHub repositories
-without needing to use the 'jh' wrapper commands.
-
-Example:
-  jh git-credential setup
-  git clone https://juliahub.com/git/projects/username/project.git`,
+without needing to use the 'jh' wrapper commands.`,
 	Example: "  jh git-credential setup\n  git clone https://juliahub.com/git/projects/username/project.git",
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := gitCredentialSetup(); err != nil {
