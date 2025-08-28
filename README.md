@@ -69,6 +69,7 @@ go build -o jh .
 ### Authentication (`jh auth`)
 
 - `jh auth login` - Login to JuliaHub using OAuth2 device flow
+  - `jh auth login -s yourinstall` to login to yourinstall.juliahub.com
 - `jh auth refresh` - Refresh authentication token
 - `jh auth status` - Show authentication status
 - `jh auth env` - Print environment variables for authentication
