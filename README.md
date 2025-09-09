@@ -175,6 +175,11 @@ go build -o jh .
 
 - `jh user info` - Show detailed user information
 
+### Update (`jh update`)
+
+- `jh update` - Check for updates and automatically install the latest version
+- `jh update --force` - Force update even if current version is newer than latest release
+
 ## Configuration
 
 Configuration is stored in `~/.juliahub` with 0600 permissions. The file contains:

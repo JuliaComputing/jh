@@ -7,7 +7,7 @@ set -e
 
 # Configuration
 REPO_OWNER="JuliaComputing"
-REPO_NAME="gojuliahub"
+REPO_NAME="jh"
 BINARY_NAME="jh"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 
@@ -206,7 +206,7 @@ main() {
 }
 
 # Parse command line arguments
-while [[ $# -gt 0 ]]; do
+while [ $# -gt 0 ]; do
     case $1 in
         --install-dir)
             INSTALL_DIR="$2"
