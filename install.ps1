@@ -5,7 +5,8 @@
 
 param(
     [string]$InstallDir = "$env:USERPROFILE\.local\bin",
-    [switch]$Help
+    [switch]$Help,
+    [switch]$NoPrompt
 )
 
 # Configuration
@@ -51,6 +52,7 @@ if ($Help) {
     Write-Host ""
     Write-Host "Parameters:"
     Write-Host "  -InstallDir DIR     Install directory (default: `$env:USERPROFILE\.local\bin)"
+    Write-Host "  -NoPrompt           Don't prompt to add to PATH (for automated installs)"
     Write-Host "  -Help               Show this help message"
     Write-Host ""
     Write-Host "Environment variables:"
@@ -149,10 +151,42 @@ catch {
 $PathDirs = $env:PATH -split ";"
 if ($InstallDir -notin $PathDirs) {
     Write-Warning "$InstallDir is not in your PATH."
-    Write-Host "To add it permanently for current user, run:"
-    Write-Host "  `$env:PATH += ';$InstallDir'; [Environment]::SetEnvironmentVariable('PATH', `$env:PATH, 'User')" -ForegroundColor Yellow
-    Write-Host "Or add it to your current session:"
-    Write-Host "  `$env:PATH += ';$InstallDir'" -ForegroundColor Yellow
+    
+    # Ask user if they want to add it automatically (unless -NoPrompt is used)
+    $AddToPath = "n"
+    if (-not $NoPrompt) {
+        $AddToPath = Read-Host "Add $InstallDir to your PATH permanently? (y/N)"
+    }
+    
+    if ($AddToPath -match '^[Yy]') {
+        try {
+            # Add to current session
+            $env:PATH += ";$InstallDir"
+            
+            # Add permanently for current user
+            $UserPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
+            if ($UserPath -and (-not $UserPath.Contains($InstallDir))) {
+                $NewUserPath = "$UserPath;$InstallDir"
+                [Environment]::SetEnvironmentVariable('PATH', $NewUserPath, 'User')
+                Write-Success "Added $InstallDir to your PATH permanently"
+            } elseif (-not $UserPath) {
+                [Environment]::SetEnvironmentVariable('PATH', $InstallDir, 'User')
+                Write-Success "Added $InstallDir to your PATH permanently"
+            } else {
+                Write-Info "$InstallDir already in permanent PATH"
+            }
+        }
+        catch {
+            Write-Warning "Failed to update PATH automatically: $($_.Exception.Message)"
+            Write-Host "To add it manually:"
+            Write-Host "  For current session: `$env:PATH += ';$InstallDir'" -ForegroundColor Yellow
+            Write-Host "  Permanently: [Environment]::SetEnvironmentVariable('PATH', `$env:PATH + ';$InstallDir', 'User')" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "To add it manually:"
+        Write-Host "  For current session: `$env:PATH += ';$InstallDir'" -ForegroundColor Yellow
+        Write-Host "  Permanently: [Environment]::SetEnvironmentVariable('PATH', `$env:PATH + ';$InstallDir', 'User')" -ForegroundColor Yellow
+    }
     Write-Host ""
 }
 

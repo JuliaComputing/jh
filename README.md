@@ -20,13 +20,13 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 Install the latest release automatically:
 
 ```bash
-curl -sSfL https://raw.githubusercontent.com/JuliaComputing/gojuliahub/main/install.sh | sh
+curl -sSfL https://raw.githubusercontent.com/JuliaComputing/jh/main/install.sh | sh
 ```
 
 Or download and run the script manually:
 
 ```bash
-wget https://raw.githubusercontent.com/JuliaComputing/gojuliahub/main/install.sh
+wget https://raw.githubusercontent.com/JuliaComputing/jh/main/install.sh
 chmod +x install.sh
 ./install.sh
 ```
@@ -37,7 +37,7 @@ chmod +x install.sh
 
 **Custom installation directory example:**
 ```bash
-curl -sSfL https://raw.githubusercontent.com/JuliaComputing/gojuliahub/main/install.sh | sh -s -- --install-dir /usr/local/bin
+curl -sSfL https://raw.githubusercontent.com/JuliaComputing/jh/main/install.sh | sh -s -- --install-dir /usr/local/bin
 ```
 
 #### Windows
@@ -46,13 +46,13 @@ curl -sSfL https://raw.githubusercontent.com/JuliaComputing/gojuliahub/main/inst
 
 ```powershell
 # Download and run the PowerShell installer
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/JuliaComputing/gojuliahub/main/install.ps1" -OutFile "install.ps1"; .\install.ps1; Remove-Item install.ps1
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/JuliaComputing/jh/main/install.ps1" -OutFile "install.ps1"; .\install.ps1; Remove-Item install.ps1
 ```
 
 Or download and run manually:
 ```powershell
 # Download the installer
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/JuliaComputing/gojuliahub/main/install.ps1" -OutFile "install.ps1"
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/JuliaComputing/jh/main/install.ps1" -OutFile "install.ps1"
 
 # Run the installer
 .\install.ps1
@@ -64,24 +64,27 @@ Remove-Item install.ps1
 **Option 2: Command Prompt (CMD)**
 
 ```cmd
-curl -L "https://raw.githubusercontent.com/JuliaComputing/gojuliahub/main/install.bat" -o install.bat && install.bat && del install.bat
+curl -L "https://raw.githubusercontent.com/JuliaComputing/jh/main/install.bat" -o install.bat && install.bat && del install.bat
 ```
 
 Or download and run manually:
 ```cmd
-curl -L "https://raw.githubusercontent.com/JuliaComputing/gojuliahub/main/install.bat" -o install.bat
+curl -L "https://raw.githubusercontent.com/JuliaComputing/jh/main/install.bat" -o install.bat
 install.bat
 del install.bat
 ```
 
 **Windows Installation Notes:**
 - PowerShell script supports custom install directory: `.\install.ps1 -InstallDir "C:\tools\bin"`
+- PowerShell script can automatically add to PATH: will prompt unless you use `-NoPrompt`
+- For automated installs: `.\install.ps1 -NoPrompt` (won't add to PATH automatically)
 - Default install location: `%USERPROFILE%\.local\bin`
 - CMD script requires curl (available in Windows 10 1803+ and Windows 11)
+- After installation, restart your terminal or run `refreshenv` to use `jh` command
 
 ### Download Binary Manually
 
-Download the latest release from the [GitHub releases page](https://github.com/JuliaComputing/gojuliahub/releases).
+Download the latest release from the [GitHub releases page](https://github.com/JuliaComputing/jh/releases).
 
 Available for:
 - Linux (amd64, arm64)
@@ -91,8 +94,8 @@ Available for:
 ### Build from Source
 
 ```bash
-git clone https://github.com/JuliaComputing/gojuliahub
-cd gojuliahub
+git clone https://github.com/JuliaComputing/jh
+cd jh
 go build -o jh .
 ```
 
