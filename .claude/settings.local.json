@@ -4,7 +4,8 @@
       "Bash(go test:*)",
       "Bash(go fmt:*)",
       "Bash(go vet:*)",
-      "Bash(go build:*)"
+      "Bash(go build:*)",
+      "Bash(chmod:*)"
     ],
     "deny": [],
     "ask": []
