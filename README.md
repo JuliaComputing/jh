@@ -13,7 +13,9 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 
 ## Installation
 
-### Quick Install (Recommended)
+### Quick Install
+
+#### Linux and macOS
 
 Install the latest release automatically:
 
@@ -37,6 +39,45 @@ chmod +x install.sh
 ```bash
 curl -sSfL https://raw.githubusercontent.com/JuliaComputing/gojuliahub/main/install.sh | sh -s -- --install-dir /usr/local/bin
 ```
+
+#### Windows
+
+**Option 1: PowerShell (Recommended)**
+
+```powershell
+# Download and run the PowerShell installer
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/JuliaComputing/gojuliahub/main/install.ps1" -OutFile "install.ps1"; .\install.ps1; Remove-Item install.ps1
+```
+
+Or download and run manually:
+```powershell
+# Download the installer
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/JuliaComputing/gojuliahub/main/install.ps1" -OutFile "install.ps1"
+
+# Run the installer
+.\install.ps1
+
+# Clean up
+Remove-Item install.ps1
+```
+
+**Option 2: Command Prompt (CMD)**
+
+```cmd
+curl -L "https://raw.githubusercontent.com/JuliaComputing/gojuliahub/main/install.bat" -o install.bat && install.bat && del install.bat
+```
+
+Or download and run manually:
+```cmd
+curl -L "https://raw.githubusercontent.com/JuliaComputing/gojuliahub/main/install.bat" -o install.bat
+install.bat
+del install.bat
+```
+
+**Windows Installation Notes:**
+- PowerShell script supports custom install directory: `.\install.ps1 -InstallDir "C:\tools\bin"`
+- Default install location: `%USERPROFILE%\.local\bin`
+- CMD script requires curl (available in Windows 10 1803+ and Windows 11)
 
 ### Download Binary Manually
 
