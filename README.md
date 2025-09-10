@@ -18,13 +18,13 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 Install the latest release automatically:
 
 ```bash
-curl -sSfL https://raw.githubusercontent.com/JuliaComputing/gojuliahub/main/install.sh | sh
+curl -sSfL https://raw.githubusercontent.com/JuliaComputing/jh/main/install.sh | bash
 ```
 
 Or download and run the script manually:
 
 ```bash
-wget https://raw.githubusercontent.com/JuliaComputing/gojuliahub/main/install.sh
+wget https://raw.githubusercontent.com/JuliaComputing/jh/main/install.sh
 chmod +x install.sh
 ./install.sh
 ```
@@ -35,12 +35,12 @@ chmod +x install.sh
 
 **Custom installation directory example:**
 ```bash
-curl -sSfL https://raw.githubusercontent.com/JuliaComputing/gojuliahub/main/install.sh | sh -s -- --install-dir /usr/local/bin
+curl -sSfL https://raw.githubusercontent.com/JuliaComputing/jh/main/install.sh | bash -s -- --install-dir /usr/local/bin
 ```
 
 ### Download Binary Manually
 
-Download the latest release from the [GitHub releases page](https://github.com/JuliaComputing/gojuliahub/releases).
+Download the latest release from the [GitHub releases page](https://github.com/JuliaComputing/jh/releases).
 
 Available for:
 - Linux (amd64, arm64)
@@ -50,8 +50,8 @@ Available for:
 ### Build from Source
 
 ```bash
-git clone https://github.com/JuliaComputing/gojuliahub
-cd gojuliahub
+git clone https://github.com/JuliaComputing/jh
+cd jh
 go build -o jh .
 ```
 
