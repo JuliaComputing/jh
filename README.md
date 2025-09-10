@@ -20,7 +20,7 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 Install the latest release automatically:
 
 ```bash
-curl -sSfL https://raw.githubusercontent.com/JuliaComputing/jh/main/install.sh | sh
+ curl -sSfL https://raw.githubusercontent.com/JuliaComputing/jh/main/install.sh | sh
 ```
 
 Or download and run the script manually:
@@ -37,7 +37,8 @@ chmod +x install.sh
 
 **Custom installation directory example:**
 ```bash
-curl -sSfL https://raw.githubusercontent.com/JuliaComputing/jh/main/install.sh | sh -s -- --install-dir /usr/local/bin
+
+curl -sSfL https://raw.githubusercontent.com/JuliaComputing/jh/main/install.sh | bassh -s -- --install-dir /usr/local/bin
 ```
 
 #### Windows
@@ -59,7 +60,6 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/JuliaComputing/jh/main
 
 # Clean up
 Remove-Item install.ps1
-```
 
 **Option 2: Command Prompt (CMD)**
 
@@ -137,6 +137,7 @@ go build -o jh .
 ### Authentication (`jh auth`)
 
 - `jh auth login` - Login to JuliaHub using OAuth2 device flow
+  - `jh auth login -s yourinstall` to login to yourinstall.juliahub.com
 - `jh auth refresh` - Refresh authentication token
 - `jh auth status` - Show authentication status
 - `jh auth env` - Print environment variables for authentication
