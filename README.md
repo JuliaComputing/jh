@@ -20,7 +20,7 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 Install the latest release automatically:
 
 ```bash
- curl -sSfL https://raw.githubusercontent.com/JuliaComputing/jh/main/install.sh | sh
+curl -sSfL https://raw.githubusercontent.com/JuliaComputing/jh/main/install.sh | sh
 ```
 
 Or download and run the script manually:
@@ -37,8 +37,7 @@ chmod +x install.sh
 
 **Custom installation directory example:**
 ```bash
-
-curl -sSfL https://raw.githubusercontent.com/JuliaComputing/jh/main/install.sh | bassh -s -- --install-dir /usr/local/bin
+curl -sSfL https://raw.githubusercontent.com/JuliaComputing/jh/main/install.sh | sh -s -- --install-dir /usr/local/bin
 ```
 
 #### Windows
