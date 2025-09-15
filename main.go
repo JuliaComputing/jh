@@ -912,6 +912,26 @@ without needing to use the 'jh' wrapper commands.`,
 	},
 }
 
+var updateCmd = &cobra.Command{
+	Use:   "update",
+	Short: "Update jh to the latest version",
+	Long: `Check for updates and automatically download and install the latest version of jh.
+
+This command fetches the latest release information from GitHub and compares
+it with the current version. If an update is available, it downloads and runs
+the appropriate install script for your platform.
+
+The update process will replace the current installation with the latest version.`,
+	Example: "  jh update\n  jh update --force",
+	Run: func(cmd *cobra.Command, args []string) {
+		force, _ := cmd.Flags().GetBool("force")
+		if err := runUpdate(force); err != nil {
+			fmt.Printf("Update failed: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
 func init() {
 	authLoginCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	jobListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
@@ -928,6 +948,7 @@ func init() {
 	pushCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	fetchCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	pullCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	updateCmd.Flags().Bool("force", false, "Force update even if current version is newer than latest release")
 
 	authCmd.AddCommand(authLoginCmd, authRefreshCmd, authStatusCmd, authEnvCmd)
 	jobCmd.AddCommand(jobListCmd, jobStartCmd)
@@ -937,7 +958,7 @@ func init() {
 	juliaCmd.AddCommand(juliaInstallCmd)
 	gitCredentialCmd.AddCommand(gitCredentialHelperCmd, gitCredentialGetCmd, gitCredentialStoreCmd, gitCredentialEraseCmd, gitCredentialSetupCmd)
 
-	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, projectCmd, userCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd)
+	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, projectCmd, userCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd)
 }
 
 func main() {

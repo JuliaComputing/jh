@@ -13,12 +13,14 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 
 ## Installation
 
-### Quick Install (Recommended)
+### Quick Install
+
+#### Linux and macOS
 
 Install the latest release automatically:
 
 ```bash
-curl -sSfL https://raw.githubusercontent.com/JuliaComputing/jh/main/install.sh | bash
+curl -sSfL https://raw.githubusercontent.com/JuliaComputing/jh/main/install.sh | sh
 ```
 
 Or download and run the script manually:
@@ -35,8 +37,49 @@ chmod +x install.sh
 
 **Custom installation directory example:**
 ```bash
-curl -sSfL https://raw.githubusercontent.com/JuliaComputing/jh/main/install.sh | bash -s -- --install-dir /usr/local/bin
+curl -sSfL https://raw.githubusercontent.com/JuliaComputing/jh/main/install.sh | sh -s -- --install-dir /usr/local/bin
 ```
+
+#### Windows
+
+**Option 1: PowerShell (Recommended)**
+
+```powershell
+# Download and run the PowerShell installer
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/JuliaComputing/jh/main/install.ps1" -OutFile "install.ps1"; .\install.ps1; Remove-Item install.ps1
+```
+
+Or download and run manually:
+```powershell
+# Download the installer
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/JuliaComputing/jh/main/install.ps1" -OutFile "install.ps1"
+
+# Run the installer
+.\install.ps1
+
+# Clean up
+Remove-Item install.ps1
+
+**Option 2: Command Prompt (CMD)**
+
+```cmd
+curl -L "https://raw.githubusercontent.com/JuliaComputing/jh/main/install.bat" -o install.bat && install.bat && del install.bat
+```
+
+Or download and run manually:
+```cmd
+curl -L "https://raw.githubusercontent.com/JuliaComputing/jh/main/install.bat" -o install.bat
+install.bat
+del install.bat
+```
+
+**Windows Installation Notes:**
+- PowerShell script supports custom install directory: `.\install.ps1 -InstallDir "C:\tools\bin"`
+- PowerShell script can automatically add to PATH: will prompt unless you use `-NoPrompt`
+- For automated installs: `.\install.ps1 -NoPrompt` (won't add to PATH automatically)
+- Default install location: `%USERPROFILE%\.local\bin`
+- CMD script requires curl (available in Windows 10 1803+ and Windows 11)
+- After installation, restart your terminal or run `refreshenv` to use `jh` command
 
 ### Download Binary Manually
 
@@ -131,6 +174,11 @@ go build -o jh .
 ### User Information (`jh user`)
 
 - `jh user info` - Show detailed user information
+
+### Update (`jh update`)
+
+- `jh update` - Check for updates and automatically install the latest version
+- `jh update --force` - Force update even if current version is newer than latest release
 
 ## Configuration
 
