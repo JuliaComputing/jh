@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -328,7 +329,30 @@ func ensureValidToken() (*StoredToken, error) {
 		}
 	}
 
+	// Update Julia credentials after token refresh
+	// We ignore errors here to avoid breaking token operations if Julia setup fails
+	_ = updateJuliaCredentialsIfNeeded(storedToken.Server, updatedToken)
+
 	return updatedToken, nil
+}
+
+// updateJuliaCredentialsIfNeeded updates Julia credentials if the auth file exists
+// This is called after token refresh to keep credentials in sync
+func updateJuliaCredentialsIfNeeded(server string, token *StoredToken) error {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	// Check if the auth.toml file exists
+	authFilePath := filepath.Join(homeDir, ".julia", "servers", server, "auth.toml")
+	if _, err := os.Stat(authFilePath); os.IsNotExist(err) {
+		// File doesn't exist, so user hasn't used Julia integration yet
+		return nil
+	}
+
+	// File exists, update it
+	return createJuliaAuthFile(server, token)
 }
 
 func formatTokenInfo(token *StoredToken) string {

@@ -26,14 +26,6 @@ func createJuliaAuthFile(server string, token *StoredToken) error {
 		return fmt.Errorf("failed to decode JWT token: %w", err)
 	}
 
-	// Create auth.toml file
-	authFilePath := filepath.Join(serverDir, "auth.toml")
-	file, err := os.Create(authFilePath)
-	if err != nil {
-		return fmt.Errorf("failed to create auth.toml file: %w", err)
-	}
-	defer file.Close()
-
 	// Calculate refresh URL
 	var authServer string
 	if server == "juliahub.com" {
@@ -67,15 +59,49 @@ name = "%s"
 		token.Name,
 	)
 
-	_, err = file.WriteString(content)
+	// Use atomic write: write to temp file, then rename
+	authFilePath := filepath.Join(serverDir, "auth.toml")
+	tempFile, err := os.CreateTemp(serverDir, ".auth.toml.tmp.*")
 	if err != nil {
+		return fmt.Errorf("failed to create temporary auth file: %w", err)
+	}
+	tempPath := tempFile.Name()
+
+	// Clean up temp file on error
+	defer func() {
+		if tempFile != nil {
+			tempFile.Close()
+			os.Remove(tempPath)
+		}
+	}()
+
+	// Write content to temp file
+	if _, err := tempFile.WriteString(content); err != nil {
 		return fmt.Errorf("failed to write auth.toml content: %w", err)
+	}
+
+	// Sync to ensure data is written to disk
+	if err := tempFile.Sync(); err != nil {
+		return fmt.Errorf("failed to sync auth.toml file: %w", err)
+	}
+
+	// Close temp file before rename
+	if err := tempFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temporary auth file: %w", err)
+	}
+	tempFile = nil // Prevent defer cleanup
+
+	// Atomically rename temp file to final location
+	if err := os.Rename(tempPath, authFilePath); err != nil {
+		return fmt.Errorf("failed to rename auth.toml file: %w", err)
 	}
 
 	return nil
 }
 
-func runJulia() error {
+// setupJuliaCredentials ensures Julia authentication files are created
+// This should be called after successful authentication or token refresh
+func setupJuliaCredentials() error {
 	// Read server configuration
 	server, err := readConfigFile()
 	if err != nil {
@@ -93,6 +119,21 @@ func runJulia() error {
 		return fmt.Errorf("failed to create Julia auth file: %w", err)
 	}
 
+	return nil
+}
+
+func runJulia(args []string) error {
+	// Setup Julia credentials
+	if err := setupJuliaCredentials(); err != nil {
+		return err
+	}
+
+	// Read server for environment setup
+	server, err := readConfigFile()
+	if err != nil {
+		return fmt.Errorf("failed to read configuration: %w", err)
+	}
+
 	// Check if Julia is available
 	if _, err := exec.LookPath("julia"); err != nil {
 		return fmt.Errorf("Julia not found in PATH. Please install Julia first using 'jh julia install'")
@@ -103,13 +144,14 @@ func runJulia() error {
 	env = append(env, fmt.Sprintf("JULIA_PKG_SERVER=https://%s", server))
 	env = append(env, "JULIA_PKG_USE_CLI_GIT=true")
 
-	// Prepare Julia command with --project flag
-	cmd := exec.Command("julia", "--project=.")
+	// Prepare Julia command with user-provided arguments
+	// Do not automatically add --project=. - let user control this
+	cmd := exec.Command("julia", args...)
 	cmd.Env = env
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	// Execute Julia and replace current process
+	// Execute Julia
 	return cmd.Run()
 }
