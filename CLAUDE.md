@@ -44,6 +44,7 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh git-credential`: Git credential helper for seamless authentication
    - `jh julia`: Julia installation management
    - `jh run`: Julia execution with JuliaHub configuration
+   - `jh run setup`: Setup Julia credentials without starting Julia
 
 4. **Data Models**:
    - UUID strings for most entity IDs (projects, datasets, resources)
@@ -109,6 +110,27 @@ echo -e "protocol=https\nhost=juliahub.com\npath=git/projects/test/test\n" | go 
 
 # After setup, standard Git commands work seamlessly
 git clone https://juliahub.com/git/projects/username/project.git
+```
+
+### Test Julia integration
+```bash
+# Install Julia (if not already installed)
+go run . julia install
+
+# Setup Julia credentials only
+go run . run setup
+
+# Run Julia REPL with credentials setup
+go run . run
+
+# Run Julia with credentials setup
+go run . run -- -e "println(\"Hello from JuliaHub!\")"
+
+# Run Julia script with project
+go run . run -- --project=. script.jl
+
+# Run Julia with multiple flags
+go run . run -- --project=. --threads=4 -e "println(Threads.nthreads())"
 ```
 
 ## Dependencies
@@ -196,10 +218,43 @@ git clone https://github.com/user/repo.git                          # Ignored by
 ## Julia Integration
 
 The CLI provides Julia installation and execution with JuliaHub configuration:
+
+### Julia Installation (`jh julia install`)
 - Cross-platform installation (Windows via winget, Unix via official installer)
-- Authentication file creation (`~/.julia/servers/<server>/auth.toml`)
-- Package server configuration (`JULIA_PKG_SERVER`)
-- Project activation (`--project=.`)
+- Installs latest stable Julia version
+
+### Julia Credentials
+- **Authentication file**: Automatically creates `~/.julia/servers/<server>/auth.toml`
+- **Atomic writes**: Uses temporary file + rename for safe credential updates
+- **Automatic updates**: Credentials are automatically refreshed when:
+  - User runs `jh auth login`
+  - User runs `jh auth refresh`
+  - Token is refreshed via `ensureValidToken()`
+  - User runs `jh run` or `jh run setup`
+
+### Julia Commands
+
+#### `jh run [-- julia-args...]` - Run Julia with JuliaHub configuration
+```bash
+jh run                                    # Start Julia REPL
+jh run -- script.jl                       # Run a script
+jh run -- -e "println(\"Hello\")"         # Execute code
+jh run -- --project=. --threads=4 script.jl # Run with flags
+```
+- Sets up credentials, then starts Julia
+- Arguments after `--` are passed directly to Julia without modification
+- User controls all Julia flags (including `--project`, `--threads`, etc.)
+- Environment variables set:
+  - `JULIA_PKG_SERVER`: Points to your JuliaHub server
+  - `JULIA_PKG_USE_CLI_GIT`: Set to `true` for Git integration
+
+#### `jh run setup` - Setup credentials only (no Julia execution)
+```bash
+jh run setup
+```
+- Creates/updates `~/.julia/servers/<server>/auth.toml` with current credentials
+- Does not start Julia
+- Useful for explicitly updating credentials
 
 ## Development Notes
 
@@ -209,6 +264,8 @@ The CLI provides Julia installation and execution with JuliaHub configuration:
 - Token refresh is automatic via `ensureValidToken()`
 - File uploads use multipart form data with proper content types
 - Julia auth files use TOML format with `preferred_username` from JWT claims
+- Julia auth files use atomic writes (temp file + rename) to prevent corruption
+- Julia credentials are automatically updated after login and token refresh
 - Git commands use `http.extraHeader` for authentication and pass through all arguments
 - Git credential helper provides seamless authentication for standard Git commands
 - Multi-server authentication handled automatically via credential helper
@@ -216,3 +273,49 @@ The CLI provides Julia installation and execution with JuliaHub configuration:
 - Clone command automatically resolves `username/project` format to project UUIDs
 - Folder naming conflicts are resolved with automatic numbering (project-1, project-2, etc.)
 - Credential helper follows Git protocol: responds only to JuliaHub URLs, ignores others
+
+## Implementation Details
+
+### Julia Credentials Management (`run.go`)
+
+The Julia credentials system consists of three main functions:
+
+1. **`createJuliaAuthFile(server, token)`**:
+   - Creates `~/.julia/servers/<server>/auth.toml` with TOML-formatted credentials
+   - Uses atomic writes: writes to temporary file, syncs, then renames
+   - Includes all necessary fields: tokens, expiration, refresh URL, user info
+   - Called by `setupJuliaCredentials()` and `updateJuliaCredentialsIfNeeded()`
+
+2. **`setupJuliaCredentials()`**:
+   - Public function called by:
+     - `jh run` command (before starting Julia)
+     - `jh run setup` command
+     - `jh auth login` command (after successful login)
+     - `jh auth refresh` command (after successful refresh)
+   - Ensures valid token via `ensureValidToken()`
+   - Creates/updates Julia auth file
+   - Returns error if authentication fails
+
+3. **`runJulia(args)`**:
+   - Sets up credentials via `setupJuliaCredentials()`
+   - Configures environment variables (`JULIA_PKG_SERVER`, `JULIA_PKG_USE_CLI_GIT`)
+   - Executes Julia with user-provided arguments (no automatic flags)
+   - Streams stdin/stdout/stderr to maintain interactive experience
+
+### Automatic Credential Updates (`auth.go`)
+
+The `updateJuliaCredentialsIfNeeded(server, token)` function:
+- Called automatically by `ensureValidToken()` after token refresh
+- Checks if `~/.julia/servers/<server>/auth.toml` exists
+- If exists, updates it with refreshed token
+- If not exists, does nothing (user hasn't used Julia integration yet)
+- Errors are silently ignored to avoid breaking token operations
+
+This ensures Julia credentials stay in sync with the main auth tokens without requiring manual intervention.
+
+### Command Structure
+
+- **`jh run`**: Primary command - always starts Julia after setting up credentials
+- **`jh run setup`**: Subcommand - only sets up credentials without starting Julia
+- **`jh auth login`**: Automatically sets up Julia credentials after successful login
+- **`jh auth refresh`**: Automatically sets up Julia credentials after successful refresh

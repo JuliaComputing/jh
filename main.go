@@ -222,6 +222,11 @@ This command will:
 		}
 
 		fmt.Println("Successfully authenticated!")
+
+		// Setup Julia credentials after successful authentication
+		if err := setupJuliaCredentials(); err != nil {
+			fmt.Printf("Warning: Failed to setup Julia credentials: %v\n", err)
+		}
 	},
 }
 
@@ -263,6 +268,11 @@ refresh them proactively.`,
 		}
 
 		fmt.Println("Token refreshed successfully!")
+
+		// Setup Julia credentials after successful refresh
+		if err := setupJuliaCredentials(); err != nil {
+			fmt.Printf("Warning: Failed to setup Julia credentials: %v\n", err)
+		}
 	},
 }
 
@@ -795,27 +805,58 @@ This command must be run from within a cloned JuliaHub project directory.`,
 }
 
 var runCmd = &cobra.Command{
-	Use:   "run",
+	Use:   "run [-- julia-args...]",
 	Short: "Run Julia with JuliaHub configuration",
-	Long: `Start Julia with JuliaHub package server configuration.
+	Long: `Run Julia with JuliaHub configuration and credentials.
 
 This command:
-1. Ensures you have valid JuliaHub authentication
-2. Creates Julia authentication files (~/.julia/servers/<server>/auth.toml)
-3. Configures Julia to use JuliaHub as the package server
-4. Starts Julia with --project=. flag for local project activation
+1. Sets up JuliaHub credentials (~/.julia/servers/<server>/auth.toml)
+2. Starts Julia with the specified arguments
 
-Environment variables set:
+Arguments after -- are passed directly to Julia without modification.
+Use 'jh run setup' to only setup credentials without starting Julia.
+
+Environment variables set when running Julia:
 - JULIA_PKG_SERVER: Points to your JuliaHub server
 - JULIA_PKG_USE_CLI_GIT: Enables CLI git usage
 
 Requires Julia to be installed (use 'jh julia install' if needed).`,
-	Example: "  jh run",
+	Example: `  jh run                                      # Start Julia REPL
+  jh run -- script.jl                         # Run a script
+  jh run -- -e "println(\"Hi\")"               # Execute code
+  jh run -- --project=. --threads=4 script.jl # Run with options`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := runJulia(); err != nil {
+		// Setup credentials and run Julia
+		if err := runJulia(args); err != nil {
 			fmt.Printf("Failed to run Julia: %v\n", err)
 			os.Exit(1)
 		}
+	},
+}
+
+var runSetupCmd = &cobra.Command{
+	Use:   "setup",
+	Short: "Setup JuliaHub credentials for Julia",
+	Long: `Setup JuliaHub credentials in ~/.julia/servers/<server>/auth.toml without starting Julia.
+
+This command:
+1. Ensures you have valid JuliaHub authentication
+2. Creates/updates Julia authentication files (~/.julia/servers/<server>/auth.toml)
+
+Credentials are automatically setup when:
+- Running 'jh auth login'
+- Running 'jh auth refresh'
+- Running 'jh run' (before starting Julia)
+
+This command is useful for explicitly updating credentials without starting Julia.`,
+	Example: `  jh run setup  # Setup credentials only`,
+	Run: func(cmd *cobra.Command, args []string) {
+		// Only setup Julia credentials
+		if err := setupJuliaCredentials(); err != nil {
+			fmt.Printf("Failed to setup Julia credentials: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("Julia credentials setup complete")
 	},
 }
 
@@ -956,6 +997,7 @@ func init() {
 	projectCmd.AddCommand(projectListCmd)
 	userCmd.AddCommand(userInfoCmd)
 	juliaCmd.AddCommand(juliaInstallCmd)
+	runCmd.AddCommand(runSetupCmd)
 	gitCredentialCmd.AddCommand(gitCredentialHelperCmd, gitCredentialGetCmd, gitCredentialStoreCmd, gitCredentialEraseCmd, gitCredentialSetupCmd)
 
 	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, projectCmd, userCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd)

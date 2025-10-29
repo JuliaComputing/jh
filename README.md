@@ -169,7 +169,8 @@ go build -o jh .
 ### Julia Integration
 
 - `jh julia install` - Install Julia programming language
-- `jh run` - Start Julia with JuliaHub configuration
+- `jh run [-- julia-args...]` - Run Julia with JuliaHub configuration
+- `jh run setup` - Setup JuliaHub credentials for Julia without starting Julia
 
 ### User Information (`jh user`)
 
@@ -245,6 +246,33 @@ git push
 
 Note: It's recommended to use the git-credential helper, but you can still
 clone using `jh clone username/project-name`; otherwise you need the project's uuid
+
+### Julia Workflow
+
+```bash
+# Install Julia (if not already installed)
+jh julia install
+
+# Setup JuliaHub credentials only
+jh run setup
+
+# Start Julia REPL with JuliaHub configuration
+jh run
+
+# Run a Julia script
+jh run -- script.jl
+
+# Execute Julia code directly
+jh run -- -e "println(\"Hello from JuliaHub!\")"
+
+# Run Julia with project and multiple threads
+jh run -- --project=. --threads=4 script.jl
+```
+
+Note: Arguments after `--` are passed directly to Julia. The `jh run` command:
+1. Sets up JuliaHub credentials in `~/.julia/servers/<server>/auth.toml`
+2. Configures `JULIA_PKG_SERVER` environment variable
+3. Starts Julia with your specified arguments
 
 ## Architecture
 
