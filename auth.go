@@ -421,3 +421,58 @@ func authEnvCommand() error {
 
 	return nil
 }
+
+func authBase64Command() error {
+	// Ensure we have a valid token (login if needed, refresh if possible)
+	token, err := ensureValidToken()
+	if err != nil {
+		return fmt.Errorf("failed to ensure valid token: %w", err)
+	}
+
+	// Parse the ID token to get expiration time and claims
+	claims, err := decodeJWT(token.IDToken)
+	if err != nil {
+		return fmt.Errorf("failed to decode ID token: %w", err)
+	}
+
+	// Calculate refresh URL
+	var authServer string
+	if token.Server == "juliahub.com" {
+		authServer = "auth.juliahub.com"
+	} else {
+		authServer = token.Server
+	}
+	refreshURL := fmt.Sprintf("https://%s/dex/token", authServer)
+
+	// Create auth.toml content
+	content := fmt.Sprintf(`expires_at = %d
+id_token = "%s"
+access_token = "%s"
+refresh_token = "%s"
+refresh_url = "%s"
+expires_in = %d
+user_email = "%s"
+expires = %d
+user_name = "%s"
+name = "%s"
+`,
+		claims.ExpiresAt,
+		token.IDToken,
+		token.AccessToken,
+		token.RefreshToken,
+		refreshURL,
+		token.ExpiresIn,
+		token.Email,
+		claims.ExpiresAt,
+		claims.PreferredUsername,
+		token.Name,
+	)
+
+	// Encode to base64
+	encoded := base64.StdEncoding.EncodeToString([]byte(content))
+
+	// Print to stdout
+	fmt.Println(encoded)
+
+	return nil
+}
