@@ -153,7 +153,7 @@ func readStoredToken() (*StoredToken, error) {
 
 func deviceFlow(server string) (*TokenResponse, error) {
 	var authServer string
-	if server == "juliahub.com" {
+	if server == "juliahub.com" || server == "juliahub" {
 		authServer = "auth.juliahub.com"
 	} else {
 		authServer = server
@@ -233,7 +233,7 @@ func deviceFlow(server string) (*TokenResponse, error) {
 
 func refreshToken(server string, refreshToken string) (*TokenResponse, error) {
 	var authServer string
-	if server == "juliahub.com" {
+	if server == "juliahub.com" || server == "juliahub" {
 		authServer = "auth.juliahub.com"
 	} else {
 		authServer = server
