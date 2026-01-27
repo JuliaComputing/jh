@@ -339,13 +339,27 @@ func ensureValidToken() (*StoredToken, error) {
 // updateJuliaCredentialsIfNeeded updates Julia credentials if the auth file exists
 // This is called after token refresh to keep credentials in sync
 func updateJuliaCredentialsIfNeeded(server string, token *StoredToken) error {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return err
+	// Determine Julia depot path
+	var depotPath string
+	if juliaDepot := os.Getenv("JULIA_DEPOT_PATH"); juliaDepot != "" {
+		// Use first path from JULIA_DEPOT_PATH
+		depotPaths := filepath.SplitList(juliaDepot)
+		if len(depotPaths) > 0 {
+			depotPath = depotPaths[0]
+		}
+	}
+
+	// Fall back to ~/.julia if JULIA_DEPOT_PATH is not set
+	if depotPath == "" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		depotPath = filepath.Join(homeDir, ".julia")
 	}
 
 	// Check if the auth.toml file exists
-	authFilePath := filepath.Join(homeDir, ".julia", "servers", server, "auth.toml")
+	authFilePath := filepath.Join(depotPath, "servers", server, "auth.toml")
 	if _, err := os.Stat(authFilePath); os.IsNotExist(err) {
 		// File doesn't exist, so user hasn't used Julia integration yet
 		return nil

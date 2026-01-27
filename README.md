@@ -270,7 +270,7 @@ jh run -- --project=. --threads=4 script.jl
 ```
 
 Note: Arguments after `--` are passed directly to Julia. The `jh run` command:
-1. Sets up JuliaHub credentials in `~/.julia/servers/<server>/auth.toml`
+1. Sets up JuliaHub credentials in `$JULIA_DEPOT_PATH/servers/<server>/auth.toml` (or `~/.julia/servers/<server>/auth.toml` if `JULIA_DEPOT_PATH` is not set)
 2. Configures `JULIA_PKG_SERVER` environment variable
 3. Starts Julia with your specified arguments
 

@@ -224,7 +224,8 @@ The CLI provides Julia installation and execution with JuliaHub configuration:
 - Installs latest stable Julia version
 
 ### Julia Credentials
-- **Authentication file**: Automatically creates `~/.julia/servers/<server>/auth.toml`
+- **Authentication file**: Automatically creates `$JULIA_DEPOT_PATH/servers/<server>/auth.toml` (or `~/.julia/servers/<server>/auth.toml` if `JULIA_DEPOT_PATH` is not set)
+- **Depot path detection**: Respects `JULIA_DEPOT_PATH` environment variable, uses first path if multiple are specified
 - **Atomic writes**: Uses temporary file + rename for safe credential updates
 - **Automatic updates**: Credentials are automatically refreshed when:
   - User runs `jh auth login`
@@ -252,7 +253,7 @@ jh run -- --project=. --threads=4 script.jl # Run with flags
 ```bash
 jh run setup
 ```
-- Creates/updates `~/.julia/servers/<server>/auth.toml` with current credentials
+- Creates/updates `$JULIA_DEPOT_PATH/servers/<server>/auth.toml` with current credentials (or `~/.julia/servers/<server>/auth.toml` if not set)
 - Does not start Julia
 - Useful for explicitly updating credentials
 
@@ -265,6 +266,7 @@ jh run setup
 - File uploads use multipart form data with proper content types
 - Julia auth files use TOML format with `preferred_username` from JWT claims
 - Julia auth files use atomic writes (temp file + rename) to prevent corruption
+- Julia credentials respect `JULIA_DEPOT_PATH` environment variable (uses first path if multiple are specified)
 - Julia credentials are automatically updated after login and token refresh
 - Git commands use `http.extraHeader` for authentication and pass through all arguments
 - Git credential helper provides seamless authentication for standard Git commands
@@ -281,7 +283,9 @@ jh run setup
 The Julia credentials system consists of three main functions:
 
 1. **`createJuliaAuthFile(server, token)`**:
-   - Creates `~/.julia/servers/<server>/auth.toml` with TOML-formatted credentials
+   - Determines depot path from `JULIA_DEPOT_PATH` environment variable (uses first path if multiple)
+   - Falls back to `~/.julia` if `JULIA_DEPOT_PATH` is not set
+   - Creates `{depot}/servers/<server>/auth.toml` with TOML-formatted credentials
    - Uses atomic writes: writes to temporary file, syncs, then renames
    - Includes all necessary fields: tokens, expiration, refresh URL, user info
    - Called by `setupJuliaCredentials()` and `updateJuliaCredentialsIfNeeded()`
@@ -306,7 +310,8 @@ The Julia credentials system consists of three main functions:
 
 The `updateJuliaCredentialsIfNeeded(server, token)` function:
 - Called automatically by `ensureValidToken()` after token refresh
-- Checks if `~/.julia/servers/<server>/auth.toml` exists
+- Determines depot path from `JULIA_DEPOT_PATH` (same logic as `createJuliaAuthFile`)
+- Checks if `{depot}/servers/<server>/auth.toml` exists
 - If exists, updates it with refreshed token
 - If not exists, does nothing (user hasn't used Julia integration yet)
 - Errors are silently ignored to avoid breaking token operations
