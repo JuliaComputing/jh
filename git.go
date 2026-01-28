@@ -222,7 +222,14 @@ func cloneProject(server, projectIdentifier, localPath string) error {
 		username = parts[0]
 		projectName = parts[1]
 	} else {
-		return fmt.Errorf("project identifier must be in format 'username/project'")
+		// No username provided, use the logged-in user's username
+		userInfo, err := getUserInfo(server)
+		if err != nil {
+			return fmt.Errorf("failed to get user info for default username: %w", err)
+		}
+		username = userInfo.Username
+		projectName = projectIdentifier
+		fmt.Printf("Using logged-in user '%s' as project owner\n", username)
 	}
 
 	// Find the project by username and project name
