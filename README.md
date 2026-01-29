@@ -140,6 +140,7 @@ go build -o jh .
 - `jh auth refresh` - Refresh authentication token
 - `jh auth status` - Show authentication status
 - `jh auth env` - Print environment variables for authentication
+- `jh auth list` - Print the current auth token information
 
 ### Dataset Management (`jh dataset`)
 
