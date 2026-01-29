@@ -161,11 +161,12 @@ job execution, project management, Git integration, and package hosting capabili
 Available command categories:
   auth      - Authentication and token management
   dataset   - Dataset operations (list, download, upload, status)
+  registry  - Registry management (list registries)
   project   - Project management (list, filter by user)
   user      - User information and profile
   clone     - Clone projects with automatic authentication
   push      - Push changes with authentication
-  fetch     - Fetch updates with authentication  
+  fetch     - Fetch updates with authentication
   pull      - Pull changes with authentication
   julia     - Julia installation and management
   run       - Run Julia with JuliaHub configuration
@@ -545,6 +546,44 @@ Displays:
 
 		if err := statusDataset(server, datasetIdentifier, version); err != nil {
 			fmt.Printf("Failed to get dataset status: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var registryCmd = &cobra.Command{
+	Use:   "registry",
+	Short: "Registry management commands",
+	Long: `Manage Julia package registries on JuliaHub.
+
+Registries are collections of Julia packages that can be registered and
+installed. JuliaHub supports multiple registries including the General
+registry, custom organizational registries, and test registries.`,
+}
+
+var registryListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List registries",
+	Long: `List all package registries on JuliaHub.
+
+Displays information including:
+- Registry UUID
+- Registry name and ID
+- Owner information
+- Creation date
+- Package count
+- Description
+- Registration status`,
+	Example: "  jh registry list\n  jh registry list -s custom-server.com",
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		if err := listRegistries(server); err != nil {
+			fmt.Printf("Failed to list registries: %v\n", err)
 			os.Exit(1)
 		}
 	},
@@ -982,6 +1021,7 @@ func init() {
 	datasetUploadCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	datasetUploadCmd.Flags().Bool("new", false, "Create a new dataset")
 	datasetStatusCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	registryListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	projectListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	projectListCmd.Flags().String("user", "", "Filter projects by user (leave empty to show only your own projects)")
 	userInfoCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
@@ -994,13 +1034,14 @@ func init() {
 	authCmd.AddCommand(authLoginCmd, authRefreshCmd, authStatusCmd, authEnvCmd)
 	jobCmd.AddCommand(jobListCmd, jobStartCmd)
 	datasetCmd.AddCommand(datasetListCmd, datasetDownloadCmd, datasetUploadCmd, datasetStatusCmd)
+	registryCmd.AddCommand(registryListCmd)
 	projectCmd.AddCommand(projectListCmd)
 	userCmd.AddCommand(userInfoCmd)
 	juliaCmd.AddCommand(juliaInstallCmd)
 	runCmd.AddCommand(runSetupCmd)
 	gitCredentialCmd.AddCommand(gitCredentialHelperCmd, gitCredentialGetCmd, gitCredentialStoreCmd, gitCredentialEraseCmd, gitCredentialSetupCmd)
 
-	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, projectCmd, userCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd)
+	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, registryCmd, projectCmd, userCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd)
 }
 
 func main() {
