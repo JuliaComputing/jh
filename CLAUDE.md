@@ -94,8 +94,7 @@ go run . user info
 
 ### Test Git operations
 ```bash
-go run . clone john/my-project  # Clone from another user
-go run . clone my-project       # Clone from logged-in user
+go run . clone john/my-project
 go run . push
 go run . fetch
 go run . pull
@@ -178,8 +177,7 @@ The application uses OAuth2 device flow:
 The CLI provides seamless Git integration with JuliaHub authentication through two approaches:
 
 ### Method 1: JuliaHub CLI Wrapper Commands
-- **Clone**: `jh clone [username/]project` - resolves project names to UUIDs and clones with authentication
-  - Format: `jh clone username/project` or `jh clone project` (defaults to logged-in user)
+- **Clone**: `jh clone username/project` - resolves project names to UUIDs and clones with authentication
 - **Push/Fetch/Pull**: `jh push/fetch/pull [args...]` - wraps Git commands with authentication headers
 - **Authentication**: Uses `http.extraHeader="Authorization: Bearer <id_token>"` for Git operations
 - **Argument passthrough**: All Git arguments are passed through to underlying commands
@@ -273,7 +271,6 @@ jh run setup
 - Multi-server authentication handled automatically via credential helper
 - Project filtering supports `--user` parameter for showing specific user's projects or own projects
 - Clone command automatically resolves `username/project` format to project UUIDs
-- Clone command supports `project` (without username) and defaults to the logged-in user's username
 - Folder naming conflicts are resolved with automatic numbering (project-1, project-2, etc.)
 - Credential helper follows Git protocol: responds only to JuliaHub URLs, ignores others
 

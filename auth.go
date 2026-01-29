@@ -421,3 +421,44 @@ func authEnvCommand() error {
 
 	return nil
 }
+
+// authListCommand lists the current stored authentication token
+func authListCommand() error {
+	token, err := readStoredToken()
+	if err != nil {
+		fmt.Println("No authentication token found.")
+		fmt.Println("Run 'jh auth login' to authenticate with JuliaHub.")
+		return nil
+	}
+
+	expired, _ := isTokenExpired(token.AccessToken, token.ExpiresIn)
+	status := "Valid"
+	if expired {
+		status = "Expired"
+	}
+
+	fmt.Println("Authentication Token:")
+	fmt.Printf("  Server: %s\n", token.Server)
+	fmt.Printf("  Status: %s\n", status)
+
+	if token.Name != "" {
+		fmt.Printf("  Name: %s\n", token.Name)
+	}
+	if token.Email != "" {
+		fmt.Printf("  Email: %s\n", token.Email)
+	}
+
+	// Show token expiration if available
+	if token.IDToken != "" {
+		if claims, err := decodeJWT(token.IDToken); err == nil {
+			if claims.ExpiresAt > 0 {
+				expireTime := time.Unix(claims.ExpiresAt, 0)
+				fmt.Printf("  Expires: %s\n", expireTime.Format(time.RFC3339))
+			}
+		}
+	}
+
+	fmt.Printf("  Has Refresh Token: %t\n", token.RefreshToken != "")
+
+	return nil
+}

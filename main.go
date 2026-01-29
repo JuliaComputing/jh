@@ -318,6 +318,28 @@ environment variables that can be used by other tools or scripts.`,
 	},
 }
 
+var authListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List stored authentication token information",
+	Long: `Display information about the currently stored authentication token.
+
+This command shows:
+- Server name
+- User information (name and email)
+- Token validity status (valid or expired)
+- Token expiration time
+- Refresh token availability
+
+This provides a quick summary of your current authentication status.`,
+	Example: "  jh auth list",
+	Run: func(cmd *cobra.Command, args []string) {
+		if err := authListCommand(); err != nil {
+			fmt.Printf("Failed to list authentication token: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
 var jobCmd = &cobra.Command{
 	Use:   "job",
 	Short: "Job management commands",
@@ -991,7 +1013,7 @@ func init() {
 	pullCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	updateCmd.Flags().Bool("force", false, "Force update even if current version is newer than latest release")
 
-	authCmd.AddCommand(authLoginCmd, authRefreshCmd, authStatusCmd, authEnvCmd)
+	authCmd.AddCommand(authLoginCmd, authRefreshCmd, authStatusCmd, authEnvCmd, authListCmd)
 	jobCmd.AddCommand(jobListCmd, jobStartCmd)
 	datasetCmd.AddCommand(datasetListCmd, datasetDownloadCmd, datasetUploadCmd, datasetStatusCmd)
 	projectCmd.AddCommand(projectListCmd)
