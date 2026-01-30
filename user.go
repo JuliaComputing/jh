@@ -195,3 +195,88 @@ func showUserInfo(server string) error {
 
 	return nil
 }
+
+// ManageUser represents a user from the /app/config/features/manage endpoint
+type ManageUser struct {
+	Email          string                 `json:"email"`
+	Name           *string                `json:"name"`
+	UUID           string                 `json:"uuid"`
+	Features       json.RawMessage        `json:"features"` // Will be parsed from JSON string
+	JuliaHubGroups string                 `json:"juliahub_groups"`
+	SiteGroups     string                 `json:"site_groups"`
+	ParsedFeatures map[string]interface{} `json:"-"` // Parsed features
+}
+
+// ManageUsersResponse represents the response from /app/config/features/manage
+type ManageUsersResponse struct {
+	Users    []ManageUser    `json:"users"`
+	Features json.RawMessage `json:"features"`
+}
+
+func listUsers(server string) error {
+	token, err := ensureValidToken()
+	if err != nil {
+		return fmt.Errorf("authentication required: %w", err)
+	}
+
+	url := fmt.Sprintf("https://%s/app/config/features/manage", server)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
+	req.Header.Set("Accept", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("request failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var response ManageUsersResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// Parse features JSON string for each user
+	for i := range response.Users {
+		var features map[string]interface{}
+		if err := json.Unmarshal(response.Users[i].Features, &features); err == nil {
+			response.Users[i].ParsedFeatures = features
+		}
+	}
+
+	// Display users
+	fmt.Printf("Users (%d total):\n\n", len(response.Users))
+	for _, user := range response.Users {
+		fmt.Printf("UUID: %s\n", user.UUID)
+		fmt.Printf("Email: %s\n", user.Email)
+		if user.Name != nil {
+			fmt.Printf("Name: %s\n", *user.Name)
+		}
+		if user.JuliaHubGroups != "" {
+			fmt.Printf("JuliaHub Groups: %s\n", user.JuliaHubGroups)
+		}
+		if user.SiteGroups != "" {
+			fmt.Printf("Site Groups: %s\n", user.SiteGroups)
+		}
+		if len(user.ParsedFeatures) > 0 {
+			fmt.Printf("Features: %v\n", user.ParsedFeatures)
+		}
+		fmt.Println()
+	}
+
+	return nil
+}

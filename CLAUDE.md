@@ -14,7 +14,7 @@ The application follows a command-line interface pattern using the Cobra library
 - **auth.go**: OAuth2 device flow authentication with JWT token handling
 - **datasets.go**: Dataset operations (list, download, upload, status) with REST API integration
 - **projects.go**: Project management using GraphQL API with user filtering
-- **user.go**: User information retrieval using GraphQL API
+- **user.go**: User information retrieval using GraphQL API and REST API for listing users
 - **git.go**: Git integration (clone, push, fetch, pull) with JuliaHub authentication
 - **julia.go**: Julia installation and management
 - **run.go**: Julia execution with JuliaHub configuration
@@ -29,7 +29,7 @@ The application follows a command-line interface pattern using the Cobra library
    - Stores tokens securely in `~/.juliahub` with 0600 permissions
 
 2. **API Integration**:
-   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`)
+   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`) and user management (`/app/config/features/manage`)
    - **GraphQL API**: Used for projects and user info (`/v1/graphql`)
    - **Headers**: All GraphQL requests require `X-Hasura-Role: jhuser` header
    - **Authentication**: Uses ID tokens (`token.IDToken`) for API calls
@@ -38,7 +38,7 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh auth`: Authentication commands (login, refresh, status, env)
    - `jh dataset`: Dataset operations (list, download, upload, status)
    - `jh project`: Project management (list with GraphQL, supports user filtering)
-   - `jh user`: User information (info with GraphQL)
+   - `jh user`: User information (info with GraphQL, list all users with REST API)
    - `jh clone`: Git clone with JuliaHub authentication and project name resolution
    - `jh push/fetch/pull`: Git operations with JuliaHub authentication
    - `jh git-credential`: Git credential helper for seamless authentication
@@ -90,6 +90,7 @@ go run . project list
 go run . project list --user
 go run . project list --user john
 go run . user info
+go run . user list
 ```
 
 ### Test Git operations
@@ -163,6 +164,7 @@ The application uses OAuth2 device flow:
 
 ### REST API Integration
 - **Dataset operations**: Use presigned URLs for upload/download
+- **User management**: `/app/config/features/manage` endpoint for listing all users
 - **Authentication**: Bearer token with ID token
 - **Upload workflow**: 3-step process (request presigned URL, upload to URL, close upload)
 
@@ -273,6 +275,7 @@ jh run setup
 - Clone command automatically resolves `username/project` format to project UUIDs
 - Folder naming conflicts are resolved with automatic numbering (project-1, project-2, etc.)
 - Credential helper follows Git protocol: responds only to JuliaHub URLs, ignores others
+- User list command uses REST API endpoint `/app/config/features/manage` which requires appropriate permissions
 
 ## Implementation Details
 

@@ -669,6 +669,34 @@ Displays comprehensive information about the current user including:
 	},
 }
 
+var userListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all users",
+	Long: `List all users from JuliaHub.
+
+Displays comprehensive information about all users including:
+- UUID and email addresses
+- Names
+- JuliaHub groups and site groups
+- Feature flags
+
+This command uses the /app/config/features/manage endpoint which requires
+appropriate permissions to view all users.`,
+	Example: "  jh user list",
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		if err := listUsers(server); err != nil {
+			fmt.Printf("Failed to list users: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
 var cloneCmd = &cobra.Command{
 	Use:   "clone <username/project> [local-path]",
 	Short: "Clone a project from JuliaHub",
@@ -985,6 +1013,7 @@ func init() {
 	projectListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	projectListCmd.Flags().String("user", "", "Filter projects by user (leave empty to show only your own projects)")
 	userInfoCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	userListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	cloneCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	pushCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	fetchCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
@@ -995,7 +1024,7 @@ func init() {
 	jobCmd.AddCommand(jobListCmd, jobStartCmd)
 	datasetCmd.AddCommand(datasetListCmd, datasetDownloadCmd, datasetUploadCmd, datasetStatusCmd)
 	projectCmd.AddCommand(projectListCmd)
-	userCmd.AddCommand(userInfoCmd)
+	userCmd.AddCommand(userInfoCmd, userListCmd)
 	juliaCmd.AddCommand(juliaInstallCmd)
 	runCmd.AddCommand(runSetupCmd)
 	gitCredentialCmd.AddCommand(gitCredentialHelperCmd, gitCredentialGetCmd, gitCredentialStoreCmd, gitCredentialEraseCmd, gitCredentialSetupCmd)

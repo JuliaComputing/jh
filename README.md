@@ -9,7 +9,7 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 - **Project Management**: List and filter projects using GraphQL API
 - **Git Integration**: Clone, push, fetch, and pull with automatic JuliaHub authentication
 - **Julia Integration**: Install Julia and run with JuliaHub package server configuration
-- **User Management**: Display user information and profile details
+- **User Management**: Display user information, list all users, and view profile details
 
 ## Installation
 
@@ -175,6 +175,7 @@ go build -o jh .
 ### User Information (`jh user`)
 
 - `jh user info` - Show detailed user information
+- `jh user list` - List all users (requires appropriate permissions)
 
 ### Update (`jh update`)
 
