@@ -152,6 +152,8 @@ go build -o jh .
 ### Registry Management (`jh registry`)
 
 - `jh registry list` - List all package registries on JuliaHub
+  - Default: Shows only UUID and Name
+  - `jh registry list --verbose` - Show detailed registry information including owner, creation date, package count, and description
 
 ### Project Management (`jh project`)
 
@@ -222,8 +224,11 @@ jh dataset upload my-dataset ./updated-data.tar.gz
 ### Registry Operations
 
 ```bash
-# List all registries
+# List all registries (UUID and Name only)
 jh registry list
+
+# List registries with detailed information
+jh registry list --verbose
 
 # List registries on custom server
 jh registry list -s yourinstall

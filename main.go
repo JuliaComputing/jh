@@ -566,7 +566,8 @@ var registryListCmd = &cobra.Command{
 	Short: "List registries",
 	Long: `List all package registries on JuliaHub.
 
-Displays information including:
+By default, displays only UUID and Name for each registry.
+Use --verbose flag to display comprehensive information including:
 - Registry UUID
 - Registry name and ID
 - Owner information
@@ -574,7 +575,7 @@ Displays information including:
 - Package count
 - Description
 - Registration status`,
-	Example: "  jh registry list\n  jh registry list -s custom-server.com",
+	Example: "  jh registry list\n  jh registry list --verbose\n  jh registry list -s custom-server.com",
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
 		if err != nil {
@@ -582,7 +583,9 @@ Displays information including:
 			os.Exit(1)
 		}
 
-		if err := listRegistries(server); err != nil {
+		verbose, _ := cmd.Flags().GetBool("verbose")
+
+		if err := listRegistries(server, verbose); err != nil {
 			fmt.Printf("Failed to list registries: %v\n", err)
 			os.Exit(1)
 		}
@@ -1022,6 +1025,7 @@ func init() {
 	datasetUploadCmd.Flags().Bool("new", false, "Create a new dataset")
 	datasetStatusCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	registryListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	registryListCmd.Flags().Bool("verbose", false, "Show detailed registry information")
 	projectListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	projectListCmd.Flags().String("user", "", "Filter projects by user (leave empty to show only your own projects)")
 	userInfoCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")

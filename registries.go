@@ -19,7 +19,7 @@ type Registry struct {
 	Description  string     `json:"description"`
 }
 
-func listRegistries(server string) error {
+func listRegistries(server string, verbose bool) error {
 	token, err := ensureValidToken()
 	if err != nil {
 		return fmt.Errorf("authentication required: %w", err)
@@ -63,22 +63,32 @@ func listRegistries(server string) error {
 	}
 
 	fmt.Printf("Found %d registr%s:\n\n", len(registries), pluralize(len(registries), "y", "ies"))
-	for _, registry := range registries {
-		fmt.Printf("UUID: %s\n", registry.UUID)
-		fmt.Printf("Name: %s\n", registry.Name)
-		fmt.Printf("Registry ID: %d\n", registry.RegistryID)
-		if registry.Owner != nil {
-			fmt.Printf("Owner: %s\n", *registry.Owner)
-		} else {
-			fmt.Printf("Owner: (none)\n")
+
+	if verbose {
+		// Verbose mode: show all details
+		for _, registry := range registries {
+			fmt.Printf("UUID: %s\n", registry.UUID)
+			fmt.Printf("Name: %s\n", registry.Name)
+			if registry.Owner != nil {
+				fmt.Printf("Owner: %s\n", *registry.Owner)
+			} else {
+				fmt.Printf("Owner: (none)\n")
+			}
+			fmt.Printf("Register: %t\n", registry.Register)
+			fmt.Printf("Creation Date: %s\n", registry.CreationDate.Time.Format(time.RFC3339))
+			fmt.Printf("Package Count: %d\n", registry.PackageCount)
+			if registry.Description != "" {
+				fmt.Printf("Description: %s\n", registry.Description)
+			}
+			fmt.Println()
 		}
-		fmt.Printf("Register: %t\n", registry.Register)
-		fmt.Printf("Creation Date: %s\n", registry.CreationDate.Time.Format(time.RFC3339))
-		fmt.Printf("Package Count: %d\n", registry.PackageCount)
-		if registry.Description != "" {
-			fmt.Printf("Description: %s\n", registry.Description)
+	} else {
+		// Default mode: show only UUID and Name
+		for _, registry := range registries {
+			fmt.Printf("UUID: %s\n", registry.UUID)
+			fmt.Printf("Name: %s\n", registry.Name)
+			fmt.Println()
 		}
-		fmt.Println()
 	}
 
 	return nil

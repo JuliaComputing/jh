@@ -38,7 +38,7 @@ The application follows a command-line interface pattern using the Cobra library
 3. **Command Structure**:
    - `jh auth`: Authentication commands (login, refresh, status, env)
    - `jh dataset`: Dataset operations (list, download, upload, status)
-   - `jh registry`: Registry operations (list)
+   - `jh registry`: Registry operations (list with REST API, supports verbose mode)
    - `jh project`: Project management (list with GraphQL, supports user filtering)
    - `jh user`: User information (info with GraphQL)
    - `jh clone`: Git clone with JuliaHub authentication and project name resolution
@@ -89,6 +89,7 @@ go run . dataset upload --new ./file.tar.gz
 ### Test registry operations
 ```bash
 go run . registry list
+go run . registry list --verbose
 ```
 
 ### Test project and user operations
@@ -280,6 +281,7 @@ jh run setup
 - Clone command automatically resolves `username/project` format to project UUIDs
 - Folder naming conflicts are resolved with automatic numbering (project-1, project-2, etc.)
 - Credential helper follows Git protocol: responds only to JuliaHub URLs, ignores others
+- Registry list output is concise by default (UUID and Name only); use `--verbose` flag for detailed information (owner, creation date, package count, description)
 
 ## Implementation Details
 
