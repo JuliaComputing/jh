@@ -38,7 +38,9 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh auth`: Authentication commands (login, refresh, status, env)
    - `jh dataset`: Dataset operations (list, download, upload, status)
    - `jh project`: Project management (list with GraphQL, supports user filtering)
-   - `jh user`: User information (info with GraphQL, list all users with REST API)
+   - `jh user`: User information (info with GraphQL)
+   - `jh admin`: Administrative commands (user management)
+   - `jh admin user`: User management (list all users with REST API, supports verbose mode)
    - `jh clone`: Git clone with JuliaHub authentication and project name resolution
    - `jh push/fetch/pull`: Git operations with JuliaHub authentication
    - `jh git-credential`: Git credential helper for seamless authentication
@@ -90,7 +92,8 @@ go run . project list
 go run . project list --user
 go run . project list --user john
 go run . user info
-go run . user list
+go run . admin user list
+go run . admin user list --verbose
 ```
 
 ### Test Git operations
@@ -275,7 +278,8 @@ jh run setup
 - Clone command automatically resolves `username/project` format to project UUIDs
 - Folder naming conflicts are resolved with automatic numbering (project-1, project-2, etc.)
 - Credential helper follows Git protocol: responds only to JuliaHub URLs, ignores others
-- User list command uses REST API endpoint `/app/config/features/manage` which requires appropriate permissions
+- Admin user list command (`jh admin user list`) uses REST API endpoint `/app/config/features/manage` which requires appropriate permissions
+- User list output is concise by default (Name and Email only); use `--verbose` flag for detailed information (UUID, groups, features)
 
 ## Implementation Details
 

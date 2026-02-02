@@ -163,9 +163,10 @@ Available command categories:
   dataset   - Dataset operations (list, download, upload, status)
   project   - Project management (list, filter by user)
   user      - User information and profile
+  admin     - Administrative commands (user management)
   clone     - Clone projects with automatic authentication
   push      - Push changes with authentication
-  fetch     - Fetch updates with authentication  
+  fetch     - Fetch updates with authentication
   pull      - Pull changes with authentication
   julia     - Julia installation and management
   run       - Run Julia with JuliaHub configuration
@@ -674,7 +675,8 @@ var userListCmd = &cobra.Command{
 	Short: "List all users",
 	Long: `List all users from JuliaHub.
 
-Displays comprehensive information about all users including:
+By default, displays only Name and Email for each user.
+Use --verbose flag to display comprehensive information including:
 - UUID and email addresses
 - Names
 - JuliaHub groups and site groups
@@ -682,7 +684,7 @@ Displays comprehensive information about all users including:
 
 This command uses the /app/config/features/manage endpoint which requires
 appropriate permissions to view all users.`,
-	Example: "  jh user list",
+	Example: "  jh admin user list\n  jh admin user list --verbose",
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
 		if err != nil {
@@ -690,7 +692,9 @@ appropriate permissions to view all users.`,
 			os.Exit(1)
 		}
 
-		if err := listUsers(server); err != nil {
+		verbose, _ := cmd.Flags().GetBool("verbose")
+
+		if err := listUsers(server, verbose); err != nil {
 			fmt.Printf("Failed to list users: %v\n", err)
 			os.Exit(1)
 		}
@@ -981,6 +985,27 @@ without needing to use the 'jh' wrapper commands.`,
 	},
 }
 
+var adminCmd = &cobra.Command{
+	Use:   "admin",
+	Short: "Administrative commands",
+	Long: `Administrative commands for JuliaHub.
+
+These commands provide administrative functionality for managing JuliaHub
+resources such as users, groups, and system configuration.
+
+Note: Some commands may require administrative permissions.`,
+}
+
+var adminUserCmd = &cobra.Command{
+	Use:   "user",
+	Short: "User management commands",
+	Long: `Administrative commands for managing users on JuliaHub.
+
+Provides commands to list and manage users across the JuliaHub instance.
+
+Note: These commands require appropriate administrative permissions.`,
+}
+
 var updateCmd = &cobra.Command{
 	Use:   "update",
 	Short: "Update jh to the latest version",
@@ -1014,6 +1039,7 @@ func init() {
 	projectListCmd.Flags().String("user", "", "Filter projects by user (leave empty to show only your own projects)")
 	userInfoCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	userListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	userListCmd.Flags().Bool("verbose", false, "Show detailed user information")
 	cloneCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	pushCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	fetchCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
@@ -1024,12 +1050,14 @@ func init() {
 	jobCmd.AddCommand(jobListCmd, jobStartCmd)
 	datasetCmd.AddCommand(datasetListCmd, datasetDownloadCmd, datasetUploadCmd, datasetStatusCmd)
 	projectCmd.AddCommand(projectListCmd)
-	userCmd.AddCommand(userInfoCmd, userListCmd)
+	userCmd.AddCommand(userInfoCmd)
+	adminUserCmd.AddCommand(userListCmd)
+	adminCmd.AddCommand(adminUserCmd)
 	juliaCmd.AddCommand(juliaInstallCmd)
 	runCmd.AddCommand(runSetupCmd)
 	gitCredentialCmd.AddCommand(gitCredentialHelperCmd, gitCredentialGetCmd, gitCredentialStoreCmd, gitCredentialEraseCmd, gitCredentialSetupCmd)
 
-	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, projectCmd, userCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd)
+	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, projectCmd, userCmd, adminCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd)
 }
 
 func main() {

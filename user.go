@@ -213,7 +213,7 @@ type ManageUsersResponse struct {
 	Features json.RawMessage `json:"features"`
 }
 
-func listUsers(server string) error {
+func listUsers(server string, verbose bool) error {
 	token, err := ensureValidToken()
 	if err != nil {
 		return fmt.Errorf("authentication required: %w", err)
@@ -250,32 +250,49 @@ func listUsers(server string) error {
 		return fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	// Parse features JSON string for each user
-	for i := range response.Users {
-		var features map[string]interface{}
-		if err := json.Unmarshal(response.Users[i].Features, &features); err == nil {
-			response.Users[i].ParsedFeatures = features
+	// Parse features JSON string for each user (only needed in verbose mode)
+	if verbose {
+		for i := range response.Users {
+			var features map[string]interface{}
+			if err := json.Unmarshal(response.Users[i].Features, &features); err == nil {
+				response.Users[i].ParsedFeatures = features
+			}
 		}
 	}
 
 	// Display users
 	fmt.Printf("Users (%d total):\n\n", len(response.Users))
-	for _, user := range response.Users {
-		fmt.Printf("UUID: %s\n", user.UUID)
-		fmt.Printf("Email: %s\n", user.Email)
-		if user.Name != nil {
-			fmt.Printf("Name: %s\n", *user.Name)
+
+	if verbose {
+		// Verbose mode: show all details
+		for _, user := range response.Users {
+			fmt.Printf("UUID: %s\n", user.UUID)
+			fmt.Printf("Email: %s\n", user.Email)
+			if user.Name != nil {
+				fmt.Printf("Name: %s\n", *user.Name)
+			}
+			if user.JuliaHubGroups != "" {
+				fmt.Printf("JuliaHub Groups: %s\n", user.JuliaHubGroups)
+			}
+			if user.SiteGroups != "" {
+				fmt.Printf("Site Groups: %s\n", user.SiteGroups)
+			}
+			if len(user.ParsedFeatures) > 0 {
+				fmt.Printf("Features: %v\n", user.ParsedFeatures)
+			}
+			fmt.Println()
 		}
-		if user.JuliaHubGroups != "" {
-			fmt.Printf("JuliaHub Groups: %s\n", user.JuliaHubGroups)
+	} else {
+		// Default mode: show only Name and Email
+		for _, user := range response.Users {
+			if user.Name != nil {
+				fmt.Printf("Name: %s\n", *user.Name)
+			} else {
+				fmt.Printf("Name: (not set)\n")
+			}
+			fmt.Printf("Email: %s\n", user.Email)
+			fmt.Println()
 		}
-		if user.SiteGroups != "" {
-			fmt.Printf("Site Groups: %s\n", user.SiteGroups)
-		}
-		if len(user.ParsedFeatures) > 0 {
-			fmt.Printf("Features: %v\n", user.ParsedFeatures)
-		}
-		fmt.Println()
 	}
 
 	return nil
