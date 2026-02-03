@@ -559,7 +559,7 @@ var packageCmd = &cobra.Command{
 
 Packages are Julia libraries that provide reusable functionality. JuliaHub
 hosts packages from multiple registries and provides comprehensive search
-capabilities including filtering by installation status, failures, and more.`,
+capabilities including filtering by tags, installation status, failures, and more.`,
 }
 
 var packageSearchCmd = &cobra.Command{
@@ -569,7 +569,7 @@ var packageSearchCmd = &cobra.Command{
 
 Displays package information including:
 - Package name, owner, and UUID
-- Version and registry information
+- Version information
 - Description and repository
 - Tags and star count
 - Installation status
@@ -682,7 +682,7 @@ var registryListCmd = &cobra.Command{
 	Short: "List registries",
 	Long: `List all package registries on JuliaHub.
 
-By default, displays Registry ID, UUID, and Name for each registry.
+By default, displays, UUID, and Name for each registry.
 Use --verbose flag to display comprehensive information including:
 - Registry UUID
 - Registry name and ID

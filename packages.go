@@ -16,7 +16,7 @@ var packageSearchFS embed.FS
 
 type PackageMetadata struct {
 	DocsHostedURI string   `json:"docshosteduri"`
-	Versions      *string  `json:"versions"`
+	Versions      []string `json:"versions"`
 	Description   string   `json:"description"`
 	DocsLink      string   `json:"docslink"`
 	Repo          string   `json:"repo"`
@@ -209,7 +209,6 @@ func searchPackages(server string, search string, limit int, offset int, install
 
 			if pkg.RegistryMap != nil {
 				fmt.Printf("Latest Version: %s\n", pkg.RegistryMap.Version)
-				fmt.Printf("Registry ID: %d\n", pkg.RegistryMap.RegistryID)
 				fmt.Printf("Status: ")
 				if pkg.RegistryMap.Status {
 					fmt.Printf("Active\n")
@@ -251,10 +250,10 @@ func searchPackages(server string, search string, limit int, offset int, install
 			if pkg.Metadata != nil && pkg.Metadata.Description != "" {
 				// Truncate description for concise view
 				desc := pkg.Metadata.Description
-				if len(desc) > 50 {
-					desc = desc[:47] + "..."
+				if len(desc) > 100 {
+					desc = desc[:100] + "..."
 				}
-				fmt.Printf("\n  %s", desc)
+				fmt.Printf("%s", desc)
 			}
 
 			fmt.Printf("\n")

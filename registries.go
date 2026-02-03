@@ -95,7 +95,6 @@ func listRegistries(server string, verbose bool) error {
 	} else {
 		// Default mode: show UUID, Name, and Registry ID (needed for package search filtering)
 		for _, registry := range registries {
-			fmt.Printf("Registry ID: %d\n", registry.RegistryID)
 			fmt.Printf("UUID: %s\n", registry.UUID)
 			fmt.Printf("Name: %s\n", registry.Name)
 			fmt.Println()
