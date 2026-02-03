@@ -38,6 +38,7 @@ query FilteredPackages(
       status
       isapp
       isjsml
+      __typename
     }
     metadata {
       docshosteduri
@@ -48,11 +49,14 @@ query FilteredPackages(
       owner
       tags
       starcount
+      __typename
     }
     uuid
     installed
     failures {
       package_version
+      __typename
     }
+    __typename
   }
 }

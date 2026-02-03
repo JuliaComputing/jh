@@ -74,7 +74,17 @@ func searchPackages(server string, search string, limit int, offset int, install
 	query := string(queryBytes)
 
 	// Build variables for the GraphQL query
-	variables := map[string]interface{}{}
+	variables := map[string]interface{}{
+		"filter":       map[string]interface{}{},
+		"order":        map[string]string{"score": "desc"},
+		"matchtags":    "{}",
+		"licenses":     "{}",
+		"search":       "",
+		"offset":       0,
+		"hasfailures":  false,
+		"installed":    true,
+		"notinstalled": true,
+	}
 
 	if search != "" {
 		variables["search"] = search
@@ -101,10 +111,15 @@ func searchPackages(server string, search string, limit int, offset int, install
 	}
 
 	if len(registries) > 0 {
-		variables["registries"] = fmt.Sprintf("{%s}", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(registries)), ","), "[]"))
+		// Convert registry IDs to strings
+		registryStrs := make([]string, len(registries))
+		for i, id := range registries {
+			registryStrs[i] = fmt.Sprintf("%d", id)
+		}
+		// Format as PostgreSQL array: "{1,2,3}"
+		variables["registries"] = fmt.Sprintf("{%s}", strings.Join(registryStrs, ","))
 	}
 
-	// Create GraphQL request
 	graphqlReq := GraphQLRequest{
 		OperationName: "FilteredPackages",
 		Query:         query,
