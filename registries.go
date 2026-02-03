@@ -25,7 +25,7 @@ func listRegistries(server string, verbose bool) error {
 		return fmt.Errorf("authentication required: %w", err)
 	}
 
-	url := fmt.Sprintf("https://%s/api/v1/ui/registries/descriptions", server)
+	url := fmt.Sprintf("https://%s/api/v1/registry/registries/descriptions", server)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
