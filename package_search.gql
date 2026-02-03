@@ -1,0 +1,58 @@
+query FilteredPackages(
+  $search: String
+  $limit: Int
+  $offset: Int
+  $matchtags: _text
+  $registries: _int8
+  $hasfailures: Boolean
+  $installed: Boolean
+  $notinstalled: Boolean
+  $licenses: _text
+  $order: [package_rank_vw_order_by!]
+  $filter: package_rank_vw_bool_exp = {}
+) {
+  package_search(
+    args: {
+      search: $search
+      matchtags: $matchtags
+      licenses: $licenses
+      isinstalled: $installed
+      notinstalled: $notinstalled
+      hasfailures: $hasfailures
+      registrylist: $registries
+    }
+    order_by: $order
+    limit: $limit
+    offset: $offset
+    where: { _and: [{ fit: { _gte: 1 } }, $filter] }
+  ) {
+    name
+    owner
+    slug
+    license
+    isapp
+    score
+    registrymap {
+      version
+      registryid
+      status
+      isapp
+      isjsml
+    }
+    metadata {
+      docshosteduri
+      versions
+      description
+      docslink
+      repo
+      owner
+      tags
+      starcount
+    }
+    uuid
+    installed
+    failures {
+      package_version
+    }
+  }
+}
