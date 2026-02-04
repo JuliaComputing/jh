@@ -178,6 +178,12 @@ func searchPackages(server string, search string, limit int, offset int, install
 
 	fmt.Printf("Found %d package(s):\n\n", len(packages))
 
+	// Print column headers for concise output
+	if !verbose {
+		fmt.Printf("%-30s %-20s %-12s %s\n", "NAME", "OWNER", "VERSION", "DESCRIPTION")
+		fmt.Printf("%-30s %-20s %-12s %s\n", strings.Repeat("-", 30), strings.Repeat("-", 20), strings.Repeat("-", 12), strings.Repeat("-", 50))
+	}
+
 	for _, pkg := range packages {
 		if verbose {
 			// Verbose output with all details
@@ -250,8 +256,8 @@ func searchPackages(server string, search string, limit int, offset int, install
 			if pkg.Metadata != nil && pkg.Metadata.Description != "" {
 				// Truncate description for concise view
 				desc := pkg.Metadata.Description
-				if len(desc) > 100 {
-					desc = desc[:100] + "..."
+				if len(desc) > 50 {
+					desc = desc[:50] + "..."
 				}
 				fmt.Printf("%s", desc)
 			}
