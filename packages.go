@@ -60,19 +60,138 @@ type PackageSearchResponse struct {
 	} `json:"errors"`
 }
 
-func searchPackages(server string, search string, limit int, offset int, installed *bool, notInstalled *bool, hasFailures *bool, registries []int, verbose bool) error {
+// executePackageQuery executes a GraphQL package search query and returns the results
+func executePackageQuery(server string, variables map[string]interface{}) ([]Package, error) {
 	token, err := ensureValidToken()
 	if err != nil {
-		return fmt.Errorf("authentication required: %w", err)
+		return nil, fmt.Errorf("authentication required: %w", err)
 	}
 
 	// Read the GraphQL query from package_search.gql
 	queryBytes, err := packageSearchFS.ReadFile("package_search.gql")
 	if err != nil {
-		return fmt.Errorf("failed to read GraphQL query: %w", err)
+		return nil, fmt.Errorf("failed to read GraphQL query: %w", err)
 	}
 	query := string(queryBytes)
 
+	graphqlReq := GraphQLRequest{
+		OperationName: "FilteredPackages",
+		Query:         query,
+		Variables:     variables,
+	}
+
+	jsonData, err := json.Marshal(graphqlReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal GraphQL request: %w", err)
+	}
+
+	url := fmt.Sprintf("https://%s/v1/graphql", server)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Hasura-Role", "jhuser")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GraphQL request failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var response PackageSearchResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// Check for GraphQL errors
+	if len(response.Errors) > 0 {
+		return nil, fmt.Errorf("GraphQL errors: %v", response.Errors)
+	}
+
+	return response.Data.PackageSearch, nil
+}
+
+// displayPackageDetails displays detailed information about a package
+func displayPackageDetails(pkg *Package) {
+	fmt.Printf("Name: %s\n", pkg.Name)
+	fmt.Printf("UUID: %s\n", pkg.UUID)
+	fmt.Printf("Owner: %s\n", pkg.Owner)
+
+	if pkg.Metadata != nil {
+		if pkg.Metadata.Description != "" {
+			fmt.Printf("Description: %s\n", pkg.Metadata.Description)
+		}
+		if pkg.Metadata.Repo != "" {
+			fmt.Printf("Repository: %s\n", pkg.Metadata.Repo)
+		}
+		if len(pkg.Metadata.Tags) > 0 {
+			fmt.Printf("Tags: %s\n", strings.Join(pkg.Metadata.Tags, ", "))
+		}
+		if pkg.Metadata.StarCount > 0 {
+			fmt.Printf("Stars: %d\n", pkg.Metadata.StarCount)
+		}
+		if pkg.Metadata.DocsLink != "" {
+			fmt.Printf("Documentation: %s\n", pkg.Metadata.DocsLink)
+		}
+	}
+
+	if pkg.License != "" {
+		fmt.Printf("License: %s\n", pkg.License)
+	}
+
+	if pkg.RegistryMap != nil {
+		fmt.Printf("Latest Version: %s\n", pkg.RegistryMap.Version)
+		fmt.Printf("Status: ")
+		if pkg.RegistryMap.Status {
+			fmt.Printf("Active\n")
+		} else {
+			fmt.Printf("Inactive\n")
+		}
+	}
+
+	fmt.Printf("Installed: %t\n", pkg.Installed)
+
+	if pkg.IsApp {
+		fmt.Printf("Type: Application\n")
+	}
+
+	if len(pkg.Failures) > 0 {
+		fmt.Printf("Failed Versions: ")
+		versions := make([]string, len(pkg.Failures))
+		for i, failure := range pkg.Failures {
+			versions[i] = failure.PackageVersion
+		}
+		fmt.Printf("%s\n", strings.Join(versions, ", "))
+	}
+
+	fmt.Printf("Score: %.2f\n", pkg.Score)
+}
+
+// buildRegistriesParam converts registry IDs to PostgreSQL array format
+func buildRegistriesParam(registries []int) string {
+	registryStrs := make([]string, len(registries))
+	for i, id := range registries {
+		registryStrs[i] = fmt.Sprintf("%d", id)
+	}
+	return fmt.Sprintf("{%s}", strings.Join(registryStrs, ","))
+}
+
+func searchPackages(server string, search string, limit int, offset int, installed *bool, notInstalled *bool, hasFailures *bool, registries []int, verbose bool) error {
 	// Build variables for the GraphQL query
 	variables := map[string]interface{}{
 		"filter":       map[string]interface{}{},
@@ -111,65 +230,13 @@ func searchPackages(server string, search string, limit int, offset int, install
 	}
 
 	if len(registries) > 0 {
-		// Convert registry IDs to strings
-		registryStrs := make([]string, len(registries))
-		for i, id := range registries {
-			registryStrs[i] = fmt.Sprintf("%d", id)
-		}
-		// Format as PostgreSQL array: "{1,2,3}"
-		variables["registries"] = fmt.Sprintf("{%s}", strings.Join(registryStrs, ","))
+		variables["registries"] = buildRegistriesParam(registries)
 	}
 
-	graphqlReq := GraphQLRequest{
-		OperationName: "FilteredPackages",
-		Query:         query,
-		Variables:     variables,
-	}
-
-	jsonData, err := json.Marshal(graphqlReq)
+	packages, err := executePackageQuery(server, variables)
 	if err != nil {
-		return fmt.Errorf("failed to marshal GraphQL request: %w", err)
+		return err
 	}
-
-	url := fmt.Sprintf("https://%s/v1/graphql", server)
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("X-Hasura-Role", "jhuser")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("GraphQL request failed (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read response: %w", err)
-	}
-
-	var response PackageSearchResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	// Check for GraphQL errors
-	if len(response.Errors) > 0 {
-		return fmt.Errorf("GraphQL errors: %v", response.Errors)
-	}
-
-	packages := response.Data.PackageSearch
 
 	if len(packages) == 0 {
 		fmt.Println("No packages found")
@@ -187,58 +254,7 @@ func searchPackages(server string, search string, limit int, offset int, install
 	for _, pkg := range packages {
 		if verbose {
 			// Verbose output with all details
-			fmt.Printf("Name: %s\n", pkg.Name)
-			fmt.Printf("UUID: %s\n", pkg.UUID)
-			fmt.Printf("Owner: %s\n", pkg.Owner)
-
-			if pkg.Metadata != nil {
-				if pkg.Metadata.Description != "" {
-					fmt.Printf("Description: %s\n", pkg.Metadata.Description)
-				}
-				if pkg.Metadata.Repo != "" {
-					fmt.Printf("Repository: %s\n", pkg.Metadata.Repo)
-				}
-				if len(pkg.Metadata.Tags) > 0 {
-					fmt.Printf("Tags: %s\n", strings.Join(pkg.Metadata.Tags, ", "))
-				}
-				if pkg.Metadata.StarCount > 0 {
-					fmt.Printf("Stars: %d\n", pkg.Metadata.StarCount)
-				}
-				if pkg.Metadata.DocsLink != "" {
-					fmt.Printf("Documentation: %s\n", pkg.Metadata.DocsLink)
-				}
-			}
-
-			if pkg.License != "" {
-				fmt.Printf("License: %s\n", pkg.License)
-			}
-
-			if pkg.RegistryMap != nil {
-				fmt.Printf("Latest Version: %s\n", pkg.RegistryMap.Version)
-				fmt.Printf("Status: ")
-				if pkg.RegistryMap.Status {
-					fmt.Printf("Active\n")
-				} else {
-					fmt.Printf("Inactive\n")
-				}
-			}
-
-			fmt.Printf("Installed: %t\n", pkg.Installed)
-
-			if pkg.IsApp {
-				fmt.Printf("Type: Application\n")
-			}
-
-			if len(pkg.Failures) > 0 {
-				fmt.Printf("Failed Versions: ")
-				versions := make([]string, len(pkg.Failures))
-				for i, failure := range pkg.Failures {
-					versions[i] = failure.PackageVersion
-				}
-				fmt.Printf("%s\n", strings.Join(versions, ", "))
-			}
-
-			fmt.Printf("Score: %.2f\n", pkg.Score)
+			displayPackageDetails(&pkg)
 		} else {
 			// Concise output
 			fmt.Printf("%-30s %-20s", pkg.Name, pkg.Owner)
@@ -268,5 +284,46 @@ func searchPackages(server string, search string, limit int, offset int, install
 		fmt.Println()
 	}
 
+	return nil
+}
+
+func getPackageInfo(server string, packageName string, registries []int) error {
+	variables := map[string]interface{}{
+		"filter":       map[string]interface{}{},
+		"order":        map[string]string{"score": "desc"},
+		"matchtags":    "{}",
+		"licenses":     "{}",
+		"search":       packageName,
+		"offset":       0,
+		"hasfailures":  false,
+		"installed":    true,
+		"notinstalled": true,
+		"limit":        100, // Get more results to find exact match
+	}
+
+	if len(registries) > 0 {
+		variables["registries"] = buildRegistriesParam(registries)
+	}
+
+	packages, err := executePackageQuery(server, variables)
+	if err != nil {
+		return err
+	}
+
+	// Find exact match (case-insensitive)
+	var pkg *Package
+	for i := range packages {
+		if strings.EqualFold(packages[i].Name, packageName) {
+			pkg = &packages[i]
+			break
+		}
+	}
+
+	if pkg == nil {
+		fmt.Println("Package not found")
+		return nil
+	}
+
+	displayPackageDetails(pkg)
 	return nil
 }
