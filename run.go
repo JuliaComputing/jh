@@ -7,8 +7,7 @@ import (
 	"path/filepath"
 )
 
-func createJuliaAuthFile(server string, token *StoredToken) error {
-	// Determine Julia depot path
+func getJuliaDepotPath() (string, error) {
 	var depotPath string
 	if juliaDepot := os.Getenv("JULIA_DEPOT_PATH"); juliaDepot != "" {
 		// Use first path from JULIA_DEPOT_PATH (paths are separated by : on Unix, ; on Windows)
@@ -22,9 +21,18 @@ func createJuliaAuthFile(server string, token *StoredToken) error {
 	if depotPath == "" {
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
-			return fmt.Errorf("failed to get user home directory: %w", err)
+			return "", fmt.Errorf("failed to get user home directory: %w", err)
 		}
 		depotPath = filepath.Join(homeDir, ".julia")
+	}
+
+	return depotPath, nil
+}
+
+func createJuliaAuthFile(server string, token *StoredToken) error {
+	depotPath, err := getJuliaDepotPath()
+	if err != nil {
+		return err
 	}
 
 	// Create {depot}/servers/{server}/ directory
