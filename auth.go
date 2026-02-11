@@ -340,22 +340,9 @@ func ensureValidToken() (*StoredToken, error) {
 // This is called after token refresh to keep credentials in sync
 func updateJuliaCredentialsIfNeeded(server string, token *StoredToken) error {
 	// Determine Julia depot path
-	var depotPath string
-	if juliaDepot := os.Getenv("JULIA_DEPOT_PATH"); juliaDepot != "" {
-		// Use first path from JULIA_DEPOT_PATH
-		depotPaths := filepath.SplitList(juliaDepot)
-		if len(depotPaths) > 0 {
-			depotPath = depotPaths[0]
-		}
-	}
-
-	// Fall back to ~/.julia if JULIA_DEPOT_PATH is not set
-	if depotPath == "" {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-		depotPath = filepath.Join(homeDir, ".julia")
+	depotPath, err := getJuliaDepotPath()
+	if err != nil {
+		return err
 	}
 
 	// Check if the auth.toml file exists
