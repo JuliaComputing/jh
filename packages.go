@@ -37,6 +37,26 @@ type PackageFailure struct {
 	PackageVersion string `json:"package_version"`
 }
 
+type PackageDependency struct {
+	Direct   bool     `json:"direct"`
+	Name     string   `json:"name"`
+	UUID     string   `json:"uuid"`
+	Versions []string `json:"versions"`
+	Registry string   `json:"registry"`
+	Slug     string   `json:"slug"`
+}
+
+type PackageDocsResponse struct {
+	Name         string              `json:"name"`
+	Version      string              `json:"version"`
+	Description  string              `json:"description"`
+	Owner        string              `json:"owner"`
+	License      string              `json:"predicted_license"`
+	LicenseURL   string              `json:"license_url"`
+	Homepage     string              `json:"homepage"`
+	Dependencies []PackageDependency `json:"deps"`
+}
+
 type Package struct {
 	Name        string               `json:"name"`
 	Owner       string               `json:"owner"`
@@ -421,5 +441,267 @@ func getPackageInfo(server string, packageName string, registries []int) error {
 	registryLookup := buildRegistryLookup(server)
 
 	displayPackageDetails(pkg, registryLookup)
+	return nil
+}
+
+func getPackageDependencies(server string, packageName string, registryName string, showIndirect bool, showAll bool) error {
+	// Fetch all registries to get registry IDs for the query
+	allRegistries, err := fetchRegistries(server)
+	if err != nil {
+		return fmt.Errorf("failed to fetch registries: %w", err)
+	}
+
+	// Get all registry IDs for the search
+	var registryIDs []int
+	for _, reg := range allRegistries {
+		registryIDs = append(registryIDs, reg.RegistryID)
+	}
+
+	// Get package info to find the registry it belongs to
+	variables := map[string]interface{}{
+		"filter":       map[string]interface{}{},
+		"order":        map[string]string{"score": "desc"},
+		"matchtags":    "{}",
+		"licenses":     "{}",
+		"search":       packageName,
+		"offset":       0,
+		"hasfailures":  false,
+		"installed":    true,
+		"notinstalled": true,
+		"limit":        100,
+		"registries":   buildRegistriesParam(registryIDs),
+	}
+
+	packages, err := executePackageQuery(server, variables)
+	if err != nil {
+		return err
+	}
+
+	// Find exact match (case-insensitive)
+	var pkg *Package
+	for i := range packages {
+		if strings.EqualFold(packages[i].Name, packageName) {
+			pkg = &packages[i]
+			break
+		}
+	}
+
+	if pkg == nil {
+		return fmt.Errorf("package not found: %s", packageName)
+	}
+
+	if len(pkg.RegistryMap) == 0 {
+		return fmt.Errorf("no registry information found for package: %s", packageName)
+	}
+
+	// Determine which registry to use
+	var targetRegistry string
+	if registryName != "" {
+		// Use the specified registry
+		targetRegistry = registryName
+	} else {
+		// Use the first registry and fetch its name
+		registries, err := fetchRegistries(server)
+		if err != nil {
+			return fmt.Errorf("failed to fetch registries: %w", err)
+		}
+
+		// Find the registry name from the first entry in RegistryMap
+		firstRegistryID := pkg.RegistryMap[0].RegistryID
+		found := false
+		for _, reg := range registries {
+			if reg.RegistryID == firstRegistryID {
+				targetRegistry = reg.Name
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("failed to find registry name for ID: %d", firstRegistryID)
+		}
+	}
+
+	docsURL := fmt.Sprintf("https://%s/docs/%s/%s/stable/pkg.json", server, targetRegistry, packageName)
+
+	token, err := ensureValidToken()
+	if err != nil {
+		return fmt.Errorf("authentication required: %w", err)
+	}
+
+	req, err := http.NewRequest("GET", docsURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
+	req.Header.Set("Accept", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to fetch package documentation: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("API request failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var docsResp PackageDocsResponse
+	if err := json.Unmarshal(body, &docsResp); err != nil {
+		return fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// Filter dependencies based on showIndirect flag
+	var deps []PackageDependency
+	if showIndirect {
+		deps = docsResp.Dependencies
+	} else {
+		// Show only direct dependencies
+		for _, dep := range docsResp.Dependencies {
+			if dep.Direct {
+				deps = append(deps, dep)
+			}
+		}
+	}
+
+	if len(deps) == 0 {
+		if showIndirect {
+			fmt.Printf("Package %s (v%s) has no dependencies\n", docsResp.Name, docsResp.Version)
+		} else {
+			fmt.Printf("Package %s (v%s) has no direct dependencies\n", docsResp.Name, docsResp.Version)
+		}
+		return nil
+	}
+
+	// Display results
+	fmt.Printf("Dependencies for %s (v%s) from registry '%s':\n\n", docsResp.Name, docsResp.Version, targetRegistry)
+	if !showIndirect {
+		// Apply limit for direct dependencies
+		directLimit := 10
+		displayDeps := deps
+		truncated := false
+		if !showAll && len(deps) > directLimit {
+			displayDeps = deps[:directLimit]
+			truncated = true
+		}
+
+		if truncated {
+			fmt.Printf("Showing %d of %d direct dependencies (use --all to see all, --indirect for indirect)\n\n", len(displayDeps), len(deps))
+		} else {
+			fmt.Printf("Showing %d direct dependencies (use --indirect to include indirect dependencies)\n\n", len(deps))
+		}
+
+		// Print table header
+		fmt.Printf("%-35s %-15s %-38s %s\n", "NAME", "REGISTRY", "UUID", "VERSIONS")
+		fmt.Printf("%-35s %-15s %-38s %s\n", strings.Repeat("-", 35), strings.Repeat("-", 15), strings.Repeat("-", 38), strings.Repeat("-", 20))
+
+		// Print dependencies
+		for _, dep := range displayDeps {
+			versionsStr := strings.Join(dep.Versions, ", ")
+			if len(versionsStr) > 20 {
+				versionsStr = versionsStr[:17] + "..."
+			}
+			registry := dep.Registry
+			if len(registry) > 15 {
+				registry = registry[:12] + "..."
+			}
+			fmt.Printf("%-35s %-15s %-38s %s\n", dep.Name, registry, dep.UUID, versionsStr)
+		}
+	} else {
+		// Separate direct and indirect dependencies
+		var directDeps []PackageDependency
+		var indirectDeps []PackageDependency
+		for _, dep := range deps {
+			if dep.Direct {
+				directDeps = append(directDeps, dep)
+			} else {
+				indirectDeps = append(indirectDeps, dep)
+			}
+		}
+
+		// Apply limits
+		directLimit := 10
+		indirectLimit := 50
+		displayDirectDeps := directDeps
+		displayIndirectDeps := indirectDeps
+		directTruncated := false
+		indirectTruncated := false
+
+		if !showAll {
+			if len(directDeps) > directLimit {
+				displayDirectDeps = directDeps[:directLimit]
+				directTruncated = true
+			}
+			if len(indirectDeps) > indirectLimit {
+				displayIndirectDeps = indirectDeps[:indirectLimit]
+				indirectTruncated = true
+			}
+		}
+
+		// Summary line
+		if directTruncated || indirectTruncated {
+			fmt.Printf("Showing %d of %d total dependencies (%d of %d direct, %d of %d indirect) - use --all to see all\n\n",
+				len(displayDirectDeps)+len(displayIndirectDeps), len(deps),
+				len(displayDirectDeps), len(directDeps),
+				len(displayIndirectDeps), len(indirectDeps))
+		} else {
+			fmt.Printf("Showing %d total dependencies (%d direct, %d indirect)\n\n", len(deps), len(directDeps), len(indirectDeps))
+		}
+
+		// Print direct dependencies first
+		if len(displayDirectDeps) > 0 {
+			if directTruncated {
+				fmt.Printf("Direct Dependencies (showing %d of %d):\n", len(displayDirectDeps), len(directDeps))
+			} else {
+				fmt.Printf("Direct Dependencies (%d):\n", len(directDeps))
+			}
+			fmt.Printf("%-35s %-15s %-38s %s\n", "NAME", "REGISTRY", "UUID", "VERSIONS")
+			fmt.Printf("%-35s %-15s %-38s %s\n", strings.Repeat("-", 35), strings.Repeat("-", 15), strings.Repeat("-", 38), strings.Repeat("-", 20))
+
+			for _, dep := range displayDirectDeps {
+				versionsStr := strings.Join(dep.Versions, ", ")
+				if len(versionsStr) > 20 {
+					versionsStr = versionsStr[:17] + "..."
+				}
+				registry := dep.Registry
+				if len(registry) > 15 {
+					registry = registry[:12] + "..."
+				}
+				fmt.Printf("%-35s %-15s %-38s %s\n", dep.Name, registry, dep.UUID, versionsStr)
+			}
+			fmt.Println()
+		}
+
+		// Print indirect dependencies
+		if len(displayIndirectDeps) > 0 {
+			if indirectTruncated {
+				fmt.Printf("Indirect Dependencies (showing %d of %d):\n", len(displayIndirectDeps), len(indirectDeps))
+			} else {
+				fmt.Printf("Indirect Dependencies (%d):\n", len(indirectDeps))
+			}
+			fmt.Printf("%-35s %-15s %-38s %s\n", "NAME", "REGISTRY", "UUID", "VERSIONS")
+			fmt.Printf("%-35s %-15s %-38s %s\n", strings.Repeat("-", 35), strings.Repeat("-", 15), strings.Repeat("-", 38), strings.Repeat("-", 20))
+
+			for _, dep := range displayIndirectDeps {
+				versionsStr := strings.Join(dep.Versions, ", ")
+				if len(versionsStr) > 20 {
+					versionsStr = versionsStr[:17] + "..."
+				}
+				registry := dep.Registry
+				if len(registry) > 15 {
+					registry = registry[:12] + "..."
+				}
+				fmt.Printf("%-35s %-15s %-38s %s\n", dep.Name, registry, dep.UUID, versionsStr)
+			}
+		}
+	}
+
 	return nil
 }

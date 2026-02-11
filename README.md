@@ -169,6 +169,11 @@ go build -o jh .
   - `jh package search --has-failures` - Show only packages with download failures
 - `jh package info <package-name>` - Get detailed information about a specific package by exact name match
   - `jh package info --registries General` - Search in specific registries only
+- `jh package dependency <package-name>` - List package dependencies
+  - Default: Shows up to 10 direct dependencies
+  - `jh package dependency --indirect` - Include indirect dependencies (up to 10 direct, 50 indirect)
+  - `jh package dependency --all` - Show all dependencies without limits
+  - `jh package dependency --registry General` - Specify registry to use
 
 ### Project Management (`jh project`)
 
@@ -266,6 +271,12 @@ jh package search --registries General optimization
 # Get detailed info about a specific package
 jh package info DataFrames
 jh package info Plots --registries General
+
+# List package dependencies
+jh package dependency DataFrames              # Shows up to 10 direct dependencies
+jh package dependency DataFrames --indirect   # Includes indirect dependencies
+jh package dependency DataFrames --all --indirect  # Shows all dependencies
+jh package dependency CSV --registry General  # Use specific registry
 ```
 
 ### Project Operations
