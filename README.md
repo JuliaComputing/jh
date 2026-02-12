@@ -6,6 +6,8 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 
 - **Authentication**: OAuth2 device flow authentication with JWT token handling
 - **Dataset Management**: List, download, upload, and check status of datasets
+- **Registry Management**: List and manage Julia package registries
+- **Package Management**: Search and explore Julia packages with filtering and detailed information
 - **Project Management**: List and filter projects using GraphQL API
 - **Git Integration**: Clone, push, fetch, and pull with automatic JuliaHub authentication
 - **Julia Integration**: Install Julia and run with JuliaHub package server configuration
@@ -148,6 +150,31 @@ go build -o jh .
 - `jh dataset upload [dataset-id] <file-path>` - Upload a dataset
 - `jh dataset status <dataset-id> [version]` - Show dataset status
 
+### Registry Management (`jh registry`)
+
+- `jh registry list` - List all package registries on JuliaHub
+  - Default: Shows only UUID and Name
+  - `jh registry list --verbose` - Show detailed registry information including owner, creation date, package count, and description
+
+### Package Management (`jh package`)
+
+- `jh package search [search-term]` - Search for Julia packages
+  - Default: Shows concise output with NAME, OWNER, VERSION, and DESCRIPTION columns
+  - `jh package search --verbose` - Show detailed package information
+  - `jh package search --limit 20` - Limit number of results
+  - `jh package search --offset 10` - Skip first N results
+  - `jh package search --registries General` - Filter by specific registries
+  - `jh package search --installed` - Show only installed packages
+  - `jh package search --not-installed` - Show only packages not installed
+  - `jh package search --has-failures` - Show only packages with download failures
+- `jh package info <package-name>` - Get detailed information about a specific package by exact name match
+  - `jh package info --registries General` - Search in specific registries only
+- `jh package dependency <package-name>` - List package dependencies
+  - Default: Shows up to 10 direct dependencies
+  - `jh package dependency --indirect` - Include indirect dependencies (up to 10 direct, 50 indirect)
+  - `jh package dependency --all` - Show all dependencies without limits
+  - `jh package dependency --registry General` - Specify registry to use
+
 ### Project Management (`jh project`)
 
 - `jh project list` - List all accessible projects
@@ -212,6 +239,44 @@ jh dataset upload --new ./my-data.tar.gz
 
 # Upload new version to existing dataset
 jh dataset upload my-dataset ./updated-data.tar.gz
+```
+
+### Registry Operations
+
+```bash
+# List all registries (UUID and Name only)
+jh registry list
+
+# List registries with detailed information
+jh registry list --verbose
+
+# List registries on custom server
+jh registry list -s yourinstall
+```
+
+### Package Operations
+
+```bash
+# Search for packages (shows concise output with columns)
+jh package search dataframes
+
+# Search with detailed information
+jh package search --verbose plots
+
+# Search with filters
+jh package search --installed
+jh package search --limit 20 ml
+jh package search --registries General optimization
+
+# Get detailed info about a specific package
+jh package info DataFrames
+jh package info Plots --registries General
+
+# List package dependencies
+jh package dependency DataFrames              # Shows up to 10 direct dependencies
+jh package dependency DataFrames --indirect   # Includes indirect dependencies
+jh package dependency DataFrames --all --indirect  # Shows all dependencies
+jh package dependency CSV --registry General  # Use specific registry
 ```
 
 ### Project Operations

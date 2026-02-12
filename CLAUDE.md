@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Go-based CLI tool for interacting with JuliaHub, a platform for Julia computing. The CLI provides commands for authentication, dataset management, project management, user information, Git integration, and Julia integration.
+This is a Go-based CLI tool for interacting with JuliaHub, a platform for Julia computing. The CLI provides commands for authentication, dataset management, registry management, package management, project management, user information, Git integration, and Julia integration.
 
 ## Architecture
 
@@ -13,6 +13,8 @@ The application follows a command-line interface pattern using the Cobra library
 - **main.go**: Core CLI structure with command definitions and configuration management
 - **auth.go**: OAuth2 device flow authentication with JWT token handling
 - **datasets.go**: Dataset operations (list, download, upload, status) with REST API integration
+- **registries.go**: Registry operations (list) with REST API integration
+- **packages.go**: Package operations (search, info, dependency) with GraphQL API and documentation API integration
 - **projects.go**: Project management using GraphQL API with user filtering
 - **user.go**: User information retrieval using GraphQL API
 - **git.go**: Git integration (clone, push, fetch, pull) with JuliaHub authentication
@@ -29,7 +31,7 @@ The application follows a command-line interface pattern using the Cobra library
    - Stores tokens securely in `~/.juliahub` with 0600 permissions
 
 2. **API Integration**:
-   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`)
+   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`) and registry operations (`/api/v1/ui/registries/descriptions`)
    - **GraphQL API**: Used for projects and user info (`/v1/graphql`)
    - **Headers**: All GraphQL requests require `X-Hasura-Role: jhuser` header
    - **Authentication**: Uses ID tokens (`token.IDToken`) for API calls
@@ -37,6 +39,8 @@ The application follows a command-line interface pattern using the Cobra library
 3. **Command Structure**:
    - `jh auth`: Authentication commands (login, refresh, status, env)
    - `jh dataset`: Dataset operations (list, download, upload, status)
+   - `jh registry`: Registry operations (list with REST API, supports verbose mode)
+   - `jh package`: Package operations (search, info, dependency with GraphQL API and documentation API, supports filtering by registry, installation status, and failures)
    - `jh project`: Project management (list with GraphQL, supports user filtering)
    - `jh user`: User information (info with GraphQL)
    - `jh clone`: Git clone with JuliaHub authentication and project name resolution
@@ -82,6 +86,32 @@ go run . auth login -s juliahub.com
 go run . dataset list
 go run . dataset download <dataset-name>
 go run . dataset upload --new ./file.tar.gz
+```
+
+### Test registry operations
+```bash
+go run . registry list
+go run . registry list --verbose
+```
+
+### Test package operations
+```bash
+# Search for packages
+go run . package search dataframes
+go run . package search --verbose plots
+go run . package search --limit 20 ml
+go run . package search --registries General optimization
+go run . package search --installed
+
+# Get package info
+go run . package info DataFrames
+go run . package info Plots --registries General
+
+# Get package dependencies
+go run . package dependency DataFrames
+go run . package dependency DataFrames --indirect
+go run . package dependency DataFrames --all --indirect
+go run . package dependency CSV --registry General
 ```
 
 ### Test project and user operations
@@ -164,6 +194,8 @@ The application uses OAuth2 device flow:
 
 ### REST API Integration
 - **Dataset operations**: Use presigned URLs for upload/download
+- **Registry operations**: `/api/v1/registry/registries/descriptions` for listing registries
+- **Package documentation**: `/docs/{registry}/{package}/stable/pkg.json` for package dependency information
 - **Authentication**: Bearer token with ID token
 - **Upload workflow**: 3-step process (request presigned URL, upload to URL, close upload)
 
@@ -216,6 +248,41 @@ git clone https://github.com/user/repo.git                          # Ignored by
 - **Automatic login**: Runs OAuth2 device flow when server mismatch detected
 - **Token management**: Stores and refreshes tokens per server automatically
 - **Error handling**: Graceful fallback to other credential helpers for non-JuliaHub URLs
+
+## Package Management
+
+The CLI provides comprehensive package discovery and dependency analysis:
+
+### Package Search and Info
+- **Search**: `jh package search` uses GraphQL API to search packages across registries
+- **Info**: `jh package info` retrieves detailed package metadata
+- **Filtering**: Supports filtering by registry, installation status, and failures
+
+### Package Dependency (`jh package dependency`)
+- **Endpoint**: Uses package documentation API at `/docs/{registry}/{package}/stable/pkg.json`
+- **Registry resolution**: Automatically uses first registry package belongs to, or specific registry via `--registry` flag
+- **Dependency types**: Distinguishes between direct and indirect dependencies via `direct` field in API response
+- **Display limits**:
+  - Default: Shows up to 10 direct dependencies
+  - With `--indirect`: Shows up to 10 direct and 50 indirect dependencies
+  - With `--all`: Shows all dependencies without limits
+- **Output format**:
+  - Direct-only mode: Single table with columns: NAME, REGISTRY, UUID, VERSIONS
+  - Indirect mode: Separate sections for direct and indirect dependencies with columns: NAME, REGISTRY, UUID, VERSIONS
+  - Registry column shows which registry each dependency belongs to (empty for stdlib packages)
+
+#### Implementation Details (`packages.go`)
+- `getPackageDependencies()`: Main function for dependency retrieval
+  1. Fetches all registries to get registry IDs for GraphQL query
+  2. Searches for package using GraphQL to get registry information
+  3. Determines target registry (first registry or user-specified)
+  4. Fetches package documentation JSON from docs endpoint
+  5. Filters and limits dependencies based on flags
+  6. Displays results in formatted tables with separate sections
+
+#### Data Structures
+- `PackageDependency`: Represents a single dependency with fields for direct/indirect status, name, UUID, versions, registry, and slug
+- `PackageDocsResponse`: Response from documentation API containing package metadata and dependencies array
 
 ## Julia Integration
 
@@ -278,6 +345,10 @@ jh run setup
 - Clone command supports `project` (without username) and defaults to the logged-in user's username
 - Folder naming conflicts are resolved with automatic numbering (project-1, project-2, etc.)
 - Credential helper follows Git protocol: responds only to JuliaHub URLs, ignores others
+- Registry list output is concise by default (UUID and Name only); use `--verbose` flag for detailed information (owner, creation date, package count, description)
+- Package search output shows column headers (NAME, OWNER, VERSION, DESCRIPTION) by default; use `--verbose` flag for detailed key-value format
+- Package info command performs exact name match (case-insensitive) and displays detailed package information
+- Package commands support registry filtering via `--registries` flag (comma-separated list)
 
 ## Implementation Details
 
