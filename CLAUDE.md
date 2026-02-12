@@ -15,7 +15,7 @@ The application follows a command-line interface pattern using the Cobra library
 - **datasets.go**: Dataset operations (list, download, upload, status) with REST API integration
 - **registries.go**: Registry operations (list) with REST API integration
 - **projects.go**: Project management using GraphQL API with user filtering
-- **user.go**: User information retrieval using GraphQL API
+- **user.go**: User information retrieval using GraphQL API and REST API for listing users
 - **git.go**: Git integration (clone, push, fetch, pull) with JuliaHub authentication
 - **julia.go**: Julia installation and management
 - **run.go**: Julia execution with JuliaHub configuration
@@ -30,7 +30,11 @@ The application follows a command-line interface pattern using the Cobra library
    - Stores tokens securely in `~/.juliahub` with 0600 permissions
 
 2. **API Integration**:
+<<<<<<< HEAD
+   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`) and user management (`/app/config/features/manage`)
+=======
    - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`) and registry operations (`/api/v1/ui/registries/descriptions`)
+>>>>>>> fadd2b0ea19a8b11eb903d5884ffa50371e337e4
    - **GraphQL API**: Used for projects and user info (`/v1/graphql`)
    - **Headers**: All GraphQL requests require `X-Hasura-Role: jhuser` header
    - **Authentication**: Uses ID tokens (`token.IDToken`) for API calls
@@ -41,6 +45,8 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh registry`: Registry operations (list with REST API, supports verbose mode)
    - `jh project`: Project management (list with GraphQL, supports user filtering)
    - `jh user`: User information (info with GraphQL)
+   - `jh admin`: Administrative commands (user management)
+   - `jh admin user`: User management (list all users with REST API, supports verbose mode)
    - `jh clone`: Git clone with JuliaHub authentication and project name resolution
    - `jh push/fetch/pull`: Git operations with JuliaHub authentication
    - `jh git-credential`: Git credential helper for seamless authentication
@@ -98,6 +104,8 @@ go run . project list
 go run . project list --user
 go run . project list --user john
 go run . user info
+go run . admin user list
+go run . admin user list --verbose
 ```
 
 ### Test Git operations
@@ -172,6 +180,7 @@ The application uses OAuth2 device flow:
 
 ### REST API Integration
 - **Dataset operations**: Use presigned URLs for upload/download
+- **User management**: `/app/config/features/manage` endpoint for listing all users
 - **Authentication**: Bearer token with ID token
 - **Upload workflow**: 3-step process (request presigned URL, upload to URL, close upload)
 
@@ -286,6 +295,8 @@ jh run setup
 - Clone command supports `project` (without username) and defaults to the logged-in user's username
 - Folder naming conflicts are resolved with automatic numbering (project-1, project-2, etc.)
 - Credential helper follows Git protocol: responds only to JuliaHub URLs, ignores others
+- Admin user list command (`jh admin user list`) uses REST API endpoint `/app/config/features/manage` which requires appropriate permissions
+- User list output is concise by default (Name and Email only); use `--verbose` flag for detailed information (UUID, groups, features)
 - Registry list output is concise by default (UUID and Name only); use `--verbose` flag for detailed information (owner, creation date, package count, description)
 
 ## Implementation Details
