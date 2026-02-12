@@ -30,11 +30,7 @@ The application follows a command-line interface pattern using the Cobra library
    - Stores tokens securely in `~/.juliahub` with 0600 permissions
 
 2. **API Integration**:
-<<<<<<< HEAD
-   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`) and user management (`/app/config/features/manage`)
-=======
-   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`) and registry operations (`/api/v1/ui/registries/descriptions`)
->>>>>>> fadd2b0ea19a8b11eb903d5884ffa50371e337e4
+   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/ui/registries/descriptions`) and user management (`/app/config/features/manage`)
    - **GraphQL API**: Used for projects and user info (`/v1/graphql`)
    - **Headers**: All GraphQL requests require `X-Hasura-Role: jhuser` header
    - **Authentication**: Uses ID tokens (`token.IDToken`) for API calls
