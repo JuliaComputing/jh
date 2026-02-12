@@ -6,6 +6,7 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 
 - **Authentication**: OAuth2 device flow authentication with JWT token handling
 - **Dataset Management**: List, download, upload, and check status of datasets
+- **Registry Management**: List and manage Julia package registries
 - **Project Management**: List and filter projects using GraphQL API
 - **Git Integration**: Clone, push, fetch, and pull with automatic JuliaHub authentication
 - **Julia Integration**: Install Julia and run with JuliaHub package server configuration
@@ -148,6 +149,12 @@ go build -o jh .
 - `jh dataset upload [dataset-id] <file-path>` - Upload a dataset
 - `jh dataset status <dataset-id> [version]` - Show dataset status
 
+### Registry Management (`jh registry`)
+
+- `jh registry list` - List all package registries on JuliaHub
+  - Default: Shows only UUID and Name
+  - `jh registry list --verbose` - Show detailed registry information including owner, creation date, package count, and description
+
 ### Project Management (`jh project`)
 
 - `jh project list` - List all accessible projects
@@ -212,6 +219,19 @@ jh dataset upload --new ./my-data.tar.gz
 
 # Upload new version to existing dataset
 jh dataset upload my-dataset ./updated-data.tar.gz
+```
+
+### Registry Operations
+
+```bash
+# List all registries (UUID and Name only)
+jh registry list
+
+# List registries with detailed information
+jh registry list --verbose
+
+# List registries on custom server
+jh registry list -s yourinstall
 ```
 
 ### Project Operations

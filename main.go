@@ -161,11 +161,13 @@ job execution, project management, Git integration, and package hosting capabili
 Available command categories:
   auth      - Authentication and token management
   dataset   - Dataset operations (list, download, upload, status)
+  package   - Package search and exploration
+  registry  - Registry management (list registries)
   project   - Project management (list, filter by user)
   user      - User information and profile
   clone     - Clone projects with automatic authentication
   push      - Push changes with authentication
-  fetch     - Fetch updates with authentication  
+  fetch     - Fetch updates with authentication
   pull      - Pull changes with authentication
   julia     - Julia installation and management
   run       - Run Julia with JuliaHub configuration
@@ -545,6 +547,162 @@ Displays:
 
 		if err := statusDataset(server, datasetIdentifier, version); err != nil {
 			fmt.Printf("Failed to get dataset status: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var packageCmd = &cobra.Command{
+	Use:   "package",
+	Short: "Package search commands",
+	Long: `Search and explore Julia packages on JuliaHub.
+
+Packages are Julia libraries that provide reusable functionality. JuliaHub
+hosts packages from multiple registries and provides comprehensive search
+capabilities including filtering by tags, installation status, failures, and more.`,
+}
+
+var packageSearchCmd = &cobra.Command{
+	Use:   "search [search-term]",
+	Short: "Search for packages",
+	Long: `Search for Julia packages on JuliaHub.
+
+Displays package information including:
+- Package name, owner, and UUID
+- Version information
+- Description and repository
+- Tags and star count
+- Installation status
+- License information
+
+Filtering options:
+- Filter by registry using --registries flag (searches all registries by default)
+- Filter by installation status (--installed, --not-installed)
+- Filter by packages with download failures (--has-failures)
+
+Use --verbose flag for comprehensive output, or get a concise summary by default.`,
+	Example: "  jh package search dataframes\n  jh package search --installed\n  jh package search --verbose plots\n  jh package search --limit 20 ml\n  jh package search --registries General optimization",
+	Args:    cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		search := ""
+		if len(args) > 0 {
+			search = args[0]
+		}
+
+		limit, _ := cmd.Flags().GetInt("limit")
+		offset, _ := cmd.Flags().GetInt("offset")
+		verbose, _ := cmd.Flags().GetBool("verbose")
+		registryNamesStr, _ := cmd.Flags().GetString("registries")
+
+		// Handle boolean flags - only set if explicitly provided
+		var installed *bool
+		var notInstalled *bool
+		var hasFailures *bool
+
+		if cmd.Flags().Changed("installed") {
+			val, _ := cmd.Flags().GetBool("installed")
+			installed = &val
+		}
+
+		if cmd.Flags().Changed("not-installed") {
+			val, _ := cmd.Flags().GetBool("not-installed")
+			notInstalled = &val
+		}
+
+		if cmd.Flags().Changed("has-failures") {
+			val, _ := cmd.Flags().GetBool("has-failures")
+			hasFailures = &val
+		}
+
+		// Fetch all registries from the API
+		allRegistries, err := fetchRegistries(server)
+		if err != nil {
+			fmt.Printf("Failed to fetch registries: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Determine which registry IDs to use
+		var registryIDs []int
+		if registryNamesStr != "" {
+			// Use only specified registries
+			requestedNames := strings.Split(registryNamesStr, ",")
+			for _, requestedName := range requestedNames {
+				requestedName = strings.TrimSpace(requestedName)
+				if requestedName == "" {
+					continue
+				}
+
+				// Find matching registry (case-insensitive)
+				found := false
+				for _, reg := range allRegistries {
+					if strings.EqualFold(reg.Name, requestedName) {
+						registryIDs = append(registryIDs, reg.RegistryID)
+						found = true
+						break
+					}
+				}
+
+				if !found {
+					fmt.Printf("Registry not found: '%s'\n", requestedName)
+					os.Exit(1)
+				}
+			}
+		} else {
+			// Use all registries
+			for _, reg := range allRegistries {
+				registryIDs = append(registryIDs, reg.RegistryID)
+			}
+		}
+
+		if err := searchPackages(server, search, limit, offset, installed, notInstalled, hasFailures, registryIDs, verbose); err != nil {
+			fmt.Printf("Failed to search packages: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var registryCmd = &cobra.Command{
+	Use:   "registry",
+	Short: "Registry management commands",
+	Long: `Manage Julia package registries on JuliaHub.
+
+Registries are collections of Julia packages that can be registered and
+installed. JuliaHub supports multiple registries including the General
+registry, custom organizational registries, and test registries.`,
+}
+
+var registryListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List registries",
+	Long: `List all package registries on JuliaHub.
+
+By default, displays, UUID, and Name for each registry.
+Use --verbose flag to display comprehensive information including:
+- Registry UUID
+- Registry name and ID
+- Owner information
+- Creation date
+- Package count
+- Description
+- Registration status`,
+	Example: "  jh registry list\n  jh registry list --verbose\n  jh registry list -s custom-server.com",
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		verbose, _ := cmd.Flags().GetBool("verbose")
+
+		if err := listRegistries(server, verbose); err != nil {
+			fmt.Printf("Failed to list registries: %v\n", err)
 			os.Exit(1)
 		}
 	},
@@ -982,6 +1140,16 @@ func init() {
 	datasetUploadCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	datasetUploadCmd.Flags().Bool("new", false, "Create a new dataset")
 	datasetStatusCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	packageSearchCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	packageSearchCmd.Flags().Int("limit", 10, "Maximum number of results to return")
+	packageSearchCmd.Flags().Int("offset", 0, "Number of results to skip")
+	packageSearchCmd.Flags().Bool("installed", false, "Filter by installed packages")
+	packageSearchCmd.Flags().Bool("not-installed", false, "Filter by not installed packages")
+	packageSearchCmd.Flags().Bool("has-failures", false, "Filter by packages with download failures")
+	packageSearchCmd.Flags().String("registries", "", "Filter by registry names (comma-separated, e.g., 'General,CustomRegistry')")
+	packageSearchCmd.Flags().Bool("verbose", false, "Show detailed package information")
+	registryListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	registryListCmd.Flags().Bool("verbose", false, "Show detailed registry information")
 	projectListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	projectListCmd.Flags().String("user", "", "Filter projects by user (leave empty to show only your own projects)")
 	userInfoCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
@@ -994,13 +1162,15 @@ func init() {
 	authCmd.AddCommand(authLoginCmd, authRefreshCmd, authStatusCmd, authEnvCmd)
 	jobCmd.AddCommand(jobListCmd, jobStartCmd)
 	datasetCmd.AddCommand(datasetListCmd, datasetDownloadCmd, datasetUploadCmd, datasetStatusCmd)
+	packageCmd.AddCommand(packageSearchCmd)
+	registryCmd.AddCommand(registryListCmd)
 	projectCmd.AddCommand(projectListCmd)
 	userCmd.AddCommand(userInfoCmd)
 	juliaCmd.AddCommand(juliaInstallCmd)
 	runCmd.AddCommand(runSetupCmd)
 	gitCredentialCmd.AddCommand(gitCredentialHelperCmd, gitCredentialGetCmd, gitCredentialStoreCmd, gitCredentialEraseCmd, gitCredentialSetupCmd)
 
-	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, projectCmd, userCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd)
+	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, packageCmd, registryCmd, projectCmd, userCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd)
 }
 
 func main() {
