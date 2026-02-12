@@ -143,6 +143,9 @@ func getServerFromFlagOrConfig(cmd *cobra.Command) (string, error) {
 }
 
 func normalizeServer(server string) string {
+	if server == "juliahub" {
+		return "juliahub.com"
+	}
 	if strings.HasSuffix(server, ".com") || strings.HasSuffix(server, ".dev") {
 		return server
 	}
