@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Go-based CLI tool for interacting with JuliaHub, a platform for Julia computing. The CLI provides commands for authentication, dataset management, project management, user information, Git integration, and Julia integration.
+This is a Go-based CLI tool for interacting with JuliaHub, a platform for Julia computing. The CLI provides commands for authentication, dataset management, registry management, project management, user information, Git integration, and Julia integration.
 
 ## Architecture
 
@@ -13,6 +13,8 @@ The application follows a command-line interface pattern using the Cobra library
 - **main.go**: Core CLI structure with command definitions and configuration management
 - **auth.go**: OAuth2 device flow authentication with JWT token handling
 - **datasets.go**: Dataset operations (list, download, upload, status) with REST API integration
+- **registries.go**: Registry operations (list) with REST API integration
+- **packages.go**: Package operations (search, info) with GraphQL API integration
 - **projects.go**: Project management using GraphQL API with user filtering
 - **user.go**: User information retrieval using GraphQL API
 - **git.go**: Git integration (clone, push, fetch, pull) with JuliaHub authentication
@@ -29,7 +31,7 @@ The application follows a command-line interface pattern using the Cobra library
    - Stores tokens securely in `~/.juliahub` with 0600 permissions
 
 2. **API Integration**:
-   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`)
+   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`) and registry operations (`/api/v1/ui/registries/descriptions`)
    - **GraphQL API**: Used for projects and user info (`/v1/graphql`)
    - **Headers**: All GraphQL requests require `X-Hasura-Role: jhuser` header
    - **Authentication**: Uses ID tokens (`token.IDToken`) for API calls
@@ -37,6 +39,8 @@ The application follows a command-line interface pattern using the Cobra library
 3. **Command Structure**:
    - `jh auth`: Authentication commands (login, refresh, status, env)
    - `jh dataset`: Dataset operations (list, download, upload, status)
+   - `jh registry`: Registry operations (list with REST API, supports verbose mode)
+   - `jh package`: Package operations (search, info with GraphQL API, supports filtering by registry, installation status, and failures)
    - `jh project`: Project management (list with GraphQL, supports user filtering)
    - `jh user`: User information (info with GraphQL)
    - `jh clone`: Git clone with JuliaHub authentication and project name resolution
@@ -82,6 +86,26 @@ go run . auth login -s juliahub.com
 go run . dataset list
 go run . dataset download <dataset-name>
 go run . dataset upload --new ./file.tar.gz
+```
+
+### Test registry operations
+```bash
+go run . registry list
+go run . registry list --verbose
+```
+
+### Test package operations
+```bash
+# Search for packages
+go run . package search dataframes
+go run . package search --verbose plots
+go run . package search --limit 20 ml
+go run . package search --registries General optimization
+go run . package search --installed
+
+# Get package info
+go run . package info DataFrames
+go run . package info Plots --registries General
 ```
 
 ### Test project and user operations
@@ -278,6 +302,10 @@ jh run setup
 - Clone command supports `project` (without username) and defaults to the logged-in user's username
 - Folder naming conflicts are resolved with automatic numbering (project-1, project-2, etc.)
 - Credential helper follows Git protocol: responds only to JuliaHub URLs, ignores others
+- Registry list output is concise by default (UUID and Name only); use `--verbose` flag for detailed information (owner, creation date, package count, description)
+- Package search output shows column headers (NAME, OWNER, VERSION, DESCRIPTION) by default; use `--verbose` flag for detailed key-value format
+- Package info command performs exact name match (case-insensitive) and displays detailed package information
+- Package commands support registry filtering via `--registries` flag (comma-separated list)
 
 ## Implementation Details
 
