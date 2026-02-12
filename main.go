@@ -167,7 +167,7 @@ Available command categories:
   registry  - Registry management (list registries)
   project   - Project management (list, filter by user)
   user      - User information and profile
-  admin     - Administrative commands (user management)
+  admin     - Administrative commands (user management, token management)
   clone     - Clone projects with automatic authentication
   push      - Push changes with authentication
   fetch     - Fetch updates with authentication
@@ -1036,7 +1036,7 @@ var adminCmd = &cobra.Command{
 	Long: `Administrative commands for JuliaHub.
 
 These commands provide administrative functionality for managing JuliaHub
-resources such as users, groups, and system configuration.
+resources such as users, tokens, groups, and system configuration.
 
 Note: Some commands may require administrative permissions.`,
 }
@@ -1049,6 +1049,47 @@ var adminUserCmd = &cobra.Command{
 Provides commands to list and manage users across the JuliaHub instance.
 
 Note: These commands require appropriate administrative permissions.`,
+}
+
+var adminTokenCmd = &cobra.Command{
+	Use:   "token",
+	Short: "Token management commands",
+	Long: `Administrative commands for managing API tokens on JuliaHub.
+
+Provides commands to list and manage API tokens across the JuliaHub instance.
+
+Note: These commands require appropriate administrative permissions.`,
+}
+
+var tokenListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all tokens",
+	Long: `List all API tokens from JuliaHub.
+
+By default, displays only Subject, Created By, and Expired status for each token.
+Use --verbose flag to display comprehensive information including:
+- Subject and signature
+- Created by and creation date
+- Expiration date (with estimate indicator)
+- Expiration status
+
+This command uses the /app/token/activelist endpoint which requires
+appropriate permissions to view all tokens.`,
+	Example: "  jh admin token list\n  jh admin token list --verbose",
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		verbose, _ := cmd.Flags().GetBool("verbose")
+
+		if err := listTokens(server, verbose); err != nil {
+			fmt.Printf("Failed to list tokens: %v\n", err)
+			os.Exit(1)
+		}
+	},
 }
 
 var updateCmd = &cobra.Command{
@@ -1087,6 +1128,8 @@ func init() {
 	userInfoCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	userListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	userListCmd.Flags().Bool("verbose", false, "Show detailed user information")
+	tokenListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	tokenListCmd.Flags().Bool("verbose", false, "Show detailed token information")
 	cloneCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	pushCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	fetchCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
@@ -1100,7 +1143,8 @@ func init() {
 	projectCmd.AddCommand(projectListCmd)
 	userCmd.AddCommand(userInfoCmd)
 	adminUserCmd.AddCommand(userListCmd)
-	adminCmd.AddCommand(adminUserCmd)
+	adminTokenCmd.AddCommand(tokenListCmd)
+	adminCmd.AddCommand(adminUserCmd, adminTokenCmd)
 	juliaCmd.AddCommand(juliaInstallCmd)
 	runCmd.AddCommand(runSetupCmd)
 	gitCredentialCmd.AddCommand(gitCredentialHelperCmd, gitCredentialGetCmd, gitCredentialStoreCmd, gitCredentialEraseCmd, gitCredentialSetupCmd)
