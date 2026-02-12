@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Go-based CLI tool for interacting with JuliaHub, a platform for Julia computing. The CLI provides commands for authentication, dataset management, project management, user information, Git integration, and Julia integration.
+This is a Go-based CLI tool for interacting with JuliaHub, a platform for Julia computing. The CLI provides commands for authentication, dataset management, registry management, project management, user information, Git integration, and Julia integration.
 
 ## Architecture
 
@@ -13,6 +13,7 @@ The application follows a command-line interface pattern using the Cobra library
 - **main.go**: Core CLI structure with command definitions and configuration management
 - **auth.go**: OAuth2 device flow authentication with JWT token handling
 - **datasets.go**: Dataset operations (list, download, upload, status) with REST API integration
+- **registries.go**: Registry operations (list) with REST API integration
 - **projects.go**: Project management using GraphQL API with user filtering
 - **user.go**: User information retrieval using GraphQL API and REST API for listing users
 - **git.go**: Git integration (clone, push, fetch, pull) with JuliaHub authentication
@@ -29,7 +30,11 @@ The application follows a command-line interface pattern using the Cobra library
    - Stores tokens securely in `~/.juliahub` with 0600 permissions
 
 2. **API Integration**:
+<<<<<<< HEAD
    - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`) and user management (`/app/config/features/manage`)
+=======
+   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`) and registry operations (`/api/v1/ui/registries/descriptions`)
+>>>>>>> fadd2b0ea19a8b11eb903d5884ffa50371e337e4
    - **GraphQL API**: Used for projects and user info (`/v1/graphql`)
    - **Headers**: All GraphQL requests require `X-Hasura-Role: jhuser` header
    - **Authentication**: Uses ID tokens (`token.IDToken`) for API calls
@@ -37,6 +42,7 @@ The application follows a command-line interface pattern using the Cobra library
 3. **Command Structure**:
    - `jh auth`: Authentication commands (login, refresh, status, env)
    - `jh dataset`: Dataset operations (list, download, upload, status)
+   - `jh registry`: Registry operations (list with REST API, supports verbose mode)
    - `jh project`: Project management (list with GraphQL, supports user filtering)
    - `jh user`: User information (info with GraphQL)
    - `jh admin`: Administrative commands (user management)
@@ -86,6 +92,12 @@ go run . dataset download <dataset-name>
 go run . dataset upload --new ./file.tar.gz
 ```
 
+### Test registry operations
+```bash
+go run . registry list
+go run . registry list --verbose
+```
+
 ### Test project and user operations
 ```bash
 go run . project list
@@ -98,7 +110,8 @@ go run . admin user list --verbose
 
 ### Test Git operations
 ```bash
-go run . clone john/my-project
+go run . clone john/my-project  # Clone from another user
+go run . clone my-project       # Clone from logged-in user
 go run . push
 go run . fetch
 go run . pull
@@ -182,7 +195,8 @@ The application uses OAuth2 device flow:
 The CLI provides seamless Git integration with JuliaHub authentication through two approaches:
 
 ### Method 1: JuliaHub CLI Wrapper Commands
-- **Clone**: `jh clone username/project` - resolves project names to UUIDs and clones with authentication
+- **Clone**: `jh clone [username/]project` - resolves project names to UUIDs and clones with authentication
+  - Format: `jh clone username/project` or `jh clone project` (defaults to logged-in user)
 - **Push/Fetch/Pull**: `jh push/fetch/pull [args...]` - wraps Git commands with authentication headers
 - **Authentication**: Uses `http.extraHeader="Authorization: Bearer <id_token>"` for Git operations
 - **Argument passthrough**: All Git arguments are passed through to underlying commands
@@ -229,7 +243,8 @@ The CLI provides Julia installation and execution with JuliaHub configuration:
 - Installs latest stable Julia version
 
 ### Julia Credentials
-- **Authentication file**: Automatically creates `~/.julia/servers/<server>/auth.toml`
+- **Authentication file**: Automatically creates `$JULIA_DEPOT_PATH/servers/<server>/auth.toml` (or `~/.julia/servers/<server>/auth.toml` if `JULIA_DEPOT_PATH` is not set)
+- **Depot path detection**: Respects `JULIA_DEPOT_PATH` environment variable, uses first path if multiple are specified
 - **Atomic writes**: Uses temporary file + rename for safe credential updates
 - **Automatic updates**: Credentials are automatically refreshed when:
   - User runs `jh auth login`
@@ -257,7 +272,7 @@ jh run -- --project=. --threads=4 script.jl # Run with flags
 ```bash
 jh run setup
 ```
-- Creates/updates `~/.julia/servers/<server>/auth.toml` with current credentials
+- Creates/updates `$JULIA_DEPOT_PATH/servers/<server>/auth.toml` with current credentials (or `~/.julia/servers/<server>/auth.toml` if not set)
 - Does not start Julia
 - Useful for explicitly updating credentials
 
@@ -270,16 +285,19 @@ jh run setup
 - File uploads use multipart form data with proper content types
 - Julia auth files use TOML format with `preferred_username` from JWT claims
 - Julia auth files use atomic writes (temp file + rename) to prevent corruption
+- Julia credentials respect `JULIA_DEPOT_PATH` environment variable (uses first path if multiple are specified)
 - Julia credentials are automatically updated after login and token refresh
 - Git commands use `http.extraHeader` for authentication and pass through all arguments
 - Git credential helper provides seamless authentication for standard Git commands
 - Multi-server authentication handled automatically via credential helper
 - Project filtering supports `--user` parameter for showing specific user's projects or own projects
 - Clone command automatically resolves `username/project` format to project UUIDs
+- Clone command supports `project` (without username) and defaults to the logged-in user's username
 - Folder naming conflicts are resolved with automatic numbering (project-1, project-2, etc.)
 - Credential helper follows Git protocol: responds only to JuliaHub URLs, ignores others
 - Admin user list command (`jh admin user list`) uses REST API endpoint `/app/config/features/manage` which requires appropriate permissions
 - User list output is concise by default (Name and Email only); use `--verbose` flag for detailed information (UUID, groups, features)
+- Registry list output is concise by default (UUID and Name only); use `--verbose` flag for detailed information (owner, creation date, package count, description)
 
 ## Implementation Details
 
@@ -288,7 +306,9 @@ jh run setup
 The Julia credentials system consists of three main functions:
 
 1. **`createJuliaAuthFile(server, token)`**:
-   - Creates `~/.julia/servers/<server>/auth.toml` with TOML-formatted credentials
+   - Determines depot path from `JULIA_DEPOT_PATH` environment variable (uses first path if multiple)
+   - Falls back to `~/.julia` if `JULIA_DEPOT_PATH` is not set
+   - Creates `{depot}/servers/<server>/auth.toml` with TOML-formatted credentials
    - Uses atomic writes: writes to temporary file, syncs, then renames
    - Includes all necessary fields: tokens, expiration, refresh URL, user info
    - Called by `setupJuliaCredentials()` and `updateJuliaCredentialsIfNeeded()`
@@ -313,7 +333,8 @@ The Julia credentials system consists of three main functions:
 
 The `updateJuliaCredentialsIfNeeded(server, token)` function:
 - Called automatically by `ensureValidToken()` after token refresh
-- Checks if `~/.julia/servers/<server>/auth.toml` exists
+- Determines depot path from `JULIA_DEPOT_PATH` (same logic as `createJuliaAuthFile`)
+- Checks if `{depot}/servers/<server>/auth.toml` exists
 - If exists, updates it with refreshed token
 - If not exists, does nothing (user hasn't used Julia integration yet)
 - Errors are silently ignored to avoid breaking token operations
