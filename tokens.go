@@ -8,7 +8,6 @@ import (
 	"time"
 )
 
-// Token represents a JuliaHub API token
 type Token struct {
 	CreatedBy           string `json:"created_by"`
 	IsExpired           bool   `json:"is_expired"`
@@ -19,24 +18,21 @@ type Token struct {
 	Signature           string `json:"signature"`
 }
 
-// TokensResponse represents the response from /app/token/activelist
 type TokensResponse struct {
 	Tokens  []Token `json:"tokens"`
 	Message string  `json:"message"`
 	Success bool    `json:"success"`
 }
 
-// formatTokenDate parses and formats a token date string into a readable format
 func formatTokenDate(dateStr string) string {
 	// Try parsing as RFC3339 with fractional seconds
 	t, err := time.Parse(time.RFC3339, dateStr)
 	if err != nil {
-		// If parsing fails, return the original string
 		return dateStr
 	}
+
 	// Convert to local timezone
 	localTime := t.Local()
-	// Format with timezone offset: "Jan 02, 2006 15:04:05 -0700"
 	return localTime.Format("Jan 02, 2006 15:04:05 -0700")
 }
 
