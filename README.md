@@ -11,7 +11,7 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 - **Git Integration**: Clone, push, fetch, and pull with automatic JuliaHub authentication
 - **Julia Integration**: Install Julia and run with JuliaHub package server configuration
 - **User Management**: Display user information and view profile details
-- **Administrative Commands**: Manage users and system resources (requires admin permissions)
+- **Administrative Commands**: Manage users, tokens, and system resources (requires admin permissions)
 
 ## Installation
 
@@ -186,9 +186,15 @@ go build -o jh .
 
 ### Administrative Commands (`jh admin`)
 
+#### User Management
 - `jh admin user list` - List all users (requires appropriate permissions)
   - Default: Shows only Name and Email
   - `jh admin user list --verbose` - Show detailed user information including UUID, groups, and features
+
+#### Token Management
+- `jh admin token list` - List all tokens (requires appropriate permissions)
+  - Default: Shows only Subject, Created By, and Expired status
+  - `jh admin token list --verbose` - Show detailed token information including signature, creation date, expiration date (with estimate indicator)
 
 ### Update (`jh update`)
 
@@ -252,6 +258,28 @@ jh project list --user
 
 # List projects by specific user
 jh project list --user alice
+```
+
+### Administrative Operations
+
+```bash
+# List all users (requires admin permissions)
+jh admin user list
+
+# List users with detailed information
+jh admin user list --verbose
+
+# List all tokens (requires admin permissions)
+jh admin token list
+
+# List tokens with detailed information including signatures and dates
+jh admin token list --verbose
+
+# List tokens on custom server
+jh admin token list -s yourinstall
+
+# Use specific timezone for date display
+TZ=America/New_York jh admin token list --verbose
 ```
 
 ### Git Workflow
