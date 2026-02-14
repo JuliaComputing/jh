@@ -323,6 +323,28 @@ environment variables that can be used by other tools or scripts.`,
 	},
 }
 
+var authBase64Cmd = &cobra.Command{
+	Use:   "base64",
+	Short: "Print base64-encoded auth.toml to stdout",
+	Long: `Create auth.toml content and print it as base64 to stdout.
+
+This command:
+1. Ensures you have a valid authentication token (refreshes if needed)
+2. Generates auth.toml content with all required fields
+3. Encodes the content to base64
+4. Prints the encoded string to stdout
+
+This is useful for passing authentication configuration to other systems
+or tools that expect auth.toml in base64 format.`,
+	Example: "  jh auth base64\n  jh auth base64 > encoded_auth.txt",
+	Run: func(cmd *cobra.Command, args []string) {
+		if err := authBase64Command(); err != nil {
+			fmt.Printf("Failed to generate base64 auth: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
 var jobCmd = &cobra.Command{
 	Use:   "job",
 	Short: "Job management commands",
@@ -1093,7 +1115,7 @@ func init() {
 	pullCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	updateCmd.Flags().Bool("force", false, "Force update even if current version is newer than latest release")
 
-	authCmd.AddCommand(authLoginCmd, authRefreshCmd, authStatusCmd, authEnvCmd)
+	authCmd.AddCommand(authLoginCmd, authRefreshCmd, authStatusCmd, authEnvCmd, authBase64Cmd)
 	jobCmd.AddCommand(jobListCmd, jobStartCmd)
 	datasetCmd.AddCommand(datasetListCmd, datasetDownloadCmd, datasetUploadCmd, datasetStatusCmd)
 	registryCmd.AddCommand(registryListCmd)
