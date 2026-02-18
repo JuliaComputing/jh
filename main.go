@@ -143,6 +143,9 @@ func getServerFromFlagOrConfig(cmd *cobra.Command) (string, error) {
 }
 
 func normalizeServer(server string) string {
+	if server == "juliahub" {
+		return "juliahub.com"
+	}
 	if strings.HasSuffix(server, ".com") || strings.HasSuffix(server, ".dev") {
 		return server
 	}
@@ -165,6 +168,7 @@ Available command categories:
   registry  - Registry management (list registries)
   project   - Project management (list, filter by user)
   user      - User information and profile
+  admin     - Administrative commands (user management, token management)
   clone     - Clone projects with automatic authentication
   push      - Push changes with authentication
   fetch     - Fetch updates with authentication
@@ -682,7 +686,7 @@ var registryListCmd = &cobra.Command{
 	Short: "List registries",
 	Long: `List all package registries on JuliaHub.
 
-By default, displays, UUID, and Name for each registry.
+By default, displays only UUID and Name for each registry.
 Use --verbose flag to display comprehensive information including:
 - Registry UUID
 - Registry name and ID
@@ -822,6 +826,37 @@ Displays comprehensive information about the current user including:
 
 		if err := showUserInfo(server); err != nil {
 			fmt.Printf("Failed to get user info: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var userListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all users",
+	Long: `List all users from JuliaHub.
+
+By default, displays only Name and Email for each user.
+Use --verbose flag to display comprehensive information including:
+- UUID and email addresses
+- Names
+- JuliaHub groups and site groups
+- Feature flags
+
+This command uses the /app/config/features/manage endpoint which requires
+appropriate permissions to view all users.`,
+	Example: "  jh admin user list\n  jh admin user list --verbose",
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		verbose, _ := cmd.Flags().GetBool("verbose")
+
+		if err := listUsers(server, verbose); err != nil {
+			fmt.Printf("Failed to list users: %v\n", err)
 			os.Exit(1)
 		}
 	},
@@ -1111,6 +1146,68 @@ without needing to use the 'jh' wrapper commands.`,
 	},
 }
 
+var adminCmd = &cobra.Command{
+	Use:   "admin",
+	Short: "Administrative commands",
+	Long: `Administrative commands for JuliaHub.
+
+These commands provide administrative functionality for managing JuliaHub
+resources such as users, tokens, groups, and system configuration.
+
+Note: Some commands may require administrative permissions.`,
+}
+
+var adminUserCmd = &cobra.Command{
+	Use:   "user",
+	Short: "User management commands",
+	Long: `Administrative commands for managing users on JuliaHub.
+
+Provides commands to list and manage users across the JuliaHub instance.
+
+Note: These commands require appropriate administrative permissions.`,
+}
+
+var adminTokenCmd = &cobra.Command{
+	Use:   "token",
+	Short: "Token management commands",
+	Long: `Administrative commands for managing API tokens on JuliaHub.
+
+Provides commands to list and manage API tokens across the JuliaHub instance.
+
+Note: These commands require appropriate administrative permissions.`,
+}
+
+var tokenListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all tokens",
+	Long: `List all API tokens from JuliaHub.
+
+By default, displays only Subject, Created By, and Expired status for each token.
+Use --verbose flag to display comprehensive information including:
+- Subject and signature
+- Created by and creation date
+- Expiration date (with estimate indicator)
+- Expiration status
+
+This command uses the /app/token/activelist endpoint which requires
+appropriate permissions to view all tokens.`,
+	Example: "  jh admin token list\n  jh admin token list --verbose",
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		verbose, _ := cmd.Flags().GetBool("verbose")
+
+		if err := listTokens(server, verbose); err != nil {
+			fmt.Printf("Failed to list tokens: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
 var updateCmd = &cobra.Command{
 	Use:   "update",
 	Short: "Update jh to the latest version",
@@ -1140,6 +1237,7 @@ func init() {
 	datasetUploadCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	datasetUploadCmd.Flags().Bool("new", false, "Create a new dataset")
 	datasetStatusCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+<<<<<<< HEAD
 	packageSearchCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	packageSearchCmd.Flags().Int("limit", 10, "Maximum number of results to return")
 	packageSearchCmd.Flags().Int("offset", 0, "Number of results to skip")
@@ -1148,11 +1246,17 @@ func init() {
 	packageSearchCmd.Flags().Bool("has-failures", false, "Filter by packages with download failures")
 	packageSearchCmd.Flags().String("registries", "", "Filter by registry names (comma-separated, e.g., 'General,CustomRegistry')")
 	packageSearchCmd.Flags().Bool("verbose", false, "Show detailed package information")
+=======
+>>>>>>> 598769ba8b5d9204ddfa0992fd62b572c17226b4
 	registryListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	registryListCmd.Flags().Bool("verbose", false, "Show detailed registry information")
 	projectListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	projectListCmd.Flags().String("user", "", "Filter projects by user (leave empty to show only your own projects)")
 	userInfoCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	userListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	userListCmd.Flags().Bool("verbose", false, "Show detailed user information")
+	tokenListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	tokenListCmd.Flags().Bool("verbose", false, "Show detailed token information")
 	cloneCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	pushCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	fetchCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
@@ -1166,11 +1270,14 @@ func init() {
 	registryCmd.AddCommand(registryListCmd)
 	projectCmd.AddCommand(projectListCmd)
 	userCmd.AddCommand(userInfoCmd)
+	adminUserCmd.AddCommand(userListCmd)
+	adminTokenCmd.AddCommand(tokenListCmd)
+	adminCmd.AddCommand(adminUserCmd, adminTokenCmd)
 	juliaCmd.AddCommand(juliaInstallCmd)
 	runCmd.AddCommand(runSetupCmd)
 	gitCredentialCmd.AddCommand(gitCredentialHelperCmd, gitCredentialGetCmd, gitCredentialStoreCmd, gitCredentialEraseCmd, gitCredentialSetupCmd)
 
-	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, packageCmd, registryCmd, projectCmd, userCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd)
+	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, projectCmd, packageCmd, registryCmd, userCmd, adminCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd)
 }
 
 func main() {
