@@ -1,0 +1,43 @@
+{
+  "name": "jh",
+  "version": "1.0.0",
+  "description": "JuliaHub CLI - A command line interface for interacting with JuliaHub",
+  "main": "dist/index.js",
+  "bin": {
+    "jh": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "lint": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build",
+    "pkg": "npm run build && npx pkg dist/index.js --targets node18-linux-x64,node18-macos-x64,node18-win-x64 --output binaries/jh"
+  },
+  "keywords": [
+    "juliahub",
+    "julia",
+    "cli"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@types/commander": "^2.12.0",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.9.2",
+    "jest": "^30.2.0",
+    "pkg": "^5.8.1",
+    "ts-jest": "^29.4.5",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "commander": "^14.0.2"
+  }
+}
