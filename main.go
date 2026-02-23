@@ -663,7 +663,25 @@ installed. JuliaHub supports multiple registries including the General
 registry, custom organizational registries, and test registries.`,
 }
 
-var registryAddCmd = &cobra.Command{
+var registryConfigCmd = &cobra.Command{
+	Use:     "config <name>",
+	Short:   "Show or modify the configuration for a registry",
+	Example: "  jh registry config JuliaSimRegistry\n  jh registry config JuliaSimRegistry -s nightly.juliahub.dev",
+	Args:    cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		if err := getRegistryConfig(server, args[0]); err != nil {
+			fmt.Printf("Failed to get registry config: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var registryConfigAddCmd = &cobra.Command{
 	Use:   "add",
 	Short: "Add a new registry",
 	Long:  registryMutateHelp("add"),
@@ -681,10 +699,10 @@ var registryAddCmd = &cobra.Command{
       "credential_key": "JC Auth Token",
       "server_type": "", "github_credential_type": "", "api_host": "", "url": "", "user_name": ""
     }]
-  }' | jh registry add
+  }' | jh registry config add
 
   # Read from file
-  jh registry add --file registry.json
+  jh registry config add --file registry.json
 
   # GitHub with Personal Access Token
   echo '{
@@ -700,7 +718,7 @@ var registryAddCmd = &cobra.Command{
       "user_name": "myuser", "credential_key": "my-pat-token-id",
       "api_host": null, "host": ""
     }]
-  }' | jh registry add`,
+  }' | jh registry config add`,
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
@@ -724,7 +742,7 @@ var registryAddCmd = &cobra.Command{
 	},
 }
 
-var registryUpdateCmd = &cobra.Command{
+var registryConfigUpdateCmd = &cobra.Command{
 	Use:   "update",
 	Short: "Update an existing registry",
 	Long:  registryMutateHelp("update"),
@@ -742,10 +760,10 @@ var registryUpdateCmd = &cobra.Command{
       "credential_key": "JC Auth Token",
       "server_type": "", "github_credential_type": "", "api_host": "", "url": "", "user_name": ""
     }]
-  }' | jh registry update
+  }' | jh registry config update
 
   # Read from file
-  jh registry update --file registry.json
+  jh registry config update --file registry.json
 
   # Update GitHub registry to use a new credential
   echo '{
@@ -761,7 +779,7 @@ var registryUpdateCmd = &cobra.Command{
       "user_name": "myuser", "credential_key": "new-pat-token-id",
       "api_host": null, "host": ""
     }]
-  }' | jh registry update`,
+  }' | jh registry config update`,
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
@@ -780,24 +798,6 @@ var registryUpdateCmd = &cobra.Command{
 
 		if err := updateRegistry(server, payload); err != nil {
 			fmt.Printf("Failed to update registry: %v\n", err)
-			os.Exit(1)
-		}
-	},
-}
-
-var registryConfigCmd = &cobra.Command{
-	Use:     "config <name>",
-	Short:   "Show the configuration for a registry",
-	Example: "  jh registry config JuliaSimRegistry\n  jh registry config JuliaSimRegistry -s nightly.juliahub.dev",
-	Args:    cobra.ExactArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		server, err := getServerFromFlagOrConfig(cmd)
-		if err != nil {
-			fmt.Printf("Failed to get server config: %v\n", err)
-			os.Exit(1)
-		}
-		if err := getRegistryConfig(server, args[0]); err != nil {
-			fmt.Printf("Failed to get registry config: %v\n", err)
 			os.Exit(1)
 		}
 	},
@@ -1359,10 +1359,6 @@ func init() {
 	datasetUploadCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	datasetUploadCmd.Flags().Bool("new", false, "Create a new dataset")
 	datasetStatusCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
-	registryAddCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
-	registryAddCmd.Flags().StringP("file", "f", "", "Path to JSON config file (reads from stdin if omitted)")
-	registryUpdateCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
-	registryUpdateCmd.Flags().StringP("file", "f", "", "Path to JSON config file (reads from stdin if omitted)")
 	registryListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	registryListCmd.Flags().Bool("verbose", false, "Show detailed registry information")
 	projectListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
@@ -1382,7 +1378,12 @@ func init() {
 	jobCmd.AddCommand(jobListCmd, jobStartCmd)
 	datasetCmd.AddCommand(datasetListCmd, datasetDownloadCmd, datasetUploadCmd, datasetStatusCmd)
 	registryConfigCmd.Flags().StringP("server", "s", "", "JuliaHub server")
-	registryCmd.AddCommand(registryListCmd, registryAddCmd, registryUpdateCmd, registryConfigCmd)
+	registryConfigAddCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	registryConfigAddCmd.Flags().StringP("file", "f", "", "Path to JSON config file (reads from stdin if omitted)")
+	registryConfigUpdateCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	registryConfigUpdateCmd.Flags().StringP("file", "f", "", "Path to JSON config file (reads from stdin if omitted)")
+	registryConfigCmd.AddCommand(registryConfigAddCmd, registryConfigUpdateCmd)
+	registryCmd.AddCommand(registryListCmd, registryConfigCmd)
 	projectCmd.AddCommand(projectListCmd)
 	userCmd.AddCommand(userInfoCmd)
 	adminUserCmd.AddCommand(userListCmd)

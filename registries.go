@@ -90,20 +90,22 @@ func listRegistries(server string, verbose bool) error {
 	fmt.Printf("Found %d registr%s:\n\n", len(registries), pluralize(len(registries), "y", "ies"))
 
 	for _, registry := range registries {
+		if !verbose {
+			fmt.Printf("%s (%s)\n", registry.Name, registry.UUID)
+			continue
+		}
 		fmt.Printf("UUID: %s\n", registry.UUID)
 		fmt.Printf("Name: %s\n", registry.Name)
-		if verbose {
-			if registry.Owner != nil {
-				fmt.Printf("Owner: %s\n", *registry.Owner)
-			} else {
-				fmt.Printf("Owner: (none)\n")
-			}
-			fmt.Printf("Register: %t\n", registry.Register)
-			fmt.Printf("Creation Date: %s\n", registry.CreationDate.Time.Format(time.RFC3339))
-			fmt.Printf("Package Count: %d\n", registry.PackageCount)
-			if registry.Description != "" {
-				fmt.Printf("Description: %s\n", registry.Description)
-			}
+		if registry.Owner != nil {
+			fmt.Printf("Owner: %s\n", *registry.Owner)
+		} else {
+			fmt.Printf("Owner: (none)\n")
+		}
+		fmt.Printf("Register: %t\n", registry.Register)
+		fmt.Printf("Creation Date: %s\n", registry.CreationDate.Time.Format(time.RFC3339))
+		fmt.Printf("Package Count: %d\n", registry.PackageCount)
+		if registry.Description != "" {
+			fmt.Printf("Description: %s\n", registry.Description)
 		}
 		fmt.Println()
 	}
@@ -222,7 +224,7 @@ func submitRegistry(server string, payload map[string]interface{}, operation str
 		return lastErr
 	}
 
-	fmt.Printf("Registry '%s' %s submitted, waiting for completion...\n", name, operation)
+	fmt.Printf("Registry '%s' %s submitted, validating configuration...\n", name, operation)
 	return pollRegistrySaveStatus(server, token.IDToken, name, operation)
 }
 

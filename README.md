@@ -156,8 +156,8 @@ go build -o jh .
   - Default: Shows only UUID and Name
   - `jh registry list --verbose` - Show detailed registry information including owner, creation date, package count, and description
 - `jh registry config <name>` - Show the full JSON configuration for a registry
-- `jh registry add` - Add a new registry (JSON payload via stdin or `--file`)
-- `jh registry update` - Update an existing registry (same JSON schema as add, same flags)
+- `jh registry config add` - Add a new registry (JSON payload via stdin or `--file`)
+- `jh registry config update` - Update an existing registry (same JSON schema as add, same flags)
 
 ### Project Management (`jh project`)
 
@@ -267,13 +267,13 @@ echo '{
     "credential_key": "JC Auth Token",
     "server_type": "", "github_credential_type": "", "api_host": "", "url": "", "user_name": ""
   }]
-}' | jh registry add
+}' | jh registry config add
 
 # Or use a file
-jh registry add --file registry.json
+jh registry config add --file registry.json
 
 # Update an existing registry (same JSON schema, registry identified by "name" field)
-jh registry update --file registry.json
+jh registry config update --file registry.json
 ```
 
 ### Project Operations

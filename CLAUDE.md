@@ -39,7 +39,8 @@ The application follows a command-line interface pattern using the Cobra library
 3. **Command Structure**:
    - `jh auth`: Authentication commands (login, refresh, status, env)
    - `jh dataset`: Dataset operations (list, download, upload, status)
-   - `jh registry`: Registry operations (list, config, add, update — all via REST API; add/update accept JSON via stdin or `--file`)
+   - `jh registry`: Registry operations (list, config — all via REST API)
+   - `jh registry config`: Show registry JSON config by name; subcommands add/update accept JSON via stdin or `--file`
    - `jh project`: Project management (list with GraphQL, supports user filtering)
    - `jh user`: User information (info with GraphQL)
    - `jh admin`: Administrative commands (user management, token management)
@@ -111,11 +112,11 @@ echo '{
     "credential_key": "JC Auth Token",
     "server_type": "", "github_credential_type": "", "api_host": "", "url": "", "user_name": ""
   }]
-}' | go run . registry add
-go run . registry add --file registry.json
+}' | go run . registry config add
+go run . registry config add --file registry.json
 
 # Update an existing registry (same JSON schema, same flags)
-go run . registry update --file registry.json
+go run . registry config update --file registry.json
 ```
 
 ### Test project and user operations
@@ -327,7 +328,7 @@ jh run setup
 - User list output is concise by default (Name and Email only); use `--verbose` flag for detailed information (UUID, groups, features)
 - Registry list output is concise by default (UUID and Name only); use `--verbose` flag for detailed information (owner, creation date, package count, description)
 - Registry config command (`jh registry config <name>`) uses REST API endpoint `/api/v1/registry/config/registry/{name}` (GET) and prints the full JSON response
-- Registry add/update commands (`jh registry add` / `jh registry update`) use REST API endpoint `/api/v1/registry/config/registry/{name}` (POST); the backend creates or updates based on whether the registry already exists
+- Registry add/update commands (`jh registry config add` / `jh registry config update`) use REST API endpoint `/api/v1/registry/config/registry/{name}` (POST); the backend creates or updates based on whether the registry already exists
 - Both commands accept the full registry JSON payload via `--file <path>` or stdin; the payload `name` field identifies the registry
 - Registry add/update always poll `/api/v1/registry/config/registry/{name}/savestatus` every 3 seconds up to a 2-minute timeout
 - Bundle provider type automatically sets `license_detect: false` in the payload
@@ -351,7 +352,7 @@ jh run setup
 - `listRegistries` unmarshals into `[]Registry` and formats output; `--verbose` adds owner, date, package count, and description
 - `getRegistryConfig` pretty-prints the raw JSON response
 
-**`jh registry add` / `jh registry update`:**
+**`jh registry config add` / `jh registry config update`:**
 
 - Both call `submitRegistry(server, payload, operation)` with `operation` set to `"creation"` or `"update"` for status messages
 - `submitRegistry` POSTs to `/api/v1/registry/config/registry/{name}` with retry on 500s, then calls `pollRegistrySaveStatus()`
