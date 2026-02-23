@@ -555,6 +555,104 @@ Displays:
 	},
 }
 
+func registryMutateHelp(verb string) string {
+	var verbLine, nameNote, updateNote string
+	if verb == "add" {
+		verbLine = "Add a new Julia package registry on JuliaHub."
+		nameNote = "// required"
+	} else {
+		verbLine = "Update an existing Julia package registry on JuliaHub."
+		nameNote = "// required; identifies the registry to update"
+		updateNote = "\n\nThe registry is identified by the \"name\" field. All fields are replaced\nwith the provided values; omitted optional fields revert to defaults."
+	}
+
+	return verbLine + `
+
+Reads the registry configuration from a JSON file (--file) or stdin.
+The JSON is validated and forwarded to the API as-is.` + updateNote + `
+
+Registry ` + verb + ` is polled until completion (up to 2 minutes).
+Use ` + "`jh registry config <name>`" + ` to inspect the result afterward.
+
+REGISTRY JSON SCHEMA
+
+  {
+    "name":            "<registry-name>",  ` + nameNote + `
+    "license_detect":  true,
+    "artifact":        { "download": true },
+    "docs":            {
+                         "download": true,
+                         "docgen_check_installable": false,
+                         "html_size_threshold_bytes": null
+                       },
+    "metadata":        { "download": true },
+    "pkg":             { "download": true, "static_analysis_runs": [] },
+    "enabled":         true,
+    "display_apps":    true,
+    "owner":           "<username>",  // optional; defaults to current user
+    "sync_schedule":   null,          // or: see SYNC SCHEDULE below
+    "download_providers": [ <provider>, ... ]  // required; one or more entries
+  }
+
+SYNC SCHEDULE
+
+  {
+    "interval_sec": 420,
+    "days":         [1, 2, 3, 4, 5, 6, 7],
+    "start_hour":   0,
+    "end_hour":     24,
+    "timezone":     "UTC"
+  }
+
+PROVIDER TYPES
+
+  gitserver — sync from a Git repository:
+  {
+    "type":                   "gitserver",
+    "url":                    "<repo-url>",
+    "server_type":            "github|gitlab|bitbucket|bare-git",
+    "github_credential_type": "pat|app",
+    "user_name":              "<user>",
+    "credential_key":         "<token-id>",
+    "api_host":               null,
+    "host":                   ""
+  }
+
+  cacheserver — sync from a JuliaHub package cache:
+  {
+    "type":                   "cacheserver",
+    "host":                   "<hostname>",
+    "credential_key":         "<token-id>",
+    "server_type":            "",
+    "github_credential_type": "",
+    "api_host":               "",
+    "url":                    "",
+    "user_name":              ""
+  }
+
+  bundle — local bundle (sets license_detect: false automatically):
+  {
+    "type":                   "bundle",
+    "credential_key":         "",
+    "server_type":            "",
+    "github_credential_type": "",
+    "api_host":               "",
+    "url":                    "",
+    "user_name":              "",
+    "host":                   ""
+  }
+
+  genericserver — generic server with basic auth:
+  {
+    "type": "genericserver",
+    "auth": {
+      "type":           "basic",
+      "user_name":      "<user>",
+      "credential_key": "<token-id>"
+    }
+  }`
+}
+
 var registryCmd = &cobra.Command{
 	Use:   "registry",
 	Short: "Registry management commands",
@@ -568,49 +666,7 @@ registry, custom organizational registries, and test registries.`,
 var registryAddCmd = &cobra.Command{
 	Use:   "add",
 	Short: "Add a new registry",
-	Long: `Add a new Julia package registry on JuliaHub.
-
-Reads the registry configuration from a JSON file (--file) or stdin. The JSON must
-match the registry API schema exactly — it is forwarded to the API as-is.
-
-Registry creation is always polled until completion (up to 2 minutes).
-
-REGISTRY JSON SCHEMA
-
-  {
-    "name": "<registry-name>",   // required
-    "license_detect": true,
-    "artifact":  { "download": true },
-    "docs":      { "download": true, "docgen_check_installable": false,
-                   "html_size_threshold_bytes": null },
-    "metadata":  { "download": true },
-    "pkg":       { "download": true, "static_analysis_runs": [] },
-    "enabled":      true,
-    "display_apps": true,
-    "owner":        "<username>",   // optional; defaults to current user
-    "sync_schedule": null,          // or: { "interval_sec": 420,
-                                    //       "days": [1,2,3,4,5,6,7],
-                                    //       "start_hour": 0, "end_hour": 24,
-                                    //       "timezone": "UTC" }
-    "download_providers": [ <provider>, ... ]  // required; one or more entries
-  }
-
-  Provider object (gitserver):
-    { "type": "gitserver", "url": "<repo-url>", "server_type": "github|gitlab|bitbucket|bare-git",
-      "github_credential_type": "pat|app", "user_name": "<user>",
-      "credential_key": "<token-id>", "api_host": null, "host": "" }
-
-  Provider object (cacheserver):
-    { "type": "cacheserver", "host": "<hostname>", "credential_key": "<token-id>",
-      "server_type": "", "github_credential_type": "", "api_host": "", "url": "", "user_name": "" }
-
-  Provider object (bundle):
-    { "type": "bundle", "credential_key": "", "server_type": "",
-      "github_credential_type": "", "api_host": "", "url": "", "user_name": "", "host": "" }
-
-  Provider object (genericserver):
-    { "type": "genericserver", "auth": { "type": "basic", "user_name": "<user>",
-                                         "credential_key": "<token-id>" } }`,
+	Long:  registryMutateHelp("add"),
 	Example: `  # Cache server — pipe JSON via stdin
   echo '{
     "name": "MyRegistry",
@@ -671,52 +727,7 @@ REGISTRY JSON SCHEMA
 var registryUpdateCmd = &cobra.Command{
 	Use:   "update",
 	Short: "Update an existing registry",
-	Long: `Update an existing Julia package registry on JuliaHub.
-
-Reads the registry configuration from a JSON file (--file) or stdin. The JSON must
-match the registry API schema exactly — it is forwarded to the API as-is.
-
-The registry is identified by the "name" field in the payload. All fields are
-replaced with the values provided; omitted optional fields revert to defaults.
-
-Registry update is always polled until completion (up to 2 minutes).
-
-REGISTRY JSON SCHEMA
-
-  {
-    "name": "<registry-name>",   // required; identifies the registry to update
-    "license_detect": true,
-    "artifact":  { "download": true },
-    "docs":      { "download": true, "docgen_check_installable": false,
-                   "html_size_threshold_bytes": null },
-    "metadata":  { "download": true },
-    "pkg":       { "download": true, "static_analysis_runs": [] },
-    "enabled":      true,
-    "display_apps": true,
-    "owner":        "<username>",   // optional; defaults to current user
-    "sync_schedule": null,          // or: { "interval_sec": 420,
-                                    //       "days": [1,2,3,4,5,6,7],
-                                    //       "start_hour": 0, "end_hour": 24,
-                                    //       "timezone": "UTC" }
-    "download_providers": [ <provider>, ... ]  // required; one or more entries
-  }
-
-  Provider object (gitserver):
-    { "type": "gitserver", "url": "<repo-url>", "server_type": "github|gitlab|bitbucket|bare-git",
-      "github_credential_type": "pat|app", "user_name": "<user>",
-      "credential_key": "<token-id>", "api_host": null, "host": "" }
-
-  Provider object (cacheserver):
-    { "type": "cacheserver", "host": "<hostname>", "credential_key": "<token-id>",
-      "server_type": "", "github_credential_type": "", "api_host": "", "url": "", "user_name": "" }
-
-  Provider object (bundle):
-    { "type": "bundle", "credential_key": "", "server_type": "",
-      "github_credential_type": "", "api_host": "", "url": "", "user_name": "", "host": "" }
-
-  Provider object (genericserver):
-    { "type": "genericserver", "auth": { "type": "basic", "user_name": "<user>",
-                                         "credential_key": "<token-id>" } }`,
+	Long:  registryMutateHelp("update"),
 	Example: `  # Update cache server URL — pipe JSON via stdin
   echo '{
     "name": "MyRegistry",
