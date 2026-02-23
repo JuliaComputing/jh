@@ -13,7 +13,7 @@ The application follows a command-line interface pattern using the Cobra library
 - **main.go**: Core CLI structure with command definitions and configuration management
 - **auth.go**: OAuth2 device flow authentication with JWT token handling
 - **datasets.go**: Dataset operations (list, download, upload, status) with REST API integration
-- **registries.go**: Registry operations (list) with REST API integration
+- **registries.go**: Registry operations (list, config, add, update) with REST API integration
 - **projects.go**: Project management using GraphQL API with user filtering
 - **user.go**: User information retrieval using GraphQL API and REST API for listing users
 - **tokens.go**: Token management operations (list) with REST API integration
@@ -31,7 +31,7 @@ The application follows a command-line interface pattern using the Cobra library
    - Stores tokens securely in `~/.juliahub` with 0600 permissions
 
 2. **API Integration**:
-   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/ui/registries/descriptions`), token management (`/app/token/activelist`) and user management (`/app/config/features/manage`)
+   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/registry/registries/descriptions`, `/api/v1/registry/config/registry/{name}`), token management (`/app/token/activelist`) and user management (`/app/config/features/manage`)
    - **GraphQL API**: Used for projects and user info (`/v1/graphql`)
    - **Headers**: All GraphQL requests require `X-Hasura-Role: jhuser` header
    - **Authentication**: Uses ID tokens (`token.IDToken`) for API calls
@@ -39,7 +39,7 @@ The application follows a command-line interface pattern using the Cobra library
 3. **Command Structure**:
    - `jh auth`: Authentication commands (login, refresh, status, env)
    - `jh dataset`: Dataset operations (list, download, upload, status)
-   - `jh registry`: Registry operations (list with REST API, supports verbose mode)
+   - `jh registry`: Registry operations (list, config, add, update — all via REST API; add/update accept JSON via stdin or `--file`)
    - `jh project`: Project management (list with GraphQL, supports user filtering)
    - `jh user`: User information (info with GraphQL)
    - `jh admin`: Administrative commands (user management, token management)
@@ -94,6 +94,28 @@ go run . dataset upload --new ./file.tar.gz
 ```bash
 go run . registry list
 go run . registry list --verbose
+go run . registry config JuliaSimRegistry
+go run . registry config JuliaSimRegistry -s nightly.juliahub.dev
+
+# Add a registry (JSON via stdin or --file)
+echo '{
+  "name": "MyRegistry",
+  "license_detect": true,
+  "artifact": {"download": true},
+  "docs": {"download": true, "docgen_check_installable": false, "html_size_threshold_bytes": null},
+  "metadata": {"download": true},
+  "pkg": {"download": true, "static_analysis_runs": []},
+  "enabled": true, "display_apps": true, "owner": "", "sync_schedule": null,
+  "download_providers": [{
+    "type": "cacheserver", "host": "https://pkg.juliahub.com",
+    "credential_key": "JC Auth Token",
+    "server_type": "", "github_credential_type": "", "api_host": "", "url": "", "user_name": ""
+  }]
+}' | go run . registry add
+go run . registry add --file registry.json
+
+# Update an existing registry (same JSON schema, same flags)
+go run . registry update --file registry.json
 ```
 
 ### Test project and user operations
@@ -304,12 +326,36 @@ jh run setup
 - Admin user list command (`jh admin user list`) uses REST API endpoint `/app/config/features/manage` which requires appropriate permissions
 - User list output is concise by default (Name and Email only); use `--verbose` flag for detailed information (UUID, groups, features)
 - Registry list output is concise by default (UUID and Name only); use `--verbose` flag for detailed information (owner, creation date, package count, description)
+- Registry config command (`jh registry config <name>`) uses REST API endpoint `/api/v1/registry/config/registry/{name}` (GET) and prints the full JSON response
+- Registry add/update commands (`jh registry add` / `jh registry update`) use REST API endpoint `/api/v1/registry/config/registry/{name}` (POST); the backend creates or updates based on whether the registry already exists
+- Both commands accept the full registry JSON payload via `--file <path>` or stdin; the payload `name` field identifies the registry
+- Registry add/update always poll `/api/v1/registry/config/registry/{name}/savestatus` every 3 seconds up to a 2-minute timeout
+- Bundle provider type automatically sets `license_detect: false` in the payload
 - Admin token list command (`jh admin token list`) uses REST API endpoint `/app/token/activelist` which requires appropriate permissions
 - Token list output is concise by default (Subject, Created By, and Expired status only); use `--verbose` flag for detailed information (signature, creation date, expiration date with estimate indicator)
 - Token dates are formatted in human-readable format and converted to local timezone (respects system timezone or TZ environment variable)
 - Token expiration estimate indicator only shown when `expires_at_is_estimate` is true in API response
 
 ## Implementation Details
+
+### Registry Operations (`registries.go`)
+
+**Shared helpers:**
+
+- **`apiGet(url, idToken)`**: shared GET helper used by `listRegistries` and `getRegistryConfig`; retries up to 3 times on network errors or 500s, returns `[]byte` body on success
+- **`readRegistryPayload(filePath)`**: reads JSON from `filePath` or stdin; validates `name` and `download_providers` are present and non-empty; returns raw `map[string]interface{}` for direct API forwarding
+
+**`jh registry list` / `jh registry config`:**
+
+- Both use `apiGet` for the HTTP call
+- `listRegistries` unmarshals into `[]Registry` and formats output; `--verbose` adds owner, date, package count, and description
+- `getRegistryConfig` pretty-prints the raw JSON response
+
+**`jh registry add` / `jh registry update`:**
+
+- Both call `submitRegistry(server, payload, operation)` with `operation` set to `"creation"` or `"update"` for status messages
+- `submitRegistry` POSTs to `/api/v1/registry/config/registry/{name}` with retry on 500s, then calls `pollRegistrySaveStatus()`
+- `pollRegistrySaveStatus` GETs `/api/v1/registry/config/registry/{name}/savestatus` every 3 seconds up to a 2-minute deadline
 
 ### Julia Credentials Management (`run.go`)
 

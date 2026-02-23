@@ -6,7 +6,7 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 
 - **Authentication**: OAuth2 device flow authentication with JWT token handling
 - **Dataset Management**: List, download, upload, and check status of datasets
-- **Registry Management**: List and manage Julia package registries
+- **Registry Management**: List, add, and update Julia package registries
 - **Project Management**: List and filter projects using GraphQL API
 - **Git Integration**: Clone, push, fetch, and pull with automatic JuliaHub authentication
 - **Julia Integration**: Install Julia and run with JuliaHub package server configuration
@@ -155,6 +155,9 @@ go build -o jh .
 - `jh registry list` - List all package registries on JuliaHub
   - Default: Shows only UUID and Name
   - `jh registry list --verbose` - Show detailed registry information including owner, creation date, package count, and description
+- `jh registry config <name>` - Show the full JSON configuration for a registry
+- `jh registry add` - Add a new registry (JSON payload via stdin or `--file`)
+- `jh registry update` - Update an existing registry (same JSON schema as add, same flags)
 
 ### Project Management (`jh project`)
 
@@ -245,6 +248,32 @@ jh registry list --verbose
 
 # List registries on custom server
 jh registry list -s yourinstall
+
+# Show full configuration for a registry
+jh registry config JuliaSimRegistry
+jh registry config JuliaSimRegistry -s nightly.juliahub.dev
+
+# Add a registry (JSON via stdin or --file)
+echo '{
+  "name": "MyRegistry",
+  "license_detect": true,
+  "artifact": {"download": true},
+  "docs": {"download": true, "docgen_check_installable": false, "html_size_threshold_bytes": null},
+  "metadata": {"download": true},
+  "pkg": {"download": true, "static_analysis_runs": []},
+  "enabled": true, "display_apps": true, "owner": "", "sync_schedule": null,
+  "download_providers": [{
+    "type": "cacheserver", "host": "https://pkg.juliahub.com",
+    "credential_key": "JC Auth Token",
+    "server_type": "", "github_credential_type": "", "api_host": "", "url": "", "user_name": ""
+  }]
+}' | jh registry add
+
+# Or use a file
+jh registry add --file registry.json
+
+# Update an existing registry (same JSON schema, registry identified by "name" field)
+jh registry update --file registry.json
 ```
 
 ### Project Operations

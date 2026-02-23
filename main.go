@@ -565,6 +565,233 @@ installed. JuliaHub supports multiple registries including the General
 registry, custom organizational registries, and test registries.`,
 }
 
+var registryAddCmd = &cobra.Command{
+	Use:   "add",
+	Short: "Add a new registry",
+	Long: `Add a new Julia package registry on JuliaHub.
+
+Reads the registry configuration from a JSON file (--file) or stdin. The JSON must
+match the registry API schema exactly — it is forwarded to the API as-is.
+
+Registry creation is always polled until completion (up to 2 minutes).
+
+REGISTRY JSON SCHEMA
+
+  {
+    "name": "<registry-name>",   // required
+    "license_detect": true,
+    "artifact":  { "download": true },
+    "docs":      { "download": true, "docgen_check_installable": false,
+                   "html_size_threshold_bytes": null },
+    "metadata":  { "download": true },
+    "pkg":       { "download": true, "static_analysis_runs": [] },
+    "enabled":      true,
+    "display_apps": true,
+    "owner":        "<username>",   // optional; defaults to current user
+    "sync_schedule": null,          // or: { "interval_sec": 420,
+                                    //       "days": [1,2,3,4,5,6,7],
+                                    //       "start_hour": 0, "end_hour": 24,
+                                    //       "timezone": "UTC" }
+    "download_providers": [ <provider>, ... ]  // required; one or more entries
+  }
+
+  Provider object (gitserver):
+    { "type": "gitserver", "url": "<repo-url>", "server_type": "github|gitlab|bitbucket|bare-git",
+      "github_credential_type": "pat|app", "user_name": "<user>",
+      "credential_key": "<token-id>", "api_host": null, "host": "" }
+
+  Provider object (cacheserver):
+    { "type": "cacheserver", "host": "<hostname>", "credential_key": "<token-id>",
+      "server_type": "", "github_credential_type": "", "api_host": "", "url": "", "user_name": "" }
+
+  Provider object (bundle):
+    { "type": "bundle", "credential_key": "", "server_type": "",
+      "github_credential_type": "", "api_host": "", "url": "", "user_name": "", "host": "" }
+
+  Provider object (genericserver):
+    { "type": "genericserver", "auth": { "type": "basic", "user_name": "<user>",
+                                         "credential_key": "<token-id>" } }`,
+	Example: `  # Cache server — pipe JSON via stdin
+  echo '{
+    "name": "MyRegistry",
+    "license_detect": true,
+    "artifact":  {"download": true},
+    "docs":      {"download": true, "docgen_check_installable": false, "html_size_threshold_bytes": null},
+    "metadata":  {"download": true},
+    "pkg":       {"download": true, "static_analysis_runs": []},
+    "enabled": true, "display_apps": true, "owner": "admin", "sync_schedule": null,
+    "download_providers": [{
+      "type": "cacheserver", "host": "https://pkg.juliahub.com",
+      "credential_key": "JC Auth Token",
+      "server_type": "", "github_credential_type": "", "api_host": "", "url": "", "user_name": ""
+    }]
+  }' | jh registry add
+
+  # Read from file
+  jh registry add --file registry.json
+
+  # GitHub with Personal Access Token
+  echo '{
+    "name": "MyRegistry",
+    "license_detect": true,
+    "artifact": {"download": true}, "docs": {"download": true, "docgen_check_installable": false, "html_size_threshold_bytes": null},
+    "metadata": {"download": true}, "pkg": {"download": true, "static_analysis_runs": []},
+    "enabled": true, "display_apps": true, "owner": "", "sync_schedule": null,
+    "download_providers": [{
+      "type": "gitserver",
+      "url": "https://github.com/MyOrg/MyRegistry.git",
+      "server_type": "github", "github_credential_type": "pat",
+      "user_name": "myuser", "credential_key": "my-pat-token-id",
+      "api_host": null, "host": ""
+    }]
+  }' | jh registry add`,
+	Args: cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		filePath, _ := cmd.Flags().GetString("file")
+
+		payload, err := readRegistryPayload(filePath)
+		if err != nil {
+			fmt.Printf("Failed to read registry payload: %v\n", err)
+			os.Exit(1)
+		}
+
+		if err := createRegistry(server, payload); err != nil {
+			fmt.Printf("Failed to add registry: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var registryUpdateCmd = &cobra.Command{
+	Use:   "update",
+	Short: "Update an existing registry",
+	Long: `Update an existing Julia package registry on JuliaHub.
+
+Reads the registry configuration from a JSON file (--file) or stdin. The JSON must
+match the registry API schema exactly — it is forwarded to the API as-is.
+
+The registry is identified by the "name" field in the payload. All fields are
+replaced with the values provided; omitted optional fields revert to defaults.
+
+Registry update is always polled until completion (up to 2 minutes).
+
+REGISTRY JSON SCHEMA
+
+  {
+    "name": "<registry-name>",   // required; identifies the registry to update
+    "license_detect": true,
+    "artifact":  { "download": true },
+    "docs":      { "download": true, "docgen_check_installable": false,
+                   "html_size_threshold_bytes": null },
+    "metadata":  { "download": true },
+    "pkg":       { "download": true, "static_analysis_runs": [] },
+    "enabled":      true,
+    "display_apps": true,
+    "owner":        "<username>",   // optional; defaults to current user
+    "sync_schedule": null,          // or: { "interval_sec": 420,
+                                    //       "days": [1,2,3,4,5,6,7],
+                                    //       "start_hour": 0, "end_hour": 24,
+                                    //       "timezone": "UTC" }
+    "download_providers": [ <provider>, ... ]  // required; one or more entries
+  }
+
+  Provider object (gitserver):
+    { "type": "gitserver", "url": "<repo-url>", "server_type": "github|gitlab|bitbucket|bare-git",
+      "github_credential_type": "pat|app", "user_name": "<user>",
+      "credential_key": "<token-id>", "api_host": null, "host": "" }
+
+  Provider object (cacheserver):
+    { "type": "cacheserver", "host": "<hostname>", "credential_key": "<token-id>",
+      "server_type": "", "github_credential_type": "", "api_host": "", "url": "", "user_name": "" }
+
+  Provider object (bundle):
+    { "type": "bundle", "credential_key": "", "server_type": "",
+      "github_credential_type": "", "api_host": "", "url": "", "user_name": "", "host": "" }
+
+  Provider object (genericserver):
+    { "type": "genericserver", "auth": { "type": "basic", "user_name": "<user>",
+                                         "credential_key": "<token-id>" } }`,
+	Example: `  # Update cache server URL — pipe JSON via stdin
+  echo '{
+    "name": "MyRegistry",
+    "license_detect": true,
+    "artifact":  {"download": true},
+    "docs":      {"download": true, "docgen_check_installable": false, "html_size_threshold_bytes": null},
+    "metadata":  {"download": true},
+    "pkg":       {"download": true, "static_analysis_runs": []},
+    "enabled": true, "display_apps": true, "owner": "admin", "sync_schedule": null,
+    "download_providers": [{
+      "type": "cacheserver", "host": "https://pkg-new.juliahub.com",
+      "credential_key": "JC Auth Token",
+      "server_type": "", "github_credential_type": "", "api_host": "", "url": "", "user_name": ""
+    }]
+  }' | jh registry update
+
+  # Read from file
+  jh registry update --file registry.json
+
+  # Update GitHub registry to use a new credential
+  echo '{
+    "name": "MyRegistry",
+    "license_detect": true,
+    "artifact": {"download": true}, "docs": {"download": true, "docgen_check_installable": false, "html_size_threshold_bytes": null},
+    "metadata": {"download": true}, "pkg": {"download": true, "static_analysis_runs": []},
+    "enabled": true, "display_apps": true, "owner": "", "sync_schedule": null,
+    "download_providers": [{
+      "type": "gitserver",
+      "url": "https://github.com/MyOrg/MyRegistry.git",
+      "server_type": "github", "github_credential_type": "pat",
+      "user_name": "myuser", "credential_key": "new-pat-token-id",
+      "api_host": null, "host": ""
+    }]
+  }' | jh registry update`,
+	Args: cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		filePath, _ := cmd.Flags().GetString("file")
+
+		payload, err := readRegistryPayload(filePath)
+		if err != nil {
+			fmt.Printf("Failed to read registry payload: %v\n", err)
+			os.Exit(1)
+		}
+
+		if err := updateRegistry(server, payload); err != nil {
+			fmt.Printf("Failed to update registry: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var registryConfigCmd = &cobra.Command{
+	Use:     "config <name>",
+	Short:   "Show the configuration for a registry",
+	Example: "  jh registry config JuliaSimRegistry\n  jh registry config JuliaSimRegistry -s nightly.juliahub.dev",
+	Args:    cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		if err := getRegistryConfig(server, args[0]); err != nil {
+			fmt.Printf("Failed to get registry config: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
 var registryListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List registries",
@@ -1121,6 +1348,10 @@ func init() {
 	datasetUploadCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	datasetUploadCmd.Flags().Bool("new", false, "Create a new dataset")
 	datasetStatusCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	registryAddCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	registryAddCmd.Flags().StringP("file", "f", "", "Path to JSON config file (reads from stdin if omitted)")
+	registryUpdateCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	registryUpdateCmd.Flags().StringP("file", "f", "", "Path to JSON config file (reads from stdin if omitted)")
 	registryListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	registryListCmd.Flags().Bool("verbose", false, "Show detailed registry information")
 	projectListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
@@ -1139,7 +1370,8 @@ func init() {
 	authCmd.AddCommand(authLoginCmd, authRefreshCmd, authStatusCmd, authEnvCmd)
 	jobCmd.AddCommand(jobListCmd, jobStartCmd)
 	datasetCmd.AddCommand(datasetListCmd, datasetDownloadCmd, datasetUploadCmd, datasetStatusCmd)
-	registryCmd.AddCommand(registryListCmd)
+	registryConfigCmd.Flags().StringP("server", "s", "", "JuliaHub server")
+	registryCmd.AddCommand(registryListCmd, registryAddCmd, registryUpdateCmd, registryConfigCmd)
 	projectCmd.AddCommand(projectListCmd)
 	userCmd.AddCommand(userInfoCmd)
 	adminUserCmd.AddCommand(userListCmd)
