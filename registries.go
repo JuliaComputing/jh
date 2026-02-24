@@ -187,6 +187,8 @@ func submitRegistry(server string, payload map[string]interface{}, operation str
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
+	fmt.Println("validating configuration...")
+
 	apiURL := fmt.Sprintf("https://%s/api/v1/registry/config/registry/%s", server, name)
 	client := &http.Client{Timeout: 30 * time.Second}
 	var lastErr error
@@ -224,7 +226,7 @@ func submitRegistry(server string, payload map[string]interface{}, operation str
 		return lastErr
 	}
 
-	fmt.Printf("Registry '%s' %s submitted, validating configuration...\n", name, operation)
+	fmt.Println("configuration valid. validating registry content...")
 	return pollRegistrySaveStatus(server, token.IDToken, name, operation)
 }
 
@@ -283,7 +285,7 @@ func pollRegistrySaveStatus(server, idToken, registryName, operation string) err
 
 		if status.Status == "done" {
 			if status.Result != nil && status.Result.Success {
-				fmt.Printf("Registry '%s' %s completed successfully!\n", registryName, operation)
+				fmt.Println("success")
 				return nil
 			} else if status.Result != nil {
 				return fmt.Errorf("registry %s failed: %s", operation, status.Result.Message)
