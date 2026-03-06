@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Go-based CLI tool for interacting with JuliaHub, a platform for Julia computing. The CLI provides commands for authentication, dataset management, registry management, project management, user information, token management, Git integration, and Julia integration.
+This is a Go-based CLI tool for interacting with JuliaHub, a platform for Julia computing. The CLI provides commands for authentication, dataset management, registry management, project management, user information, token management, registry credential management, Git integration, and Julia integration.
 
 ## Architecture
 
@@ -17,6 +17,7 @@ The application follows a command-line interface pattern using the Cobra library
 - **projects.go**: Project management using GraphQL API with user filtering
 - **user.go**: User information retrieval using GraphQL API and REST API for listing users
 - **tokens.go**: Token management operations (list) with REST API integration
+- **credentials.go**: Registry credential management (list, add, update, delete) with REST API integration
 - **git.go**: Git integration (clone, push, fetch, pull) with JuliaHub authentication
 - **julia.go**: Julia installation and management
 - **run.go**: Julia execution with JuliaHub configuration
@@ -31,7 +32,7 @@ The application follows a command-line interface pattern using the Cobra library
    - Stores tokens securely in `~/.juliahub` with 0600 permissions
 
 2. **API Integration**:
-   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/ui/registries/descriptions`), token management (`/app/token/activelist`) and user management (`/app/config/features/manage`)
+   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/ui/registries/descriptions`), token management (`/app/token/activelist`), user management (`/app/config/features/manage`), and registry credential management (old API tried first, new API fallback)
    - **GraphQL API**: Used for projects and user info (`/v1/graphql`)
    - **Headers**: All GraphQL requests require `X-Hasura-Role: jhuser` header
    - **Authentication**: Uses ID tokens (`token.IDToken`) for API calls
@@ -42,9 +43,14 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh registry`: Registry operations (list with REST API, supports verbose mode)
    - `jh project`: Project management (list with GraphQL, supports user filtering)
    - `jh user`: User information (info with GraphQL)
-   - `jh admin`: Administrative commands (user management, token management)
+   - `jh admin`: Administrative commands (user management, token management, credential management)
    - `jh admin user`: User management (list all users with REST API, supports verbose mode)
    - `jh admin token`: Token management (list all tokens with REST API, supports verbose mode)
+   - `jh admin credential`: Registry credential management (list, add, update, delete via REST API)
+   - `jh admin credential list`: List all registry credentials (tokens, SSH keys, GitHub Apps); supports verbose mode
+   - `jh admin credential add`: Add a credential — subcommands: `token`, `ssh`, `github-app`; accepts JSON argument or stdin
+   - `jh admin credential update`: Update a credential — subcommands: `token`, `ssh`, `github-app`; accepts JSON argument or stdin
+   - `jh admin credential delete`: Delete a credential — subcommands: `token`, `ssh`, `github-app`; takes positional identifier
    - `jh clone`: Git clone with JuliaHub authentication and project name resolution
    - `jh push/fetch/pull`: Git operations with JuliaHub authentication
    - `jh git-credential`: Git credential helper for seamless authentication
@@ -111,6 +117,27 @@ go run . admin user list --verbose
 go run . admin token list
 go run . admin token list --verbose
 TZ=America/New_York go run . admin token list --verbose  # With specific timezone
+```
+
+### Test credential operations
+```bash
+go run . admin credential list
+go run . admin credential list --verbose
+
+# Add credentials (JSON as argument or piped via stdin)
+go run . admin credential add token '{"name":"MyToken","url":"https://github.com","value":"ghp_xxxx"}'
+go run . admin credential add ssh '{"host_key":"github.com ssh-ed25519 AAAA...","private_key_file":"/home/user/.ssh/id_ed25519"}'
+go run . admin credential add github-app '{"app_id":"12345","url":"https://github.com/my-org","private_key_file":"app.pem"}'
+
+# Update credentials (partial update: only supply fields to change)
+go run . admin credential update token '{"name":"MyToken","url":"https://github.com/new-org"}'
+go run . admin credential update ssh '{"index":1,"private_key_file":"/home/user/.ssh/new_key"}'
+go run . admin credential update github-app '{"app_id":"12345","private_key_file":"new_app.pem"}'
+
+# Delete credentials
+go run . admin credential delete token MyToken
+go run . admin credential delete ssh 1
+go run . admin credential delete github-app 12345
 ```
 
 ### Test Git operations
@@ -187,8 +214,12 @@ The application uses OAuth2 device flow:
 - **Dataset operations**: Use presigned URLs for upload/download
 - **User management**: `/app/config/features/manage` endpoint for listing all users
 - **Token management**: `/app/token/activelist` endpoint for listing all API tokens
+- **Registry credentials**: Old API tried first, falls back to new API on failure:
+  - **Old API**: `GET /app/config/credentials/info` to fetch (returns `{"success":true,"creds":{...}}`), `POST /app/config/credentials/store` to write full payload
+  - **New API** (fallback): `GET /app/config/credentials` to fetch (returns credentials object directly); `POST` to add tokens/apps; `PUT` to update tokens/apps or replace all SSH credentials; `DELETE /app/config/credentials` with `{tokens:[...], githubApps:[...]}` to delete
 - **Authentication**: Bearer token with ID token
 - **Upload workflow**: 3-step process (request presigned URL, upload to URL, close upload)
+- **Credential write pattern**: For the old API — read-modify-write (fetch full state, apply change, post full payload). For the new API — targeted mutations; SSH operations still require read-modify-write since `sshcreds` in PUT is a full replacement
 
 ### Data Type Handling
 - Project/dataset IDs are UUID strings, not integers
@@ -308,6 +339,13 @@ jh run setup
 - Token list output is concise by default (Subject, Created By, and Expired status only); use `--verbose` flag for detailed information (signature, creation date, expiration date with estimate indicator)
 - Token dates are formatted in human-readable format and converted to local timezone (respects system timezone or TZ environment variable)
 - Token expiration estimate indicator only shown when `expires_at_is_estimate` is true in API response
+- Registry credential commands do not accept a `--server` flag; server is always read from `~/.juliahub` config
+- Credential add/update commands accept JSON as a positional argument or from stdin (pass `-` or omit argument to read stdin)
+- SSH and GitHub App private keys can be supplied inline (`private_key`, raw PEM) or via file path (`private_key_file`); both are base64-encoded into a `data:application/octet-stream;base64,...` data URL before sending
+- Credential list output is concise by default; use `--verbose` to show token metadata (account login, expiry, scopes, rate limit) and SSH host keys
+- SSH credentials are identified by 1-based index (from `list` output) for update and delete operations
+- Existing sensitive values (token values, private keys) are omitted when re-posting unchanged credentials to avoid re-sending masked server-side values
+- `rate_limit_reset` in token metadata is a Unix timestamp (int64), displayed as local time in verbose mode
 
 ## Implementation Details
 
