@@ -2,12 +2,19 @@ package main
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
 )
+
+//go:embed userinfo.gql
+var userinfoQuery string
+
+//go:embed groups.gql
+var groupsQuery string
 
 type UserInfo struct {
 	ID                  int64       `json:"id"`
@@ -66,34 +73,7 @@ func getUserInfo(server string) (*UserInfo, error) {
 		return nil, fmt.Errorf("authentication required: %w", err)
 	}
 
-	// GraphQL query from userinfo.gql
-	query := `query UserInfo {
-  users(limit: 1) {
-    id
-    name
-    firstname
-    emails {
-      email
-    }
-    groups: user_groups {
-      id: group_id
-      group {
-        name
-        group_id
-      }
-    }
-    username
-    roles {
-      role {
-        description
-        id
-        name
-      }
-    }
-    accepted_tos
-    survey_submitted_time
-  }
-}`
+	query := userinfoQuery
 
 	// Create GraphQL request
 	graphqlReq := UserInfoRequest{
@@ -213,6 +193,74 @@ type ManageUsersResponse struct {
 	Features json.RawMessage `json:"features"`
 }
 
+type GroupsGQLResponse struct {
+	Data struct {
+		Groups []struct {
+			Name    string `json:"name"`
+			GroupID int64  `json:"group_id"`
+		} `json:"groups"`
+		Products []struct {
+			Name            string `json:"name"`
+			DisplayName     string `json:"display_name"`
+			ID              int64  `json:"id"`
+			ComputeTypeName string `json:"compute_type_name"`
+		} `json:"products"`
+	} `json:"data"`
+	Errors []struct {
+		Message string `json:"message"`
+	} `json:"errors"`
+}
+
+func listGroups(server string) error {
+	token, err := ensureValidToken()
+	if err != nil {
+		return fmt.Errorf("authentication required: %w", err)
+	}
+
+	gqlReq := UserInfoRequest{
+		OperationName: "Groups",
+		Query:         groupsQuery,
+		Variables:     map[string]interface{}{"limit": 500},
+	}
+	jsonData, err := json.Marshal(gqlReq)
+	if err != nil {
+		return fmt.Errorf("failed to marshal groups request: %w", err)
+	}
+	req, err := http.NewRequest("POST", fmt.Sprintf("https://%s/v1/graphql", server), bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Hasura-Role", "jhuser")
+	req.Header.Set("X-Juliahub-Ensure-JS", "true")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to fetch groups: %w", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	var groupsResp GroupsGQLResponse
+	if err := json.Unmarshal(body, &groupsResp); err != nil {
+		return fmt.Errorf("failed to parse groups: %w", err)
+	}
+	if len(groupsResp.Errors) > 0 {
+		return fmt.Errorf("GraphQL errors: %v", groupsResp.Errors)
+	}
+	if len(groupsResp.Data.Groups) == 0 {
+		fmt.Println("No groups found")
+		return nil
+	}
+	for _, g := range groupsResp.Data.Groups {
+		fmt.Println(g.Name)
+	}
+	return nil
+}
+
 func listUsers(server string, verbose bool) error {
 	token, err := ensureValidToken()
 	if err != nil {
@@ -260,10 +308,8 @@ func listUsers(server string, verbose bool) error {
 		}
 	}
 
-	// Display users
-	fmt.Printf("Users (%d total):\n\n", len(response.Users))
-
 	if verbose {
+		fmt.Printf("Users (%d total):\n\n", len(response.Users))
 		// Verbose mode: show all details
 		for _, user := range response.Users {
 			fmt.Printf("UUID: %s\n", user.UUID)
@@ -283,15 +329,12 @@ func listUsers(server string, verbose bool) error {
 			fmt.Println()
 		}
 	} else {
-		// Default mode: show only Name and Email
 		for _, user := range response.Users {
-			if user.Name != nil {
-				fmt.Printf("Name: %s\n", *user.Name)
-			} else {
-				fmt.Printf("Name: (not set)\n")
+			name := user.Email
+			if user.Name != nil && *user.Name != "" {
+				name = *user.Name
 			}
-			fmt.Printf("Email: %s\n", user.Email)
-			fmt.Println()
+			fmt.Printf("%s (%s)\n", name, user.Email)
 		}
 	}
 
