@@ -1103,8 +1103,7 @@ Use --verbose flag to display comprehensive information including:
 - JuliaHub groups and site groups
 - Feature flags
 
-This command uses the /app/config/features/manage endpoint which requires
-appropriate permissions to view all users.`,
+This command requires appropriate administrator permissions to view all users (including staged).`,
 	Example: "  jh admin user list\n  jh admin user list --verbose",
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
@@ -1474,8 +1473,7 @@ Use --verbose flag to display comprehensive information including:
 - Expiration date (with estimate indicator)
 - Expiration status
 
-This command uses the /app/token/activelist endpoint which requires
-appropriate permissions to view all tokens.`,
+This command requires appropriate permissions to view all tokens.`,
 	Example: "  jh admin token list\n  jh admin token list --verbose",
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
