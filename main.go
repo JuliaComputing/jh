@@ -1025,6 +1025,45 @@ Shows comprehensive user information including:
 Uses GraphQL API to fetch detailed user information.`,
 }
 
+var userListGQLCmd = &cobra.Command{
+	Use:     "list",
+	Short:   "List all users",
+	Example: "  jh user list\n  jh user list -s custom.juliahub.com",
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		if err := listUsersGQL(server); err != nil {
+			fmt.Printf("Failed to list users: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var groupCmd = &cobra.Command{
+	Use:   "group",
+	Short: "Group information commands",
+}
+
+var groupListGQLCmd = &cobra.Command{
+	Use:     "list",
+	Short:   "List all groups",
+	Example: "  jh group list\n  jh group list -s custom.juliahub.com",
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		if err := listGroupsGQL(server); err != nil {
+			fmt.Printf("Failed to list groups: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
 var userInfoCmd = &cobra.Command{
 	Use:   "info",
 	Short: "Show user information",
@@ -1518,7 +1557,10 @@ func init() {
 	registryPermissionCmd.AddCommand(registryPermissionListCmd, registryPermissionSetCmd, registryPermissionRemoveCmd)
 	registryCmd.AddCommand(registryListCmd, registryConfigCmd, registryPermissionCmd)
 	projectCmd.AddCommand(projectListCmd)
-	userCmd.AddCommand(userInfoCmd)
+	userListGQLCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	userCmd.AddCommand(userInfoCmd, userListGQLCmd)
+	groupListGQLCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	groupCmd.AddCommand(groupListGQLCmd)
 	groupListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	adminGroupCmd.AddCommand(groupListCmd)
 	adminUserCmd.AddCommand(userListCmd)
@@ -1528,7 +1570,7 @@ func init() {
 	runCmd.AddCommand(runSetupCmd)
 	gitCredentialCmd.AddCommand(gitCredentialHelperCmd, gitCredentialGetCmd, gitCredentialStoreCmd, gitCredentialEraseCmd, gitCredentialSetupCmd)
 
-	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, projectCmd, registryCmd, userCmd, adminCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd)
+	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, projectCmd, registryCmd, userCmd, groupCmd, adminCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd)
 }
 
 func main() {

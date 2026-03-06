@@ -13,6 +13,9 @@ import (
 //go:embed userinfo.gql
 var userinfoQuery string
 
+//go:embed users.gql
+var usersQuery string
+
 //go:embed groups.gql
 var groupsQuery string
 
@@ -211,7 +214,52 @@ type GroupsGQLResponse struct {
 	} `json:"errors"`
 }
 
+type AdminGroup struct {
+	Name string `json:"name"`
+	ID   int64  `json:"id"`
+}
+
 func listGroups(server string) error {
+	token, err := ensureValidToken()
+	if err != nil {
+		return fmt.Errorf("authentication required: %w", err)
+	}
+
+	url := fmt.Sprintf("https://%s/app/config/groups", server)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
+	req.Header.Set("Accept", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to fetch groups: %w", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("request failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var groups []AdminGroup
+	if err := json.Unmarshal(body, &groups); err != nil {
+		return fmt.Errorf("failed to parse groups: %w", err)
+	}
+	if len(groups) == 0 {
+		fmt.Println("No groups found")
+		return nil
+	}
+	for _, g := range groups {
+		fmt.Println(g.Name)
+	}
+	return nil
+}
+
+func listGroupsGQL(server string) error {
 	token, err := ensureValidToken()
 	if err != nil {
 		return fmt.Errorf("authentication required: %w", err)
@@ -257,6 +305,73 @@ func listGroups(server string) error {
 	}
 	for _, g := range groupsResp.Data.Groups {
 		fmt.Println(g.Name)
+	}
+	return nil
+}
+
+type UsersGQLResponse struct {
+	Data struct {
+		Users []struct {
+			Username string  `json:"username"`
+			ID       int64   `json:"id"`
+			Name     *string `json:"name"`
+		} `json:"users"`
+	} `json:"data"`
+	Errors []struct {
+		Message string `json:"message"`
+	} `json:"errors"`
+}
+
+func listUsersGQL(server string) error {
+	token, err := ensureValidToken()
+	if err != nil {
+		return fmt.Errorf("authentication required: %w", err)
+	}
+
+	gqlReq := UserInfoRequest{
+		OperationName: "Users",
+		Query:         usersQuery,
+		Variables:     map[string]interface{}{"limit": 500},
+	}
+	jsonData, err := json.Marshal(gqlReq)
+	if err != nil {
+		return fmt.Errorf("failed to marshal users request: %w", err)
+	}
+	req, err := http.NewRequest("POST", fmt.Sprintf("https://%s/v1/graphql", server), bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Hasura-Role", "jhuser")
+	req.Header.Set("X-Juliahub-Ensure-JS", "true")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to fetch users: %w", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	var usersResp UsersGQLResponse
+	if err := json.Unmarshal(body, &usersResp); err != nil {
+		return fmt.Errorf("failed to parse users: %w", err)
+	}
+	if len(usersResp.Errors) > 0 {
+		return fmt.Errorf("GraphQL errors: %v", usersResp.Errors)
+	}
+	if len(usersResp.Data.Users) == 0 {
+		fmt.Println("No users found")
+		return nil
+	}
+	for _, u := range usersResp.Data.Users {
+		name := u.Username
+		if u.Name != nil && *u.Name != "" {
+			name = *u.Name
+		}
+		fmt.Printf("%s (%s)\n", name, u.Username)
 	}
 	return nil
 }

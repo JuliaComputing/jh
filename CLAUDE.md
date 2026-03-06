@@ -31,9 +31,9 @@ The application follows a command-line interface pattern using the Cobra library
    - Stores tokens securely in `~/.juliahub` with 0600 permissions
 
 2. **API Integration**:
-   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/registry/registries/descriptions`, `/api/v1/registry/config/registry/{name}`), token management (`/app/token/activelist`) and user management (`/app/config/features/manage`)
-   - **GraphQL API**: Used for projects and user info (`/v1/graphql`)
-   - **Headers**: All GraphQL requests require `X-Hasura-Role: jhuser` header
+   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/registry/registries/descriptions`, `/api/v1/registry/config/registry/{name}`), token management (`/app/token/activelist`), user management (`/app/config/features/manage`), and admin group management (`/app/config/groups`)
+   - **GraphQL API**: Used for projects, user info, user list (`public_users`), and group list (`/v1/graphql`)
+   - **Headers**: All GraphQL requests require `Authorization: Bearer <id_token>`, `X-Hasura-Role: jhuser`, and `X-Juliahub-Ensure-JS: true`
    - **Authentication**: Uses ID tokens (`token.IDToken`) for API calls
 
 3. **Command Structure**:
@@ -41,11 +41,14 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh dataset`: Dataset operations (list, download, upload, status)
    - `jh registry`: Registry operations (list, config — all via REST API)
    - `jh registry config`: Show registry JSON config by name; subcommands add/update accept JSON via stdin or `--file`
+   - `jh registry permission`: Registry permission management (list, set, remove)
    - `jh project`: Project management (list with GraphQL, supports user filtering)
-   - `jh user`: User information (info with GraphQL)
-   - `jh admin`: Administrative commands (user management, token management)
+   - `jh user`: User information (info, list via GraphQL `public_users`)
+   - `jh group`: Group information (list via GraphQL)
+   - `jh admin`: Administrative commands (user management, token management, group management)
    - `jh admin user`: User management (list all users with REST API, supports verbose mode)
    - `jh admin token`: Token management (list all tokens with REST API, supports verbose mode)
+   - `jh admin group`: Group management (list all groups via REST API)
    - `jh clone`: Git clone with JuliaHub authentication and project name resolution
    - `jh push/fetch/pull`: Git operations with JuliaHub authentication
    - `jh git-credential`: Git credential helper for seamless authentication
@@ -125,8 +128,11 @@ go run . project list
 go run . project list --user
 go run . project list --user john
 go run . user info
+go run . user list
+go run . group list
 go run . admin user list
 go run . admin user list --verbose
+go run . admin group list
 ```
 
 ### Test token operations
@@ -308,7 +314,7 @@ jh run setup
 ## Development Notes
 
 - All ID fields in GraphQL responses should be typed correctly (string for UUIDs, int64 for user IDs)
-- GraphQL queries are embedded as strings (consider external .gql files for complex queries)
+- GraphQL queries are embedded at compile time using `go:embed` from `.gql` files (`userinfo.gql`, `users.gql`, `groups.gql`, `projects.gql`)
 - Error handling includes both HTTP and GraphQL error responses
 - Token refresh is automatic via `ensureValidToken()`
 - File uploads use multipart form data with proper content types
@@ -324,8 +330,11 @@ jh run setup
 - Clone command supports `project` (without username) and defaults to the logged-in user's username
 - Folder naming conflicts are resolved with automatic numbering (project-1, project-2, etc.)
 - Credential helper follows Git protocol: responds only to JuliaHub URLs, ignores others
+- `jh user list` uses GraphQL `public_users` query (via `users.gql`) and displays `<name> (<username>)` per line
+- `jh group list` uses GraphQL groups query (via `groups.gql`) and displays one group name per line
 - Admin user list command (`jh admin user list`) uses REST API endpoint `/app/config/features/manage` which requires appropriate permissions
-- User list output is concise by default (Name and Email only); use `--verbose` flag for detailed information (UUID, groups, features)
+- Admin group list command (`jh admin group list`) uses REST API endpoint `/app/config/groups` which requires appropriate permissions
+- Admin user list output is compact by default (`<name> (<email>)`); use `--verbose` flag for detailed information (UUID, groups, features)
 - Registry list output is concise by default (UUID and Name only); use `--verbose` flag for detailed information (owner, creation date, package count, description)
 - Registry config command (`jh registry config <name>`) uses REST API endpoint `/api/v1/registry/config/registry/{name}` (GET) and prints the full JSON response
 - Registry add/update commands (`jh registry config add` / `jh registry config update`) use REST API endpoint `/api/v1/registry/config/registry/{name}` (POST); the backend creates or updates based on whether the registry already exists
