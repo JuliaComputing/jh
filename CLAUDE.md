@@ -13,7 +13,7 @@ The application follows a command-line interface pattern using the Cobra library
 - **main.go**: Core CLI structure with command definitions and configuration management
 - **auth.go**: OAuth2 device flow authentication with JWT token handling
 - **datasets.go**: Dataset operations (list, download, upload, status) with REST API integration
-- **registries.go**: Registry operations (list, config, add, update) with REST API integration
+- **registries.go**: Registry operations (list, config, add, update, registrator) with REST API integration
 - **projects.go**: Project management using GraphQL API with user filtering
 - **user.go**: User information retrieval using GraphQL API and REST API for listing users
 - **tokens.go**: Token management operations (list) with REST API integration
@@ -31,7 +31,7 @@ The application follows a command-line interface pattern using the Cobra library
    - Stores tokens securely in `~/.juliahub` with 0600 permissions
 
 2. **API Integration**:
-   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/registry/registries/descriptions`, `/api/v1/registry/config/registry/{name}`), token management (`/app/token/activelist`), user management (`/app/config/features/manage`), and admin group management (`/app/config/groups`)
+   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/registry/registries/descriptions`, `/api/v1/registry/config/registry/{name}`, `/api/v1/registry/config/registrator/{name}`), token management (`/app/token/activelist`), user management (`/app/config/features/manage`), and admin group management (`/app/config/groups`)
    - **GraphQL API**: Used for projects, user info, user list (`public_users`), and group list (`/v1/graphql`)
    - **Headers**: All GraphQL requests require `Authorization: Bearer <id_token>`, `X-Hasura-Role: jhuser`, and `X-Juliahub-Ensure-JS: true`
    - **Authentication**: Uses ID tokens (`token.IDToken`) for API calls
@@ -42,6 +42,7 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh registry`: Registry operations (list, config — all via REST API)
    - `jh registry config`: Show registry JSON config by name; subcommands add/update accept JSON via stdin or `--file`
    - `jh registry permission`: Registry permission management (list, set, remove)
+   - `jh registry registrator`: Show registrator config by name; subcommand update accepts JSON via stdin or `--file`
    - `jh project`: Project management (list with GraphQL, supports user filtering)
    - `jh user`: User information (info, list via GraphQL `public_users`)
    - `jh group`: Group information (list via GraphQL)
@@ -120,6 +121,24 @@ go run . registry config add --file registry.json
 
 # Update an existing registry (same JSON schema, same flags)
 go run . registry config update --file registry.json
+
+# Show registrator config for a registry
+go run . registry registrator MyRegistry
+
+# Update registrator config (JSON via stdin or --file)
+echo '{
+  "enabled": true,
+  "email": "pkg@example.com",
+  "authorization": true,
+  "ssl_verify": true,
+  "registry_fork_url": null,
+  "registry_deps": ["General"]
+}' | go run . registry registrator update MyRegistry
+go run . registry registrator update MyRegistry --file registrator.json
+
+# Get, edit, push back
+go run . registry registrator MyRegistry > registrator.json
+go run . registry registrator update MyRegistry --file registrator.json
 ```
 
 ### Test project and user operations
@@ -340,6 +359,10 @@ jh run setup
 - Registry add/update commands (`jh registry config add` / `jh registry config update`) use REST API endpoint `/api/v1/registry/config/registry/{name}` (POST); the backend creates or updates based on whether the registry already exists
 - Both commands accept the full registry JSON payload via `--file <path>` or stdin; the payload `name` field identifies the registry
 - Registry add/update always poll `/api/v1/registry/config/registry/{name}/savestatus` every 3 seconds up to a 2-minute timeout
+- Registry registrator command (`jh registry registrator <name>`) uses REST API endpoint `/api/v1/registry/config/registrator/{name}` (GET) and prints the full JSON response
+- Registry registrator update command (`jh registry registrator update <name>`) uses REST API endpoint `/api/v1/registry/config/registrator/{name}` (POST); the registry name comes from the positional argument (`RegistratorInfo` has no `name` field)
+- Registrator update validates that `"email"` is non-empty when `"enabled"` is true
+- GET returns 404 "Registry not found" when no registrator has been configured for that registry yet
 - Bundle provider type automatically sets `license_detect: false` in the payload
 - Admin token list command (`jh admin token list`) uses REST API endpoint `/app/token/activelist` which requires appropriate permissions
 - Token list output is concise by default (Subject, Created By, and Expired status only); use `--verbose` flag for detailed information (signature, creation date, expiration date with estimate indicator)
@@ -366,6 +389,12 @@ jh run setup
 - Both call `submitRegistry(server, payload, operation)` with `operation` set to `"creation"` or `"update"` for status messages
 - `submitRegistry` POSTs to `/api/v1/registry/config/registry/{name}` with retry on 500s, then calls `pollRegistrySaveStatus()`
 - `pollRegistrySaveStatus` GETs `/api/v1/registry/config/registry/{name}/savestatus` every 3 seconds up to a 2-minute deadline
+
+**`jh registry registrator <name>` / `jh registry registrator update`:**
+
+- `getRegistrator` uses `apiGet` to GET `/api/v1/registry/config/registrator/{name}` and pretty-prints the JSON response
+- `setRegistrator(server, name, filePath)` reads `RegistratorInfo` JSON from `--file` or stdin, validates `"email"` is set when `"enabled"` is true, then POSTs to `/api/v1/registry/config/registrator/{name}`
+- No polling — the POST response is the final result
 
 ### Julia Credentials Management (`run.go`)
 

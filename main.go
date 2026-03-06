@@ -933,6 +933,57 @@ Exactly one of --user or --group must be provided.`,
 	},
 }
 
+var registryRegistratorCmd = &cobra.Command{
+	Use:     "registrator <name>",
+	Short:   "Show the registrator configuration for a registry",
+	Example: "  jh registry registrator MyRegistry\n  jh registry registrator MyRegistry -s nightly.juliahub.dev",
+	Args:    cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		if err := getRegistrator(server, args[0]); err != nil {
+			fmt.Printf("Failed to get registrator config: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var registryRegistratorUpdateCmd = &cobra.Command{
+	Use:   "update <registry>",
+	Short: "Update the registrator configuration for a registry",
+	Long: `Update the registrator configuration for a Julia package registry.
+
+Reads the registrator configuration from a JSON file (--file) or stdin.
+
+REGISTRATOR JSON SCHEMA
+
+  {
+    "enabled":           true,               // enable/disable registrator
+    "email":             "<email>",          // required when enabled
+    "authorization":     true,               // allow only package authors to register
+    "ssl_verify":        true,               // verify SSL certificates
+    "registry_fork_url": "<url>",            // URL to a forked registry with write access (optional, null to unset)
+    "registry_deps":     ["<registry>", ...] // registries whose packages may be dependencies
+  }`,
+	Example: "  jh registry registrator update MyRegistry --file registrator.json\n  jh registry registrator MyRegistry | jh registry registrator update MyRegistry",
+	Args:    cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		filePath, _ := cmd.Flags().GetString("file")
+		if err := setRegistrator(server, args[0], filePath); err != nil {
+			fmt.Printf("Failed to update registrator config: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
 var projectCmd = &cobra.Command{
 	Use:   "project",
 	Short: "Project management commands",
@@ -1553,7 +1604,11 @@ func init() {
 	registryPermissionRemoveCmd.Flags().String("user", "", "Username to remove permission for")
 	registryPermissionRemoveCmd.Flags().String("group", "", "Group name to remove permission for")
 	registryPermissionCmd.AddCommand(registryPermissionListCmd, registryPermissionSetCmd, registryPermissionRemoveCmd)
-	registryCmd.AddCommand(registryListCmd, registryConfigCmd, registryPermissionCmd)
+	registryRegistratorCmd.Flags().StringP("server", "s", "", "JuliaHub server")
+	registryRegistratorUpdateCmd.Flags().StringP("server", "s", "", "JuliaHub server")
+	registryRegistratorUpdateCmd.Flags().StringP("file", "f", "", "Path to JSON config file (reads from stdin if omitted)")
+	registryRegistratorCmd.AddCommand(registryRegistratorUpdateCmd)
+	registryCmd.AddCommand(registryListCmd, registryConfigCmd, registryPermissionCmd, registryRegistratorCmd)
 	projectCmd.AddCommand(projectListCmd)
 	userListGQLCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	userCmd.AddCommand(userInfoCmd, userListGQLCmd)
