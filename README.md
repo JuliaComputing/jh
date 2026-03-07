@@ -196,6 +196,13 @@ go build -o jh .
   - Default: Shows only Subject, Created By, and Expired status
   - `jh admin token list --verbose` - Show detailed token information including signature, creation date, expiration date (with estimate indicator)
 
+#### Landing Page Management
+- `jh admin landing show` - Show the current custom landing page content (markdown and last-modified date)
+- `jh admin landing update <markdown-content>` - Set a custom markdown landing page
+  - `jh admin landing update --file landing.md` - Read content from a file
+  - `cat landing.md | jh admin landing update` - Read content from stdin
+- `jh admin landing disable` - Remove the custom landing page and revert to the default
+
 ### Update (`jh update`)
 
 - `jh update` - Check for updates and automatically install the latest version
@@ -280,6 +287,25 @@ jh admin token list -s yourinstall
 
 # Use specific timezone for date display
 TZ=America/New_York jh admin token list --verbose
+```
+
+### Landing Page Operations
+
+```bash
+# Show current custom landing page
+jh admin landing show
+
+# Set landing page from inline markdown
+jh admin landing update '# Welcome to JuliaHub'
+
+# Set landing page from a file
+jh admin landing update --file landing.md
+
+# Set landing page from stdin
+cat landing.md | jh admin landing update
+
+# Disable custom landing page (revert to default)
+jh admin landing disable
 ```
 
 ### Git Workflow

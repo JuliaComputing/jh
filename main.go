@@ -1051,6 +1051,94 @@ Provides commands to list and manage users across the JuliaHub instance.
 Note: These commands require appropriate administrative permissions.`,
 }
 
+var adminLandingCmd = &cobra.Command{
+	Use:   "landing",
+	Short: "Landing page management commands",
+	Long: `Administrative commands for managing the custom landing page on JuliaHub.
+
+Provides commands to get, set, or disable the custom markdown landing page
+shown to users on the JuliaHub home screen.
+
+Note: These commands require appropriate administrative permissions.`,
+}
+
+var landingShowCmd = &cobra.Command{
+	Use:   "show",
+	Short: "Show the current landing page content",
+	Long: `Fetch the current custom landing page content from JuliaHub.
+
+Displays the markdown content and last-modified date of the custom landing
+page. If no custom landing page is set, reports that the default is in use.`,
+	Example: "  jh admin landing show",
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		if err := showLandingPage(server); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+	},
+}
+
+var landingUpdateCmd = &cobra.Command{
+	Use:   "update [markdown-content]",
+	Short: "Update the custom landing page content",
+	Long: `Update the custom landing page content on JuliaHub.
+
+Provide the markdown content directly as an argument or use --file to read
+it from a file. The content must be valid markdown.`,
+	Example: "  jh admin landing update '# Welcome'\n  jh admin landing update --file landing.md\n  cat landing.md | jh admin landing update",
+	Args:    cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		filePath, _ := cmd.Flags().GetString("file")
+		contentArg := ""
+		if len(args) > 0 {
+			contentArg = args[0]
+		}
+
+		content, err := readContentFromFileOrArgOrStdin(filePath, contentArg)
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+
+		if err := setLandingPage(server, content); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+	},
+}
+
+var landingDisableCmd = &cobra.Command{
+	Use:   "disable",
+	Short: "Disable the custom landing page",
+	Long: `Disable the custom landing page on JuliaHub.
+
+Removes the custom landing page content, reverting to the default landing
+screen. This action can be undone by setting a new landing page with 'set'.`,
+	Example: "  jh admin landing disable",
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		if err := disableLandingPage(server); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+	},
+}
+
 var adminTokenCmd = &cobra.Command{
 	Use:   "token",
 	Short: "Token management commands",
@@ -1130,6 +1218,10 @@ func init() {
 	userListCmd.Flags().Bool("verbose", false, "Show detailed user information")
 	tokenListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	tokenListCmd.Flags().Bool("verbose", false, "Show detailed token information")
+	landingShowCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	landingUpdateCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	landingUpdateCmd.Flags().StringP("file", "f", "", "Path to a markdown file to use as landing page content")
+	landingDisableCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	cloneCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	pushCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	fetchCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
@@ -1144,7 +1236,8 @@ func init() {
 	userCmd.AddCommand(userInfoCmd)
 	adminUserCmd.AddCommand(userListCmd)
 	adminTokenCmd.AddCommand(tokenListCmd)
-	adminCmd.AddCommand(adminUserCmd, adminTokenCmd)
+	adminLandingCmd.AddCommand(landingShowCmd, landingUpdateCmd, landingDisableCmd)
+	adminCmd.AddCommand(adminUserCmd, adminTokenCmd, adminLandingCmd)
 	juliaCmd.AddCommand(juliaInstallCmd)
 	runCmd.AddCommand(runSetupCmd)
 	gitCredentialCmd.AddCommand(gitCredentialHelperCmd, gitCredentialGetCmd, gitCredentialStoreCmd, gitCredentialEraseCmd, gitCredentialSetupCmd)
