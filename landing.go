@@ -17,9 +17,9 @@ type homepageConfig struct {
 
 // homepageResponse handles `message` being either an object or a string.
 type homepageResponse struct {
-	Success bool              `json:"success"`
-	Message *homepageConfig   // populated after custom unmarshal
-	RawMsg  json.RawMessage   `json:"message"`
+	Success bool `json:"success"`
+	Message *homepageConfig
+	RawMsg  json.RawMessage `json:"message"`
 }
 
 func (r *homepageResponse) UnmarshalJSON(data []byte) error {

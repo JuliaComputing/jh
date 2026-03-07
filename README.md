@@ -197,11 +197,11 @@ go build -o jh .
   - `jh admin token list --verbose` - Show detailed token information including signature, creation date, expiration date (with estimate indicator)
 
 #### Landing Page Management
-- `jh admin landing show` - Show the current custom landing page content (markdown and last-modified date)
-- `jh admin landing update <markdown-content>` - Set a custom markdown landing page
-  - `jh admin landing update --file landing.md` - Read content from a file
-  - `cat landing.md | jh admin landing update` - Read content from stdin
-- `jh admin landing disable` - Remove the custom landing page and revert to the default
+- `jh admin landing-page show` - Show the current custom landing page content (markdown and last-modified date)
+- `jh admin landing-page update <markdown-content>` - Set a custom markdown landing page
+  - `jh admin landing-page update --file landing.md` - Read content from a file
+  - `cat landing.md | jh admin landing-page update` - Read content from stdin
+- `jh admin landing-page disable` - Remove the custom landing page and revert to the default
 
 ### Update (`jh update`)
 
@@ -293,19 +293,19 @@ TZ=America/New_York jh admin token list --verbose
 
 ```bash
 # Show current custom landing page
-jh admin landing show
+jh admin landing-page show
 
 # Set landing page from inline markdown
-jh admin landing update '# Welcome to JuliaHub'
+jh admin landing-page update '# Welcome to JuliaHub'
 
 # Set landing page from a file
-jh admin landing update --file landing.md
+jh admin landing-page update --file landing.md
 
 # Set landing page from stdin
-cat landing.md | jh admin landing update
+cat landing.md | jh admin landing-page update
 
 # Disable custom landing page (revert to default)
-jh admin landing disable
+jh admin landing-page disable
 ```
 
 ### Git Workflow

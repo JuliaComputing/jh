@@ -1052,7 +1052,7 @@ Note: These commands require appropriate administrative permissions.`,
 }
 
 var adminLandingCmd = &cobra.Command{
-	Use:   "landing",
+	Use:   "landing-page",
 	Short: "Landing page management commands",
 	Long: `Administrative commands for managing the custom landing page on JuliaHub.
 
@@ -1069,7 +1069,7 @@ var landingShowCmd = &cobra.Command{
 
 Displays the markdown content and last-modified date of the custom landing
 page. If no custom landing page is set, reports that the default is in use.`,
-	Example: "  jh admin landing show",
+	Example: "  jh admin landing-page show",
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
 		if err != nil {
@@ -1090,7 +1090,7 @@ var landingUpdateCmd = &cobra.Command{
 
 Provide the markdown content directly as an argument or use --file to read
 it from a file. The content must be valid markdown.`,
-	Example: "  jh admin landing update '# Welcome'\n  jh admin landing update --file landing.md\n  cat landing.md | jh admin landing update",
+	Example: "  jh admin landing-page update '# Welcome'\n  jh admin landing-page update --file landing.md\n  cat landing.md | jh admin landing-page update",
 	Args:    cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
@@ -1125,7 +1125,7 @@ var landingDisableCmd = &cobra.Command{
 
 Removes the custom landing page content, reverting to the default landing
 screen. This action can be undone by setting a new landing page with 'set'.`,
-	Example: "  jh admin landing disable",
+	Example: "  jh admin landing-page disable",
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
 		if err != nil {
