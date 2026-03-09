@@ -563,7 +563,7 @@ var packageCmd = &cobra.Command{
 
 Packages are Julia libraries that provide reusable functionality. JuliaHub
 hosts packages from multiple registries and provides comprehensive search
-capabilities including filtering by tags, installation status, failures, and more.`,
+capabilities including filtering by tags, registries, and more.`,
 }
 
 var packageSearchCmd = &cobra.Command{
@@ -576,16 +576,13 @@ Displays package information including:
 - Version information
 - Description and repository
 - Tags and star count
-- Installation status
 - License information
 
 Filtering options:
 - Filter by registry using --registries flag (searches all registries by default)
-- Filter by installation status (--installed, --not-installed)
-- Filter by packages with download failures (--has-failures)
 
 Use --verbose flag for comprehensive output, or get a concise summary by default.`,
-	Example: "  jh package search dataframes\n  jh package search --installed\n  jh package search --verbose plots\n  jh package search --limit 20 ml\n  jh package search --registries General optimization",
+	Example: "  jh package search dataframes\n  jh package search --verbose plots\n  jh package search --limit 20 ml\n  jh package search --registries General optimization",
 	Args:    cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
@@ -604,26 +601,6 @@ Use --verbose flag for comprehensive output, or get a concise summary by default
 		verbose, _ := cmd.Flags().GetBool("verbose")
 		registryNamesStr, _ := cmd.Flags().GetString("registries")
 
-		// Handle boolean flags - only set if explicitly provided
-		var installed *bool
-		var notInstalled *bool
-		var hasFailures *bool
-
-		if cmd.Flags().Changed("installed") {
-			val, _ := cmd.Flags().GetBool("installed")
-			installed = &val
-		}
-
-		if cmd.Flags().Changed("not-installed") {
-			val, _ := cmd.Flags().GetBool("not-installed")
-			notInstalled = &val
-		}
-
-		if cmd.Flags().Changed("has-failures") {
-			val, _ := cmd.Flags().GetBool("has-failures")
-			hasFailures = &val
-		}
-
 		// Fetch all registries from the API
 		allRegistries, err := fetchRegistries(server)
 		if err != nil {
@@ -631,8 +608,9 @@ Use --verbose flag for comprehensive output, or get a concise summary by default
 			os.Exit(1)
 		}
 
-		// Determine which registry IDs to use
+		// Determine which registry IDs and names to use
 		var registryIDs []int
+		var registryNames []string
 		if registryNamesStr != "" {
 			// Use only specified registries
 			requestedNames := strings.Split(registryNamesStr, ",")
@@ -647,6 +625,7 @@ Use --verbose flag for comprehensive output, or get a concise summary by default
 				for _, reg := range allRegistries {
 					if strings.EqualFold(reg.Name, requestedName) {
 						registryIDs = append(registryIDs, reg.RegistryID)
+						registryNames = append(registryNames, reg.Name)
 						found = true
 						break
 					}
@@ -661,10 +640,11 @@ Use --verbose flag for comprehensive output, or get a concise summary by default
 			// Use all registries
 			for _, reg := range allRegistries {
 				registryIDs = append(registryIDs, reg.RegistryID)
+				registryNames = append(registryNames, reg.Name)
 			}
 		}
 
-		if err := searchPackages(server, search, limit, offset, installed, notInstalled, hasFailures, registryIDs, verbose); err != nil {
+		if err := searchPackages(server, search, limit, offset, registryIDs, registryNames, verbose); err != nil {
 			fmt.Printf("Failed to search packages: %v\n", err)
 			os.Exit(1)
 		}
@@ -1237,17 +1217,11 @@ func init() {
 	datasetUploadCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	datasetUploadCmd.Flags().Bool("new", false, "Create a new dataset")
 	datasetStatusCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
-<<<<<<< HEAD
 	packageSearchCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	packageSearchCmd.Flags().Int("limit", 10, "Maximum number of results to return")
 	packageSearchCmd.Flags().Int("offset", 0, "Number of results to skip")
-	packageSearchCmd.Flags().Bool("installed", false, "Filter by installed packages")
-	packageSearchCmd.Flags().Bool("not-installed", false, "Filter by not installed packages")
-	packageSearchCmd.Flags().Bool("has-failures", false, "Filter by packages with download failures")
 	packageSearchCmd.Flags().String("registries", "", "Filter by registry names (comma-separated, e.g., 'General,CustomRegistry')")
 	packageSearchCmd.Flags().Bool("verbose", false, "Show detailed package information")
-=======
->>>>>>> 598769ba8b5d9204ddfa0992fd62b572c17226b4
 	registryListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	registryListCmd.Flags().Bool("verbose", false, "Show detailed registry information")
 	projectListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")

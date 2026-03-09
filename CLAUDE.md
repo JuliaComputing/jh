@@ -12,7 +12,8 @@ The application follows a command-line interface pattern using the Cobra library
 - **main.go**: Core CLI structure with command definitions and configuration management
 - **auth.go**: OAuth2 device flow authentication with JWT token handling
 - **datasets.go**: Dataset operations (list, download, upload, status) with REST API integration
-- **registries.go**: Registry operations (list) with REST API integration
+- **registries.go**: Registry operations (list, fetch) with REST API integration
+- **packages.go**: Package search with GraphQL primary path and REST API fallback (`/packages/info`)
 - **projects.go**: Project management using GraphQL API with user filtering
 - **user.go**: User information retrieval using GraphQL API and REST API for listing users
 - **tokens.go**: Token management operations (list) with REST API integration
@@ -30,8 +31,8 @@ The application follows a command-line interface pattern using the Cobra library
    - Stores tokens securely in `~/.juliahub` with 0600 permissions
 
 2. **API Integration**:
-   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/ui/registries/descriptions`), token management (`/app/token/activelist`) and user management (`/app/config/features/manage`)
-   - **GraphQL API**: Used for projects and user info (`/v1/graphql`)
+   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/registry/registries/descriptions`), package search fallback (`/packages/info`), token management (`/app/token/activelist`) and user management (`/app/config/features/manage`)
+   - **GraphQL API**: Used for projects, user info, and package search primary path (`/v1/graphql`)
    - **Headers**: All GraphQL requests require `X-Hasura-Role: jhuser` header
    - **Authentication**: Uses ID tokens (`token.IDToken`) for API calls
 
@@ -40,6 +41,7 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh dataset`: Dataset operations (list, download, upload, status)
    - `jh registry`: Registry operations (list with REST API, supports verbose mode)
    - `jh project`: Project management (list with GraphQL, supports user filtering)
+   - `jh package`: Package search (GraphQL primary, REST fallback via `/packages/info`)
    - `jh user`: User information (info with GraphQL)
    - `jh admin`: Administrative commands (user management, token management)
    - `jh admin user`: User management (list all users with REST API, supports verbose mode)
@@ -87,6 +89,14 @@ go run . auth login -s juliahub.com
 go run . dataset list
 go run . dataset download <dataset-name>
 go run . dataset upload --new ./file.tar.gz
+```
+
+### Test package search operations
+```bash
+go run . package search dataframes
+go run . package search --verbose plots
+go run . package search --limit 20 ml
+go run . package search --registries General optimization
 ```
 
 ### Test registry operations
@@ -186,6 +196,7 @@ The application uses OAuth2 device flow:
 - **Dataset operations**: Use presigned URLs for upload/download
 - **User management**: `/app/config/features/manage` endpoint for listing all users
 - **Token management**: `/app/token/activelist` endpoint for listing all API tokens
+- **Package search fallback**: `/packages/info` endpoint with `name`, `registries`, `tags`, `licenses`, `limit`, `offset` query params; returns `{packages: [...], meta: {total: N}}`
 - **Authentication**: Bearer token with ID token
 - **Upload workflow**: 3-step process (request presigned URL, upload to URL, close upload)
 
@@ -307,6 +318,9 @@ jh run setup
 - Token list output is concise by default (Subject, Created By, and Expired status only); use `--verbose` flag for detailed information (signature, creation date, expiration date with estimate indicator)
 - Token dates are formatted in human-readable format and converted to local timezone (respects system timezone or TZ environment variable)
 - Token expiration estimate indicator only shown when `expires_at_is_estimate` is true in API response
+- Package search (`jh package search`) tries GraphQL (`FilteredPackages` via `/v1/graphql`) first, then falls back to REST API (`/packages/info`) on failure; a warning is printed to stderr when the fallback is used
+- Package search REST fallback passes `--registries` as comma-separated registry names to the `registries` query param
+- `fetchRegistries` in `registries.go` is used by both `listRegistries` (for display) and `packageSearchCmd` (to resolve registry names to IDs for GraphQL and names for REST fallback)
 
 ## Implementation Details
 

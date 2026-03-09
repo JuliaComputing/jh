@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -60,7 +61,154 @@ type PackageSearchResponse struct {
 	} `json:"errors"`
 }
 
-func searchPackages(server string, search string, limit int, offset int, installed *bool, notInstalled *bool, hasFailures *bool, registries []int, verbose bool) error {
+type RESTPackage struct {
+	Name                   string   `json:"name"`
+	UUID                   string   `json:"uuid"`
+	Registry               string   `json:"registry"`
+	Description            string   `json:"description"`
+	StargazersCount        int      `json:"stargazers_count"`
+	SourceURL              string   `json:"source_url"`
+	JHubDocsURL            string   `json:"jhub_docs_url"`
+	LatestStableVersion    string   `json:"latest_stable_version"`
+	DetectedSourceLicenses []string `json:"detected_source_licenses"`
+	Downloads              struct {
+		Count int `json:"count"`
+	} `json:"downloads"`
+	Tags []string `json:"tags"`
+}
+
+type PackageRESTListResponse struct {
+	Packages []RESTPackage `json:"packages"`
+	Meta     struct {
+		Total int `json:"total"`
+	} `json:"meta"`
+}
+
+func searchPackagesREST(server string, search string, limit int, offset int, registryNames []string, verbose bool) error {
+	token, err := ensureValidToken()
+	if err != nil {
+		return fmt.Errorf("authentication required: %w", err)
+	}
+
+	url := fmt.Sprintf("https://%s/packages/info", server)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	q := req.URL.Query()
+	if search != "" {
+		q.Add("name", search)
+	}
+	if limit > 0 {
+		q.Add("limit", fmt.Sprintf("%d", limit))
+	}
+	if offset > 0 {
+		q.Add("offset", fmt.Sprintf("%d", offset))
+	}
+	if len(registryNames) > 0 {
+		q.Add("registries", strings.Join(registryNames, ","))
+	}
+	req.URL.RawQuery = q.Encode()
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
+	req.Header.Set("Accept", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("API request failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var response PackageRESTListResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	packages := response.Packages
+
+	if len(packages) == 0 {
+		fmt.Println("No packages found")
+		return nil
+	}
+
+	fmt.Printf("Found %d package(s):\n\n", len(packages))
+
+	if !verbose {
+		fmt.Printf("%-30s %-20s %-12s %s\n", "NAME", "REGISTRY", "VERSION", "DESCRIPTION")
+		fmt.Printf("%-30s %-20s %-12s %s\n", strings.Repeat("-", 30), strings.Repeat("-", 20), strings.Repeat("-", 12), strings.Repeat("-", 50))
+	}
+
+	for _, pkg := range packages {
+		if verbose {
+			fmt.Printf("Name: %s\n", pkg.Name)
+			fmt.Printf("UUID: %s\n", pkg.UUID)
+			fmt.Printf("Registry: %s\n", pkg.Registry)
+			if pkg.Description != "" {
+				fmt.Printf("Description: %s\n", pkg.Description)
+			}
+			if pkg.SourceURL != "" {
+				fmt.Printf("Repository: %s\n", pkg.SourceURL)
+			}
+			if len(pkg.Tags) > 0 {
+				fmt.Printf("Tags: %s\n", strings.Join(pkg.Tags, ", "))
+			}
+			if pkg.StargazersCount > 0 {
+				fmt.Printf("Stars: %d\n", pkg.StargazersCount)
+			}
+			if pkg.JHubDocsURL != "" {
+				fmt.Printf("Documentation: %s\n", pkg.JHubDocsURL)
+			}
+			if len(pkg.DetectedSourceLicenses) > 0 {
+				fmt.Printf("License: %s\n", strings.Join(pkg.DetectedSourceLicenses, ", "))
+			}
+			if pkg.LatestStableVersion != "" {
+				fmt.Printf("Latest Version: %s\n", pkg.LatestStableVersion)
+			}
+		} else {
+			fmt.Printf("%-30s %-20s", pkg.Name, pkg.Registry)
+			if pkg.LatestStableVersion != "" {
+				fmt.Printf(" v%-10s", pkg.LatestStableVersion)
+			} else {
+				fmt.Printf(" %-12s", "N/A")
+			}
+			if pkg.Description != "" {
+				desc := pkg.Description
+				if len(desc) > 50 {
+					desc = desc[:50] + "..."
+				}
+				fmt.Printf("%s", desc)
+			}
+			fmt.Printf("\n")
+		}
+
+		fmt.Println()
+	}
+
+	return nil
+}
+
+func searchPackages(server string, search string, limit int, offset int, registryIDs []int, registryNames []string, verbose bool) error {
+	err := searchPackagesGraphQL(server, search, limit, offset, registryIDs, verbose)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "GraphQL search failed (%v), falling back to REST API...\n", err)
+		return searchPackagesREST(server, search, limit, offset, registryNames, verbose)
+	}
+	return nil
+}
+
+func searchPackagesGraphQL(server string, search string, limit int, offset int, registries []int, verbose bool) error {
 	token, err := ensureValidToken()
 	if err != nil {
 		return fmt.Errorf("authentication required: %w", err)
@@ -96,18 +244,6 @@ func searchPackages(server string, search string, limit int, offset int, install
 
 	if offset > 0 {
 		variables["offset"] = offset
-	}
-
-	if installed != nil {
-		variables["installed"] = *installed
-	}
-
-	if notInstalled != nil {
-		variables["notinstalled"] = *notInstalled
-	}
-
-	if hasFailures != nil {
-		variables["hasfailures"] = *hasFailures
 	}
 
 	if len(registries) > 0 {
@@ -223,19 +359,8 @@ func searchPackages(server string, search string, limit int, offset int, install
 				}
 			}
 
-			fmt.Printf("Installed: %t\n", pkg.Installed)
-
 			if pkg.IsApp {
 				fmt.Printf("Type: Application\n")
-			}
-
-			if len(pkg.Failures) > 0 {
-				fmt.Printf("Failed Versions: ")
-				versions := make([]string, len(pkg.Failures))
-				for i, failure := range pkg.Failures {
-					versions[i] = failure.PackageVersion
-				}
-				fmt.Printf("%s\n", strings.Join(versions, ", "))
 			}
 
 			fmt.Printf("Score: %.2f\n", pkg.Score)
@@ -247,10 +372,6 @@ func searchPackages(server string, search string, limit int, offset int, install
 				fmt.Printf(" v%-10s", pkg.RegistryMap.Version)
 			} else {
 				fmt.Printf(" %-12s", "N/A")
-			}
-
-			if pkg.Installed {
-				fmt.Printf(" [Installed]")
 			}
 
 			if pkg.Metadata != nil && pkg.Metadata.Description != "" {
