@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -53,7 +54,6 @@ type Package struct {
 
 // UnmarshalJSON custom unmarshaler to handle registrymap as both object and array
 func (p *Package) UnmarshalJSON(data []byte) error {
-	// Create an alias to avoid infinite recursion
 	type Alias Package
 	aux := &struct {
 		RegistryMapRaw json.RawMessage `json:"registrymap"`
@@ -66,14 +66,11 @@ func (p *Package) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	// Handle registrymap - can be object, array, or null
 	if len(aux.RegistryMapRaw) > 0 && string(aux.RegistryMapRaw) != "null" {
-		// Try to unmarshal as array first
 		var registryMapArray []PackageRegistryMap
 		if err := json.Unmarshal(aux.RegistryMapRaw, &registryMapArray); err == nil {
 			p.RegistryMap = registryMapArray
 		} else {
-			// If that fails, try as single object
 			var registryMapObj PackageRegistryMap
 			if err := json.Unmarshal(aux.RegistryMapRaw, &registryMapObj); err == nil {
 				p.RegistryMap = []PackageRegistryMap{registryMapObj}
@@ -93,6 +90,29 @@ type PackageSearchResponse struct {
 	} `json:"errors"`
 }
 
+type RESTPackage struct {
+	Name                   string   `json:"name"`
+	UUID                   string   `json:"uuid"`
+	Registry               string   `json:"registry"`
+	Description            string   `json:"description"`
+	StargazersCount        int      `json:"stargazers_count"`
+	SourceURL              string   `json:"source_url"`
+	JHubDocsURL            string   `json:"jhub_docs_url"`
+	LatestStableVersion    string   `json:"latest_stable_version"`
+	DetectedSourceLicenses []string `json:"detected_source_licenses"`
+	Downloads              struct {
+		Count int `json:"count"`
+	} `json:"downloads"`
+	Tags []string `json:"tags"`
+}
+
+type PackageRESTListResponse struct {
+	Packages []RESTPackage `json:"packages"`
+	Meta     struct {
+		Total int `json:"total"`
+	} `json:"meta"`
+}
+
 // executePackageQuery executes a GraphQL package search query and returns the results
 func executePackageQuery(server string, variables map[string]interface{}) ([]Package, error) {
 	token, err := ensureValidToken()
@@ -100,7 +120,6 @@ func executePackageQuery(server string, variables map[string]interface{}) ([]Pac
 		return nil, fmt.Errorf("authentication required: %w", err)
 	}
 
-	// Read the GraphQL query from package_search.gql
 	queryBytes, err := packageSearchFS.ReadFile("package_search.gql")
 	if err != nil {
 		return nil, fmt.Errorf("failed to read GraphQL query: %w", err)
@@ -151,7 +170,6 @@ func executePackageQuery(server string, variables map[string]interface{}) ([]Pac
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	// Check for GraphQL errors
 	if len(response.Errors) > 0 {
 		return nil, fmt.Errorf("GraphQL errors: %v", response.Errors)
 	}
@@ -159,7 +177,109 @@ func executePackageQuery(server string, variables map[string]interface{}) ([]Pac
 	return response.Data.PackageSearch, nil
 }
 
-// displayPackageDetails displays detailed information about a package
+// fetchPackagesREST calls the REST /packages/info endpoint and returns the results
+func fetchPackagesREST(server string, search string, limit int, offset int, registryNames []string) ([]RESTPackage, error) {
+	token, err := ensureValidToken()
+	if err != nil {
+		return nil, fmt.Errorf("authentication required: %w", err)
+	}
+
+	url := fmt.Sprintf("https://%s/packages/info", server)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	q := req.URL.Query()
+	if search != "" {
+		q.Add("name", search)
+	}
+	if limit > 0 {
+		q.Add("limit", fmt.Sprintf("%d", limit))
+	}
+	if offset > 0 {
+		q.Add("offset", fmt.Sprintf("%d", offset))
+	}
+	if len(registryNames) > 0 {
+		q.Add("registries", strings.Join(registryNames, ","))
+	}
+	req.URL.RawQuery = q.Encode()
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
+	req.Header.Set("Accept", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API request failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var response PackageRESTListResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return response.Packages, nil
+}
+
+// displayRESTPackage prints a single REST package in verbose or concise format
+func displayRESTPackage(pkg RESTPackage, verbose bool) {
+	if verbose {
+		fmt.Printf("Name: %s\n", pkg.Name)
+		fmt.Printf("UUID: %s\n", pkg.UUID)
+		fmt.Printf("Registry: %s\n", pkg.Registry)
+		if pkg.Description != "" {
+			fmt.Printf("Description: %s\n", pkg.Description)
+		}
+		if pkg.SourceURL != "" {
+			fmt.Printf("Repository: %s\n", pkg.SourceURL)
+		}
+		if len(pkg.Tags) > 0 {
+			fmt.Printf("Tags: %s\n", strings.Join(pkg.Tags, ", "))
+		}
+		if pkg.StargazersCount > 0 {
+			fmt.Printf("Stars: %d\n", pkg.StargazersCount)
+		}
+		if pkg.JHubDocsURL != "" {
+			fmt.Printf("Documentation: %s\n", pkg.JHubDocsURL)
+		}
+		if len(pkg.DetectedSourceLicenses) > 0 {
+			fmt.Printf("License: %s\n", strings.Join(pkg.DetectedSourceLicenses, ", "))
+		}
+		if pkg.LatestStableVersion != "" {
+			fmt.Printf("Latest Version: %s\n", pkg.LatestStableVersion)
+		}
+	} else {
+		fmt.Printf("%-30s %-20s", pkg.Name, pkg.Registry)
+		if pkg.LatestStableVersion != "" {
+			fmt.Printf(" v%-10s", pkg.LatestStableVersion)
+		} else {
+			fmt.Printf(" %-12s", "N/A")
+		}
+		if pkg.Description != "" {
+			desc := pkg.Description
+			if len(desc) > 40 {
+				desc = desc[:40] + "..."
+			}
+			fmt.Printf("%s", desc)
+		}
+		fmt.Printf("\n")
+	}
+	fmt.Println()
+}
+
+// displayPackageDetails displays detailed information about a GraphQL package
 func displayPackageDetails(pkg *Package, registryLookup map[int]string) {
 	fmt.Printf("Name: %s\n", pkg.Name)
 	fmt.Printf("UUID: %s\n", pkg.UUID)
@@ -187,19 +307,15 @@ func displayPackageDetails(pkg *Package, registryLookup map[int]string) {
 		fmt.Printf("License: %s\n", pkg.License)
 	}
 
-	// Display registry information
 	if len(pkg.RegistryMap) > 0 {
-		// Find the latest version (first entry is typically latest)
 		latestEntry := pkg.RegistryMap[0]
 		fmt.Printf("Latest Version: %s\n", latestEntry.Version)
-		fmt.Printf("Status: ")
 		if latestEntry.Status {
-			fmt.Printf("Active\n")
+			fmt.Printf("Status: Active\n")
 		} else {
-			fmt.Printf("Inactive\n")
+			fmt.Printf("Status: Inactive\n")
 		}
 
-		// Display all registries this package belongs to
 		if registryLookup != nil {
 			registryNames := []string{}
 			for _, entry := range pkg.RegistryMap {
@@ -215,19 +331,8 @@ func displayPackageDetails(pkg *Package, registryLookup map[int]string) {
 		}
 	}
 
-	fmt.Printf("Installed: %t\n", pkg.Installed)
-
 	if pkg.IsApp {
 		fmt.Printf("Type: Application\n")
-	}
-
-	if len(pkg.Failures) > 0 {
-		fmt.Printf("Failed Versions: ")
-		versions := make([]string, len(pkg.Failures))
-		for i, failure := range pkg.Failures {
-			versions[i] = failure.PackageVersion
-		}
-		fmt.Printf("%s\n", strings.Join(versions, ", "))
 	}
 
 	fmt.Printf("Score: %.2f\n", pkg.Score)
@@ -246,7 +351,6 @@ func buildRegistriesParam(registries []int) string {
 func buildRegistryLookup(server string) map[int]string {
 	registries, err := fetchRegistries(server)
 	if err != nil {
-		// Return empty map if we can't fetch registries
 		return map[int]string{}
 	}
 
@@ -257,8 +361,7 @@ func buildRegistryLookup(server string) map[int]string {
 	return lookup
 }
 
-func searchPackages(server string, search string, limit int, offset int, installed *bool, notInstalled *bool, hasFailures *bool, registries []int, verbose bool) error {
-	// Build variables for the GraphQL query
+func searchPackages(server string, search string, limit int, offset int, registryIDs []int, registryNames []string, verbose bool) error {
 	variables := map[string]interface{}{
 		"filter":       map[string]interface{}{},
 		"order":        map[string]string{"score": "desc"},
@@ -274,34 +377,36 @@ func searchPackages(server string, search string, limit int, offset int, install
 	if search != "" {
 		variables["search"] = search
 	}
-
 	if limit > 0 {
 		variables["limit"] = limit
 	}
-
 	if offset > 0 {
 		variables["offset"] = offset
 	}
-
-	if installed != nil {
-		variables["installed"] = *installed
-	}
-
-	if notInstalled != nil {
-		variables["notinstalled"] = *notInstalled
-	}
-
-	if hasFailures != nil {
-		variables["hasfailures"] = *hasFailures
-	}
-
-	if len(registries) > 0 {
-		variables["registries"] = buildRegistriesParam(registries)
+	if len(registryIDs) > 0 {
+		variables["registries"] = buildRegistriesParam(registryIDs)
 	}
 
 	packages, err := executePackageQuery(server, variables)
 	if err != nil {
-		return err
+		fmt.Fprintf(os.Stderr, "GraphQL search failed (%v), falling back to REST API...\n", err)
+		restPackages, restErr := fetchPackagesREST(server, search, limit, offset, registryNames)
+		if restErr != nil {
+			return restErr
+		}
+		if len(restPackages) == 0 {
+			fmt.Println("No packages found")
+			return nil
+		}
+		fmt.Printf("Found %d package(s):\n\n", len(restPackages))
+		if !verbose {
+			fmt.Printf("%-30s %-20s %-12s %s\n", "NAME", "REGISTRY", "VERSION", "DESCRIPTION")
+			fmt.Printf("%-30s %-20s %-12s %s\n", strings.Repeat("-", 30), strings.Repeat("-", 20), strings.Repeat("-", 12), strings.Repeat("-", 50))
+		}
+		for _, pkg := range restPackages {
+			displayRESTPackage(pkg, verbose)
+		}
+		return nil
 	}
 
 	if len(packages) == 0 {
@@ -309,12 +414,9 @@ func searchPackages(server string, search string, limit int, offset int, install
 		return nil
 	}
 
-	// Build registry lookup for displaying registry names
 	registryLookup := buildRegistryLookup(server)
-
 	fmt.Printf("Found %d package(s):\n\n", len(packages))
 
-	// Print column headers for concise output
 	if !verbose {
 		fmt.Printf("%-30s %-20s %-12s %-25s %s\n", "NAME", "OWNER", "VERSION", "REGISTRIES", "DESCRIPTION")
 		fmt.Printf("%-30s %-20s %-12s %-25s %s\n", strings.Repeat("-", 30), strings.Repeat("-", 20), strings.Repeat("-", 12), strings.Repeat("-", 25), strings.Repeat("-", 40))
@@ -322,48 +424,33 @@ func searchPackages(server string, search string, limit int, offset int, install
 
 	for _, pkg := range packages {
 		if verbose {
-			// Verbose output with all details
 			displayPackageDetails(&pkg, registryLookup)
 		} else {
-			// Concise output
 			fmt.Printf("%-30s %-20s", pkg.Name, pkg.Owner)
 
-			// Display version from first registry entry
 			if len(pkg.RegistryMap) > 0 {
 				fmt.Printf(" v%-10s", pkg.RegistryMap[0].Version)
 			} else {
 				fmt.Printf(" %-12s", "N/A")
 			}
 
-			// Display registry names
 			if len(pkg.RegistryMap) > 0 {
-				registryNames := []string{}
+				pkgRegistryNames := []string{}
 				for _, entry := range pkg.RegistryMap {
 					if name, ok := registryLookup[entry.RegistryID]; ok {
-						registryNames = append(registryNames, name)
+						pkgRegistryNames = append(pkgRegistryNames, name)
 					}
 				}
-				if len(registryNames) > 0 {
-					registryStr := strings.Join(registryNames, ", ")
-					if len(registryStr) > 25 {
-						registryStr = registryStr[:22] + "..."
-					}
-					fmt.Printf(" %-25s", registryStr)
-				} else {
-					fmt.Printf(" %-25s", "")
+				registryStr := strings.Join(pkgRegistryNames, ", ")
+				if len(registryStr) > 25 {
+					registryStr = registryStr[:22] + "..."
 				}
+				fmt.Printf(" %-25s", registryStr)
 			} else {
 				fmt.Printf(" %-25s", "")
 			}
 
-			if pkg.Installed {
-				fmt.Printf(" [Installed] ")
-			} else {
-				fmt.Printf(" ")
-			}
-
 			if pkg.Metadata != nil && pkg.Metadata.Description != "" {
-				// Truncate description for concise view
 				desc := pkg.Metadata.Description
 				if len(desc) > 40 {
 					desc = desc[:40] + "..."
@@ -373,14 +460,13 @@ func searchPackages(server string, search string, limit int, offset int, install
 
 			fmt.Printf("\n")
 		}
-
 		fmt.Println()
 	}
 
 	return nil
 }
 
-func getPackageInfo(server string, packageName string, registries []int) error {
+func getPackageInfo(server string, packageName string, registryIDs []int, registryNames []string) error {
 	variables := map[string]interface{}{
 		"filter":       map[string]interface{}{},
 		"order":        map[string]string{"score": "desc"},
@@ -391,19 +477,30 @@ func getPackageInfo(server string, packageName string, registries []int) error {
 		"hasfailures":  false,
 		"installed":    true,
 		"notinstalled": true,
-		"limit":        100, // Get more results to find exact match
+		"limit":        100,
 	}
 
-	if len(registries) > 0 {
-		variables["registries"] = buildRegistriesParam(registries)
+	if len(registryIDs) > 0 {
+		variables["registries"] = buildRegistriesParam(registryIDs)
 	}
 
 	packages, err := executePackageQuery(server, variables)
 	if err != nil {
-		return err
+		fmt.Fprintf(os.Stderr, "GraphQL info failed (%v), falling back to REST API...\n", err)
+		restPackages, restErr := fetchPackagesREST(server, packageName, 100, 0, registryNames)
+		if restErr != nil {
+			return restErr
+		}
+		for _, pkg := range restPackages {
+			if strings.EqualFold(pkg.Name, packageName) {
+				displayRESTPackage(pkg, true)
+				return nil
+			}
+		}
+		fmt.Println("Package not found")
+		return nil
 	}
 
-	// Find exact match (case-insensitive)
 	var pkg *Package
 	for i := range packages {
 		if strings.EqualFold(packages[i].Name, packageName) {
@@ -417,9 +514,7 @@ func getPackageInfo(server string, packageName string, registries []int) error {
 		return nil
 	}
 
-	// Build registry lookup for displaying registry names
 	registryLookup := buildRegistryLookup(server)
-
 	displayPackageDetails(pkg, registryLookup)
 	return nil
 }

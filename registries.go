@@ -19,7 +19,6 @@ type Registry struct {
 	Description  string     `json:"description"`
 }
 
-// fetchRegistries retrieves all registries from the API and returns them
 func fetchRegistries(server string) ([]Registry, error) {
 	token, err := ensureValidToken()
 	if err != nil {
@@ -93,7 +92,7 @@ func listRegistries(server string, verbose bool) error {
 			fmt.Println()
 		}
 	} else {
-		// Default mode: show UUID, Name, and Registry ID (needed for package search filtering)
+		// Default mode: show only UUID and Name
 		for _, registry := range registries {
 			fmt.Printf("UUID: %s\n", registry.UUID)
 			fmt.Printf("Name: %s\n", registry.Name)
