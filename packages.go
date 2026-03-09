@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 )
@@ -202,7 +201,6 @@ func searchPackagesREST(server string, search string, limit int, offset int, reg
 func searchPackages(server string, search string, limit int, offset int, registryIDs []int, registryNames []string, verbose bool) error {
 	err := searchPackagesGraphQL(server, search, limit, offset, registryIDs, verbose)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "GraphQL search failed (%v), falling back to REST API...\n", err)
 		return searchPackagesREST(server, search, limit, offset, registryNames, verbose)
 	}
 	return nil
