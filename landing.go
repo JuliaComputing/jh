@@ -92,7 +92,7 @@ func showLandingPage(server string) error {
 		return nil
 	}
 
-	fmt.Printf("Last updated: %s\n\n", result.Message.UpdatedAt)
+	fmt.Printf("Last updated: %s\n\n", formatTokenDate(result.Message.UpdatedAt))
 	fmt.Println(result.Message.Md)
 	return nil
 }

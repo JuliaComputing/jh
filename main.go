@@ -1124,7 +1124,7 @@ var landingDisableCmd = &cobra.Command{
 	Long: `Disable the custom landing page on JuliaHub.
 
 Removes the custom landing page content, reverting to the default landing
-screen. This action can be undone by setting a new landing page with 'set'.`,
+screen. This action can be undone by setting a new landing page with 'update'.`,
 	Example: "  jh admin landing-page disable",
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
