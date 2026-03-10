@@ -1056,7 +1056,7 @@ var adminLandingCmd = &cobra.Command{
 	Short: "Landing page management commands",
 	Long: `Administrative commands for managing the custom landing page on JuliaHub.
 
-Provides commands to get, set, or disable the custom markdown landing page
+Provides commands to get, set, or remove the custom markdown landing page
 shown to users on the JuliaHub home screen.
 
 Note: These commands require appropriate administrative permissions.`,
@@ -1089,7 +1089,8 @@ var landingUpdateCmd = &cobra.Command{
 	Long: `Update the custom landing page content on JuliaHub.
 
 Provide the markdown content directly as an argument or use --file to read
-it from a file. The content must be valid markdown.`,
+it from a file. If neither is provided, content is read from stdin.
+The content must be valid markdown.`,
 	Example: "  jh admin landing-page update '# Welcome'\n  jh admin landing-page update --file landing.md\n  cat landing.md | jh admin landing-page update",
 	Args:    cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
@@ -1118,21 +1119,21 @@ it from a file. The content must be valid markdown.`,
 	},
 }
 
-var landingDisableCmd = &cobra.Command{
-	Use:   "disable",
-	Short: "Disable the custom landing page",
-	Long: `Disable the custom landing page on JuliaHub.
+var landingRemoveCmd = &cobra.Command{
+	Use:   "remove",
+	Short: "Remove the custom landing page",
+	Long: `Remove the custom landing page on JuliaHub.
 
 Removes the custom landing page content, reverting to the default landing
 screen. This action can be undone by setting a new landing page with 'update'.`,
-	Example: "  jh admin landing-page disable",
+	Example: "  jh admin landing-page remove",
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
 		if err != nil {
 			fmt.Printf("Failed to get server config: %v\n", err)
 			os.Exit(1)
 		}
-		if err := disableLandingPage(server); err != nil {
+		if err := removeLandingPage(server); err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
@@ -1221,7 +1222,7 @@ func init() {
 	landingShowCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	landingUpdateCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	landingUpdateCmd.Flags().StringP("file", "f", "", "Path to a markdown file to use as landing page content")
-	landingDisableCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	landingRemoveCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	cloneCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	pushCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	fetchCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
@@ -1236,7 +1237,7 @@ func init() {
 	userCmd.AddCommand(userInfoCmd)
 	adminUserCmd.AddCommand(userListCmd)
 	adminTokenCmd.AddCommand(tokenListCmd)
-	adminLandingCmd.AddCommand(landingShowCmd, landingUpdateCmd, landingDisableCmd)
+	adminLandingCmd.AddCommand(landingShowCmd, landingUpdateCmd, landingRemoveCmd)
 	adminCmd.AddCommand(adminUserCmd, adminTokenCmd, adminLandingCmd)
 	juliaCmd.AddCommand(juliaInstallCmd)
 	runCmd.AddCommand(runSetupCmd)

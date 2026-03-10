@@ -17,7 +17,7 @@ The application follows a command-line interface pattern using the Cobra library
 - **projects.go**: Project management using GraphQL API with user filtering
 - **user.go**: User information retrieval using GraphQL API and REST API for listing users
 - **tokens.go**: Token management operations (list) with REST API integration
-- **landing.go**: Landing page management (show, update, disable) with REST API integration
+- **landing.go**: Landing page management (show, update, remove) with REST API integration
 - **git.go**: Git integration (clone, push, fetch, pull) with JuliaHub authentication
 - **julia.go**: Julia installation and management
 - **run.go**: Julia execution with JuliaHub configuration
@@ -46,7 +46,7 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh admin`: Administrative commands (user management, token management, landing page)
    - `jh admin user`: User management (list all users with REST API, supports verbose mode)
    - `jh admin token`: Token management (list all tokens with REST API, supports verbose mode)
-   - `jh admin landing-page`: Landing page management (show/update/disable custom markdown landing page with REST API)
+   - `jh admin landing-page`: Landing page management (show/update/remove custom markdown landing page with REST API)
    - `jh clone`: Git clone with JuliaHub authentication and project name resolution
    - `jh push/fetch/pull`: Git operations with JuliaHub authentication
    - `jh git-credential`: Git credential helper for seamless authentication
@@ -121,7 +121,7 @@ go run . admin landing-page show
 go run . admin landing-page update '# Welcome to JuliaHub'
 go run . admin landing-page update --file landing.md
 cat landing.md | go run . admin landing-page update
-go run . admin landing-page disable
+go run . admin landing-page remove
 ```
 
 ### Test Git operations
@@ -319,7 +319,7 @@ jh run setup
 - Token list output is concise by default (Subject, Created By, and Expired status only); use `--verbose` flag for detailed information (signature, creation date, expiration date with estimate indicator)
 - Token dates are formatted in human-readable format and converted to local timezone (respects system timezone or TZ environment variable)
 - Token expiration estimate indicator only shown when `expires_at_is_estimate` is true in API response
-- Landing page commands (`jh admin landing-page`) use REST API: GET `/app/homepage` (show), POST `/app/config/homepage` (update), DELETE `/app/config/homepage` (disable); require appropriate permissions
+- Landing page commands (`jh admin landing-page`) use REST API: GET `/app/homepage` (show), POST `/app/config/homepage` (update), DELETE `/app/config/homepage` (remove); require appropriate permissions
 - Landing page `update` command accepts content inline as an argument, from a file via `--file`, or piped via stdin (priority: `--file` > arg > stdin)
 - Landing page response uses custom JSON unmarshaling (`homepageResponse`) to handle `message` being either an object or a string
 

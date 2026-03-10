@@ -97,103 +97,76 @@ func showLandingPage(server string) error {
 	return nil
 }
 
-func setLandingPage(server, content string) error {
+func homepageRequest(server, method string, body io.Reader, permissionErr, statusErr string) error {
 	token, err := ensureValidToken()
 	if err != nil {
 		return fmt.Errorf("authentication required — run 'jh auth login' first")
 	}
 
+	url := fmt.Sprintf("https://%s/app/config/homepage", server)
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return fmt.Errorf("could not prepare request")
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
+	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("could not reach the server")
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("%s", permissionErr)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%s (server returned %d)", statusErr, resp.StatusCode)
+	}
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("could not read response from server")
+	}
+
+	var result struct {
+		Success bool            `json:"success"`
+		Message json.RawMessage `json:"message"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil || !result.Success {
+		var msg string
+		_ = json.Unmarshal(result.Message, &msg)
+		return fmt.Errorf("%s", msg)
+	}
+
+	return nil
+}
+
+func setLandingPage(server, content string) error {
 	payload, err := json.Marshal(map[string]string{"content": content})
 	if err != nil {
 		return fmt.Errorf("could not prepare request")
 	}
-
-	url := fmt.Sprintf("https://%s/app/config/homepage", server)
-	req, err := http.NewRequest("POST", url, bytes.NewReader(payload))
-	if err != nil {
-		return fmt.Errorf("could not prepare request")
+	if err := homepageRequest(server, "POST", bytes.NewReader(payload),
+		"you do not have permission to update the landing page",
+		"could not update landing page"); err != nil {
+		return err
 	}
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("could not reach the server")
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return fmt.Errorf("you do not have permission to update the landing page")
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("could not update landing page (server returned %d)", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("could not read response from server")
-	}
-
-	var result struct {
-		Success bool            `json:"success"`
-		Message json.RawMessage `json:"message"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil || !result.Success {
-		var msg string
-		_ = json.Unmarshal(result.Message, &msg)
-		return fmt.Errorf("%s", msg)
-	}
-
 	fmt.Println("Successfully updated the landing page.")
 	return nil
 }
 
-func disableLandingPage(server string) error {
-	token, err := ensureValidToken()
-	if err != nil {
-		return fmt.Errorf("authentication required — run 'jh auth login' first")
+func removeLandingPage(server string) error {
+	if err := homepageRequest(server, "DELETE", nil,
+		"you do not have permission to remove the landing page",
+		"could not remove landing page"); err != nil {
+		return err
 	}
-
-	url := fmt.Sprintf("https://%s/app/config/homepage", server)
-	req, err := http.NewRequest("DELETE", url, nil)
-	if err != nil {
-		return fmt.Errorf("could not prepare request")
-	}
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
-	req.Header.Set("Accept", "application/json")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("could not reach the server")
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return fmt.Errorf("you do not have permission to disable the landing page")
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("could not disable landing page (server returned %d)", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("could not read response from server")
-	}
-
-	var result struct {
-		Success bool            `json:"success"`
-		Message json.RawMessage `json:"message"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil || !result.Success {
-		var msg string
-		_ = json.Unmarshal(result.Message, &msg)
-		return fmt.Errorf("%s", msg)
-	}
-
-	fmt.Println("Successfully disabled the custom landing page.")
+	fmt.Println("Successfully removed the custom landing page.")
 	return nil
 }
 
