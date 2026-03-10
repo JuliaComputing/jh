@@ -83,7 +83,23 @@ type PackageRESTListResponse struct {
 	} `json:"meta"`
 }
 
-func searchPackagesREST(server string, search string, limit int, offset int, registryNames []string, verbose bool) error {
+type PackageSearchParams struct {
+	Server        string
+	Search        string
+	Limit         int
+	Offset        int
+	RegistryIDs   []int
+	RegistryNames []string
+	Verbose       bool
+}
+
+func searchPackagesREST(params PackageSearchParams) error {
+	server := params.Server
+	search := params.Search
+	limit := params.Limit
+	offset := params.Offset
+	registryNames := params.RegistryNames
+	verbose := params.Verbose
 	token, err := ensureValidToken()
 	if err != nil {
 		return fmt.Errorf("authentication required: %w", err)
@@ -198,15 +214,21 @@ func searchPackagesREST(server string, search string, limit int, offset int, reg
 	return nil
 }
 
-func searchPackages(server string, search string, limit int, offset int, registryIDs []int, registryNames []string, verbose bool) error {
-	err := searchPackagesGraphQL(server, search, limit, offset, registryIDs, verbose)
+func searchPackages(params PackageSearchParams) error {
+	err := searchPackagesREST(params)
 	if err != nil {
-		return searchPackagesREST(server, search, limit, offset, registryNames, verbose)
+		return searchPackagesGraphQL(params)
 	}
 	return nil
 }
 
-func searchPackagesGraphQL(server string, search string, limit int, offset int, registries []int, verbose bool) error {
+func searchPackagesGraphQL(params PackageSearchParams) error {
+	server := params.Server
+	search := params.Search
+	limit := params.Limit
+	offset := params.Offset
+	registries := params.RegistryIDs
+	verbose := params.Verbose
 	token, err := ensureValidToken()
 	if err != nil {
 		return fmt.Errorf("authentication required: %w", err)
