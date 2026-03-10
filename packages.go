@@ -113,6 +113,16 @@ type PackageRESTListResponse struct {
 	} `json:"meta"`
 }
 
+type PackageSearchParams struct {
+	Server        string
+	Search        string
+	Limit         int
+	Offset        int
+	RegistryIDs   []int
+	RegistryNames []string
+	Verbose       bool
+}
+
 // executePackageQuery executes a GraphQL package search query and returns the results
 func executePackageQuery(server string, variables map[string]interface{}) ([]Package, error) {
 	token, err := ensureValidToken()
@@ -361,7 +371,29 @@ func buildRegistryLookup(server string) map[int]string {
 	return lookup
 }
 
-func searchPackages(server string, search string, limit int, offset int, registryIDs []int, registryNames []string, verbose bool) error {
+func searchPackagesREST(params PackageSearchParams) error {
+	packages, err := fetchPackagesREST(params.Server, params.Search, params.Limit, params.Offset, params.RegistryNames)
+	if err != nil {
+		return err
+	}
+
+	if len(packages) == 0 {
+		fmt.Println("No packages found")
+		return nil
+	}
+
+	fmt.Printf("Found %d package(s):\n\n", len(packages))
+	if !params.Verbose {
+		fmt.Printf("%-30s %-20s %-12s %s\n", "NAME", "REGISTRY", "VERSION", "DESCRIPTION")
+		fmt.Printf("%-30s %-20s %-12s %s\n", strings.Repeat("-", 30), strings.Repeat("-", 20), strings.Repeat("-", 12), strings.Repeat("-", 50))
+	}
+	for _, pkg := range packages {
+		displayRESTPackage(pkg, params.Verbose)
+	}
+	return nil
+}
+
+func searchPackagesGraphQL(params PackageSearchParams) error {
 	variables := map[string]interface{}{
 		"filter":       map[string]interface{}{},
 		"order":        map[string]string{"score": "desc"},
@@ -374,39 +406,22 @@ func searchPackages(server string, search string, limit int, offset int, registr
 		"notinstalled": true,
 	}
 
-	if search != "" {
-		variables["search"] = search
+	if params.Search != "" {
+		variables["search"] = params.Search
 	}
-	if limit > 0 {
-		variables["limit"] = limit
+	if params.Limit > 0 {
+		variables["limit"] = params.Limit
 	}
-	if offset > 0 {
-		variables["offset"] = offset
+	if params.Offset > 0 {
+		variables["offset"] = params.Offset
 	}
-	if len(registryIDs) > 0 {
-		variables["registries"] = buildRegistriesParam(registryIDs)
+	if len(params.RegistryIDs) > 0 {
+		variables["registries"] = buildRegistriesParam(params.RegistryIDs)
 	}
 
-	packages, err := executePackageQuery(server, variables)
+	packages, err := executePackageQuery(params.Server, variables)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "GraphQL search failed (%v), falling back to REST API...\n", err)
-		restPackages, restErr := fetchPackagesREST(server, search, limit, offset, registryNames)
-		if restErr != nil {
-			return restErr
-		}
-		if len(restPackages) == 0 {
-			fmt.Println("No packages found")
-			return nil
-		}
-		fmt.Printf("Found %d package(s):\n\n", len(restPackages))
-		if !verbose {
-			fmt.Printf("%-30s %-20s %-12s %s\n", "NAME", "REGISTRY", "VERSION", "DESCRIPTION")
-			fmt.Printf("%-30s %-20s %-12s %s\n", strings.Repeat("-", 30), strings.Repeat("-", 20), strings.Repeat("-", 12), strings.Repeat("-", 50))
-		}
-		for _, pkg := range restPackages {
-			displayRESTPackage(pkg, verbose)
-		}
-		return nil
+		return err
 	}
 
 	if len(packages) == 0 {
@@ -414,16 +429,16 @@ func searchPackages(server string, search string, limit int, offset int, registr
 		return nil
 	}
 
-	registryLookup := buildRegistryLookup(server)
+	registryLookup := buildRegistryLookup(params.Server)
 	fmt.Printf("Found %d package(s):\n\n", len(packages))
 
-	if !verbose {
+	if !params.Verbose {
 		fmt.Printf("%-30s %-20s %-12s %-25s %s\n", "NAME", "OWNER", "VERSION", "REGISTRIES", "DESCRIPTION")
 		fmt.Printf("%-30s %-20s %-12s %-25s %s\n", strings.Repeat("-", 30), strings.Repeat("-", 20), strings.Repeat("-", 12), strings.Repeat("-", 25), strings.Repeat("-", 40))
 	}
 
 	for _, pkg := range packages {
-		if verbose {
+		if params.Verbose {
 			displayPackageDetails(&pkg, registryLookup)
 		} else {
 			fmt.Printf("%-30s %-20s", pkg.Name, pkg.Owner)
@@ -466,6 +481,15 @@ func searchPackages(server string, search string, limit int, offset int, registr
 	return nil
 }
 
+func searchPackages(params PackageSearchParams) error {
+	err := searchPackagesREST(params)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: REST API unavailable (%v), falling back to GraphQL\n", err)
+		return searchPackagesGraphQL(params)
+	}
+	return nil
+}
+
 func getPackageInfo(server string, packageName string, registryIDs []int, registryNames []string) error {
 	variables := map[string]interface{}{
 		"filter":       map[string]interface{}{},
@@ -486,7 +510,7 @@ func getPackageInfo(server string, packageName string, registryIDs []int, regist
 
 	packages, err := executePackageQuery(server, variables)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "GraphQL info failed (%v), falling back to REST API...\n", err)
+		fmt.Fprintf(os.Stderr, "Warning: GraphQL unavailable (%v), falling back to REST API\n", err)
 		restPackages, restErr := fetchPackagesREST(server, packageName, 100, 0, registryNames)
 		if restErr != nil {
 			return restErr
