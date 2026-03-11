@@ -318,9 +318,13 @@ jh run setup
 - Token list output is concise by default (Subject, Created By, and Expired status only); use `--verbose` flag for detailed information (signature, creation date, expiration date with estimate indicator)
 - Token dates are formatted in human-readable format and converted to local timezone (respects system timezone or TZ environment variable)
 - Token expiration estimate indicator only shown when `expires_at_is_estimate` is true in API response
-- Package search (`jh package search`) tries REST API (`/packages/info`) first, then falls back to GraphQL (`FilteredPackages` via `/v1/graphql`) on failure; a warning is printed to stderr when the fallback is used
+- Package search (`jh package search`) tries REST API (`/packages/info`) first, then falls back to GraphQL (`FilteredPackagesWithCount` via `/v1/graphql`) on failure; a warning is printed to stderr when the fallback is used
 - Package search GraphQL fallback passes `--registries` as registry IDs to the `registries` variable
 - `fetchRegistries` in `registries.go` is used by both `listRegistries` (for display) and `packageSearchCmd` (to resolve registry names to IDs for GraphQL and names for REST fallback)
+- Both REST and GraphQL package search paths produce identical output columns (Registry and Owner); GraphQL resolves registry names from the `registryIDs`/`registryNames` already in `PackageSearchParams` — no extra API call needed
+- A package in multiple registries appears as multiple rows (one per registry) in both REST and GraphQL paths, since the GraphQL view (`package_rank_vw`) is already flattened per package-registry combination
+- GraphQL fallback uses `package_search_with_count.gql` which fetches both the package list and aggregate count in a single request (`package_search` + `package_search_aggregate` root fields)
+- `executeGraphQL(server, token, req)` in `packages.go` is a shared helper for GraphQL POST requests (sets Authorization, Content-Type, Accept, X-Hasura-Role headers)
 
 ## Implementation Details
 

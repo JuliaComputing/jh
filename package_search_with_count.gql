@@ -1,4 +1,4 @@
-query FilteredPackages(
+query FilteredPackagesWithCount(
   $search: String
   $limit: Int
   $offset: Int
@@ -58,5 +58,21 @@ query FilteredPackages(
       __typename
     }
     __typename
+  }
+  package_search_aggregate(
+    args: {
+      search: $search
+      matchtags: $matchtags
+      licenses: $licenses
+      isinstalled: $installed
+      notinstalled: $notinstalled
+      hasfailures: $hasfailures
+      registrylist: $registries
+    }
+    where: { _and: [{ fit: { _gte: 1 } }, $filter] }
+  ) {
+    aggregate {
+      count
+    }
   }
 }
