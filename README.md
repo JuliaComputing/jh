@@ -201,7 +201,7 @@ go build -o jh .
 - `jh admin landing-page update <markdown-content>` - Set a custom markdown landing page
   - `jh admin landing-page update --file landing.md` - Read content from a file
   - `cat landing.md | jh admin landing-page update` - Read content from stdin
-- `jh admin landing-page disable` - Remove the custom landing page and revert to the default
+- `jh admin landing-page remove` - Remove the custom landing page and revert to the default
 
 ### Update (`jh update`)
 
@@ -304,8 +304,8 @@ jh admin landing-page update --file landing.md
 # Set landing page from stdin
 cat landing.md | jh admin landing-page update
 
-# Disable custom landing page (revert to default)
-jh admin landing-page disable
+# Remove custom landing page (revert to default)
+jh admin landing-page remove
 ```
 
 ### Git Workflow
