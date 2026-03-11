@@ -620,26 +620,15 @@ PROVIDER TYPES
 
   cacheserver — sync from a JuliaHub package cache:
   {
-    "type":                   "cacheserver",
-    "host":                   "<hostname>",
-    "credential_key":         "<token-id>",
-    "server_type":            "",
-    "github_credential_type": "",
-    "api_host":               "",
-    "url":                    "",
-    "user_name":              ""
+    "type":           "cacheserver",
+    "host":           "<hostname>",
+    "credential_key": "<token-id>"
   }
 
   bundle — local bundle (sets license_detect: false automatically):
   {
-    "type":                   "bundle",
-    "credential_key":         "",
-    "server_type":            "",
-    "github_credential_type": "",
-    "api_host":               "",
-    "url":                    "",
-    "user_name":              "",
-    "host":                   ""
+    "type":           "bundle",
+    "credential_key": ""
   }
 
   genericserver — generic server with basic auth:
@@ -696,8 +685,7 @@ var registryConfigAddCmd = &cobra.Command{
     "enabled": true, "display_apps": true, "owner": "admin", "sync_schedule": null,
     "download_providers": [{
       "type": "cacheserver", "host": "https://pkg.juliahub.com",
-      "credential_key": "JC Auth Token",
-      "server_type": "", "github_credential_type": "", "api_host": "", "url": "", "user_name": ""
+      "credential_key": "JC Auth Token"
     }]
   }' | jh registry config add
 
@@ -757,8 +745,7 @@ var registryConfigUpdateCmd = &cobra.Command{
     "enabled": true, "display_apps": true, "owner": "admin", "sync_schedule": null,
     "download_providers": [{
       "type": "cacheserver", "host": "https://pkg-new.juliahub.com",
-      "credential_key": "JC Auth Token",
-      "server_type": "", "github_credential_type": "", "api_host": "", "url": "", "user_name": ""
+      "credential_key": "JC Auth Token"
     }]
   }' | jh registry config update
 
