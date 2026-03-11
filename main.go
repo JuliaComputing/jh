@@ -1079,7 +1079,7 @@ var credentialListCmd = &cobra.Command{
 
 Displays credentials grouped by type: Tokens, SSH Keys, and GitHub Apps.
 
-By default, shows Name and URL for tokens, and SSH Key # for SSH keys.
+By default, shows Name and URL for tokens, and index number and hostname for SSH keys.
 Use --verbose flag to display additional details including:
 - Token account login, expiry, scopes, and rate limit info
 - SSH host key strings`,
