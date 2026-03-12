@@ -19,17 +19,17 @@ type Registry struct {
 	Description  string     `json:"description"`
 }
 
-func listRegistries(server string, verbose bool) error {
+func fetchRegistries(server string) ([]Registry, error) {
 	token, err := ensureValidToken()
 	if err != nil {
-		return fmt.Errorf("authentication required: %w", err)
+		return nil, fmt.Errorf("authentication required: %w", err)
 	}
 
 	url := fmt.Sprintf("https://%s/api/v1/registry/registries/descriptions", server)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
@@ -38,23 +38,32 @@ func listRegistries(server string, verbose bool) error {
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to make request: %w", err)
+		return nil, fmt.Errorf("failed to make request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API request failed (status %d): %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("API request failed (status %d): %s", resp.StatusCode, string(body))
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("failed to read response: %w", err)
+		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
 	var registries []Registry
 	if err := json.Unmarshal(body, &registries); err != nil {
-		return fmt.Errorf("failed to parse response: %w", err)
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return registries, nil
+}
+
+func listRegistries(server string, verbose bool) error {
+	registries, err := fetchRegistries(server)
+	if err != nil {
+		return err
 	}
 
 	if len(registries) == 0 {
