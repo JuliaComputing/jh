@@ -42,6 +42,7 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh registry`: Registry operations (list with REST API, supports verbose mode)
    - `jh package`: Package search and info (REST primary via `/packages/info`, GraphQL fallback; supports filtering by registry)
    - `jh project`: Project management (list with GraphQL, supports user filtering)
+   - `jh package`: Package search (REST primary via `/packages/info`, GraphQL fallback)
    - `jh user`: User information (info with GraphQL)
    - `jh admin`: Administrative commands (user management, token management)
    - `jh admin user`: User management (list all users with REST API, supports verbose mode)
@@ -320,12 +321,14 @@ jh run setup
 - Token list output is concise by default (Subject, Created By, and Expired status only); use `--verbose` flag for detailed information (signature, creation date, expiration date with estimate indicator)
 - Token dates are formatted in human-readable format and converted to local timezone (respects system timezone or TZ environment variable)
 - Token expiration estimate indicator only shown when `expires_at_is_estimate` is true in API response
-- Package search (`jh package search`) and info (`jh package info`) both try REST API (`/packages/info`) first, then fall back to GraphQL (`FilteredPackages` via `/v1/graphql`) on failure; a warning is printed to stderr when the fallback is used
+- Package search (`jh package search`) and info (`jh package info`) both try REST API (`/packages/info`) first, then fall back to GraphQL (`FilteredPackagesWithCount` via `/v1/graphql`) on failure; a warning is printed to stderr when the fallback is used
 - REST API passes `--registries` as comma-separated registry names to the `registries` query param; GraphQL fallback passes registry IDs to the `registries` variable
 - `fetchRegistries` in `registries.go` is used by `listRegistries`, `packageSearchCmd`, and `packageInfoCmd` to resolve registry names to IDs (for GraphQL) and names (for REST)
-- `executePackageQuery` in `packages.go` is the shared GraphQL helper used by both `searchPackages` and `getPackageInfo`
-- `fetchPackagesREST` in `packages.go` is the shared REST helper used by both `searchPackages` and `getPackageInfo`
-- `displayPackageDetails` renders GraphQL `Package` results; `displayRESTPackage` renders `RESTPackage` results from the REST path
+- Both REST and GraphQL package search/info paths produce identical output columns (Registry and Owner); GraphQL resolves registry names from the `registryIDs`/`registryNames` already in `PackageSearchParams` — no extra API call needed
+- A package in multiple registries appears as multiple rows (one per registry) in both REST and GraphQL paths, since the GraphQL view (`package_rank_vw`) is already flattened per package-registry combination
+- GraphQL fallback uses `package_search_with_count.gql` which fetches both the package list and aggregate count in a single request (`package_search` + `package_search_aggregate` root fields)
+- `executeGraphQL(server, token, req)` in `packages.go` is a shared helper for GraphQL POST requests (sets Authorization, Content-Type, Accept, X-Hasura-Role headers)
+- `getPackageInfo` in `packages.go` implements exact name-match lookup using REST-first (`getPackageInfoREST`), GraphQL fallback (`getPackageInfoGraphQL`); `packageInfoCmd` in `main.go` resolves registries via `fetchRegistries`
 
 ## Implementation Details
 
