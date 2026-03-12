@@ -731,7 +731,6 @@ The package name must match exactly (case-insensitive).`,
 	},
 }
 
-
 var registryCmd = &cobra.Command{
 	Use:   "registry",
 	Short: "Registry management commands",
