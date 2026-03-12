@@ -193,30 +193,87 @@ func printPackages(pkgs []packageInfo, total int, verbose bool) {
 	}
 }
 
-func searchPackagesREST(params PackageSearchParams) error {
+// restToInfo converts a RESTPackage to the common packageInfo display struct.
+func restToInfo(p RESTPackage) packageInfo {
+	return packageInfo{
+		Name:        p.Name,
+		UUID:        p.UUID,
+		Registry:    p.Registry,
+		Version:     p.LatestStableVersion,
+		Description: p.Description,
+		SourceURL:   p.SourceURL,
+		Tags:        p.Tags,
+		Stars:       p.StargazersCount,
+		DocsURL:     p.JHubDocsURL,
+		License:     strings.Join(p.DetectedSourceLicenses, ", "),
+	}
+}
+
+// gqlToInfo converts a GraphQL Package to the common packageInfo display struct.
+func gqlToInfo(p Package, registryIDToName map[int]string) packageInfo {
+	info := packageInfo{
+		Name:    p.Name,
+		UUID:    p.UUID,
+		Owner:   p.Owner,
+		License: p.License,
+		IsApp:   p.IsApp,
+		Score:   p.Score,
+	}
+	if p.Metadata != nil {
+		info.Description = p.Metadata.Description
+		info.SourceURL = p.Metadata.Repo
+		info.Tags = p.Metadata.Tags
+		info.Stars = p.Metadata.StarCount
+		info.DocsURL = p.Metadata.DocsLink
+	}
+	if p.RegistryMap != nil {
+		info.Registry = registryIDToName[p.RegistryMap.RegistryID]
+		info.Version = p.RegistryMap.Version
+		if p.RegistryMap.Status {
+			info.Status = "Active"
+		} else {
+			info.Status = "Inactive"
+		}
+	}
+	return info
+}
+
+// buildRegistryIDToName creates a registry ID → name lookup from parallel slices.
+func buildRegistryIDToName(ids []int, names []string) map[int]string {
+	m := make(map[int]string, len(ids))
+	for i, id := range ids {
+		if i < len(names) {
+			m[id] = names[i]
+		}
+	}
+	return m
+}
+
+// fetchRESTPackages calls the /packages/info endpoint and returns raw results and total count.
+func fetchRESTPackages(server, search string, limit, offset int, registryNames []string) ([]RESTPackage, int, error) {
 	token, err := ensureValidToken()
 	if err != nil {
-		return fmt.Errorf("authentication required: %w", err)
+		return nil, 0, fmt.Errorf("authentication required: %w", err)
 	}
 
-	url := fmt.Sprintf("https://%s/packages/info", params.Server)
+	url := fmt.Sprintf("https://%s/packages/info", server)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return nil, 0, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	q := req.URL.Query()
-	if params.Search != "" {
-		q.Add("name", params.Search)
+	if search != "" {
+		q.Add("name", search)
 	}
-	if params.Limit > 0 {
-		q.Add("limit", fmt.Sprintf("%d", params.Limit))
+	if limit > 0 {
+		q.Add("limit", fmt.Sprintf("%d", limit))
 	}
-	if params.Offset > 0 {
-		q.Add("offset", fmt.Sprintf("%d", params.Offset))
+	if offset > 0 {
+		q.Add("offset", fmt.Sprintf("%d", offset))
 	}
-	if len(params.RegistryNames) > 0 {
-		q.Add("registries", strings.Join(params.RegistryNames, ","))
+	if len(registryNames) > 0 {
+		q.Add("registries", strings.Join(registryNames, ","))
 	}
 	req.URL.RawQuery = q.Encode()
 
@@ -226,48 +283,111 @@ func searchPackagesREST(params PackageSearchParams) error {
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to make request: %w", err)
+		return nil, 0, fmt.Errorf("failed to make request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API request failed (status %d): %s", resp.StatusCode, string(body))
+		return nil, 0, fmt.Errorf("API request failed (status %d): %s", resp.StatusCode, string(body))
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("failed to read response: %w", err)
+		return nil, 0, fmt.Errorf("failed to read response: %w", err)
 	}
 
 	var response PackageRESTListResponse
 	if err := json.Unmarshal(body, &response); err != nil {
-		return fmt.Errorf("failed to parse response: %w", err)
+		return nil, 0, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	pkgs := make([]packageInfo, len(response.Packages))
-	for i, p := range response.Packages {
-		pkgs[i] = packageInfo{
-			Name:        p.Name,
-			UUID:        p.UUID,
-			Registry:    p.Registry,
-			Version:     p.LatestStableVersion,
-			Description: p.Description,
-			SourceURL:   p.SourceURL,
-			Tags:        p.Tags,
-			Stars:       p.StargazersCount,
-			DocsURL:     p.JHubDocsURL,
-			License:     strings.Join(p.DetectedSourceLicenses, ", "),
+	return response.Packages, response.Meta.Total, nil
+}
+
+// fetchGraphQLPackages executes the package search GraphQL query and returns raw results and total count.
+func fetchGraphQLPackages(server, search string, limit, offset int, registryIDs []int) ([]Package, int, error) {
+	token, err := ensureValidToken()
+	if err != nil {
+		return nil, 0, fmt.Errorf("authentication required: %w", err)
+	}
+
+	queryBytes, err := packageSearchFS.ReadFile("package_search_with_count.gql")
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to read GraphQL query: %w", err)
+	}
+
+	variables := map[string]interface{}{
+		"filter":       map[string]interface{}{},
+		"order":        map[string]string{"score": "desc"},
+		"matchtags":    "{}",
+		"licenses":     "{}",
+		"search":       search,
+		"offset":       offset,
+		"hasfailures":  false,
+		"installed":    true,
+		"notinstalled": true,
+	}
+	if limit > 0 {
+		variables["limit"] = limit
+	}
+	if len(registryIDs) > 0 {
+		registryStrs := make([]string, len(registryIDs))
+		for i, id := range registryIDs {
+			registryStrs[i] = fmt.Sprintf("%d", id)
 		}
+		variables["registries"] = fmt.Sprintf("{%s}", strings.Join(registryStrs, ","))
 	}
 
-	printPackages(pkgs, response.Meta.Total, params.Verbose)
+	body, err := executeGraphQL(server, token, GraphQLRequest{
+		OperationName: "FilteredPackagesWithCount",
+		Query:         string(queryBytes),
+		Variables:     variables,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var response PackageSearchResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, 0, fmt.Errorf("failed to parse GraphQL response: %w", err)
+	}
+	if len(response.Errors) > 0 {
+		return nil, 0, fmt.Errorf("GraphQL errors: %v", response.Errors)
+	}
+
+	return response.Data.PackageSearch, response.Data.PackageAggregate.Aggregate.Count, nil
+}
+
+func searchPackagesREST(params PackageSearchParams) error {
+	pkgs, total, err := fetchRESTPackages(params.Server, params.Search, params.Limit, params.Offset, params.RegistryNames)
+	if err != nil {
+		return err
+	}
+	infos := make([]packageInfo, len(pkgs))
+	for i, p := range pkgs {
+		infos[i] = restToInfo(p)
+	}
+	printPackages(infos, total, params.Verbose)
+	return nil
+}
+
+func searchPackagesGraphQL(params PackageSearchParams) error {
+	pkgs, total, err := fetchGraphQLPackages(params.Server, params.Search, params.Limit, params.Offset, params.RegistryIDs)
+	if err != nil {
+		return err
+	}
+	registryIDToName := buildRegistryIDToName(params.RegistryIDs, params.RegistryNames)
+	infos := make([]packageInfo, len(pkgs))
+	for i, p := range pkgs {
+		infos[i] = gqlToInfo(p, registryIDToName)
+	}
+	printPackages(infos, total, params.Verbose)
 	return nil
 }
 
 func searchPackages(params PackageSearchParams) error {
-	err := searchPackagesREST(params)
-	if err != nil {
+	if err := searchPackagesREST(params); err != nil {
 		return searchPackagesGraphQL(params)
 	}
 	return nil
@@ -309,97 +429,48 @@ func executeGraphQL(server string, token *StoredToken, gqlReq GraphQLRequest) ([
 	return body, nil
 }
 
-func searchPackagesGraphQL(params PackageSearchParams) error {
-	token, err := ensureValidToken()
-	if err != nil {
-		return fmt.Errorf("authentication required: %w", err)
+func getPackageInfo(server, packageName string, registryIDs []int, registryNames []string) error {
+	if err := getPackageInfoREST(server, packageName, registryNames); err != nil {
+		return getPackageInfoGraphQL(server, packageName, registryIDs, registryNames)
 	}
+	return nil
+}
 
-	queryBytes, err := packageSearchFS.ReadFile("package_search_with_count.gql")
-	if err != nil {
-		return fmt.Errorf("failed to read GraphQL query: %w", err)
-	}
-
-	variables := map[string]interface{}{
-		"filter":       map[string]interface{}{},
-		"order":        map[string]string{"score": "desc"},
-		"matchtags":    "{}",
-		"licenses":     "{}",
-		"search":       "",
-		"offset":       0,
-		"hasfailures":  false,
-		"installed":    true,
-		"notinstalled": true,
-	}
-	if params.Search != "" {
-		variables["search"] = params.Search
-	}
-	if params.Limit > 0 {
-		variables["limit"] = params.Limit
-	}
-	if params.Offset > 0 {
-		variables["offset"] = params.Offset
-	}
-	if len(params.RegistryIDs) > 0 {
-		registryStrs := make([]string, len(params.RegistryIDs))
-		for i, id := range params.RegistryIDs {
-			registryStrs[i] = fmt.Sprintf("%d", id)
-		}
-		variables["registries"] = fmt.Sprintf("{%s}", strings.Join(registryStrs, ","))
-	}
-
-	body, err := executeGraphQL(params.Server, token, GraphQLRequest{
-		OperationName: "FilteredPackagesWithCount",
-		Query:         string(queryBytes),
-		Variables:     variables,
-	})
+func getPackageInfoREST(server, packageName string, registryNames []string) error {
+	pkgs, _, err := fetchRESTPackages(server, packageName, 100, 0, registryNames)
 	if err != nil {
 		return err
 	}
-
-	var response PackageSearchResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return fmt.Errorf("failed to parse GraphQL response: %w", err)
-	}
-	if len(response.Errors) > 0 {
-		return fmt.Errorf("GraphQL errors: %v", response.Errors)
-	}
-
-	registryIDToName := make(map[int]string, len(params.RegistryIDs))
-	for i, id := range params.RegistryIDs {
-		registryIDToName[id] = params.RegistryNames[i]
-	}
-
-	gqlPkgs := response.Data.PackageSearch
-	pkgs := make([]packageInfo, len(gqlPkgs))
-	for i, p := range gqlPkgs {
-		info := packageInfo{
-			Name:    p.Name,
-			UUID:    p.UUID,
-			Owner:   p.Owner,
-			License: p.License,
-			IsApp:   p.IsApp,
-			Score:   p.Score,
+	var matches []packageInfo
+	for _, p := range pkgs {
+		if strings.EqualFold(p.Name, packageName) {
+			matches = append(matches, restToInfo(p))
 		}
-		if p.Metadata != nil {
-			info.Description = p.Metadata.Description
-			info.SourceURL = p.Metadata.Repo
-			info.Tags = p.Metadata.Tags
-			info.Stars = p.Metadata.StarCount
-			info.DocsURL = p.Metadata.DocsLink
-		}
-		if p.RegistryMap != nil {
-			info.Registry = registryIDToName[p.RegistryMap.RegistryID]
-			info.Version = p.RegistryMap.Version
-			if p.RegistryMap.Status {
-				info.Status = "Active"
-			} else {
-				info.Status = "Inactive"
-			}
-		}
-		pkgs[i] = info
 	}
+	if len(matches) == 0 {
+		fmt.Println("Package not found")
+		return nil
+	}
+	printPackages(matches, len(matches), true)
+	return nil
+}
 
-	printPackages(pkgs, response.Data.PackageAggregate.Aggregate.Count, params.Verbose)
+func getPackageInfoGraphQL(server, packageName string, registryIDs []int, registryNames []string) error {
+	pkgs, _, err := fetchGraphQLPackages(server, packageName, 100, 0, registryIDs)
+	if err != nil {
+		return err
+	}
+	registryIDToName := buildRegistryIDToName(registryIDs, registryNames)
+	var matches []packageInfo
+	for _, p := range pkgs {
+		if strings.EqualFold(p.Name, packageName) {
+			matches = append(matches, gqlToInfo(p, registryIDToName))
+		}
+	}
+	if len(matches) == 0 {
+		fmt.Println("Package not found")
+		return nil
+	}
+	printPackages(matches, len(matches), true)
 	return nil
 }

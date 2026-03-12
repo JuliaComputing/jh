@@ -659,6 +659,78 @@ Use --verbose flag for comprehensive output, or get a concise summary by default
 	},
 }
 
+var packageInfoCmd = &cobra.Command{
+	Use:   "info <package-name>",
+	Short: "Get detailed information about a package",
+	Long: `Display detailed information about a specific Julia package by exact name match.
+
+Shows comprehensive package information including:
+- Package name, UUID, and owner
+- Version information and status
+- Description and repository
+- Tags and star count
+- License information
+- Documentation links
+
+The package name must match exactly (case-insensitive).`,
+	Example: "  jh package info DataFrames\n  jh package info Plots\n  jh package info CSV",
+	Args:    cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		packageName := args[0]
+		registryNamesStr, _ := cmd.Flags().GetString("registries")
+
+		// Fetch all registries from the API
+		allRegistries, err := fetchRegistries(server)
+		if err != nil {
+			fmt.Printf("Failed to fetch registries: %v\n", err)
+			os.Exit(1)
+		}
+
+		var registryIDs []int
+		var registryNames []string
+		if registryNamesStr != "" {
+			requestedNames := strings.Split(registryNamesStr, ",")
+			for _, requestedName := range requestedNames {
+				requestedName = strings.TrimSpace(requestedName)
+				if requestedName == "" {
+					continue
+				}
+
+				found := false
+				for _, reg := range allRegistries {
+					if strings.EqualFold(reg.Name, requestedName) {
+						registryIDs = append(registryIDs, reg.RegistryID)
+						registryNames = append(registryNames, reg.Name)
+						found = true
+						break
+					}
+				}
+
+				if !found {
+					fmt.Printf("Registry not found: '%s'\n", requestedName)
+					os.Exit(1)
+				}
+			}
+		} else {
+			for _, reg := range allRegistries {
+				registryIDs = append(registryIDs, reg.RegistryID)
+				registryNames = append(registryNames, reg.Name)
+			}
+		}
+
+		if err := getPackageInfo(server, packageName, registryIDs, registryNames); err != nil {
+			fmt.Printf("Failed to get package info: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
 var registryCmd = &cobra.Command{
 	Use:   "registry",
 	Short: "Registry management commands",
@@ -1230,6 +1302,8 @@ func init() {
 	packageSearchCmd.Flags().Int("offset", 0, "Number of results to skip")
 	packageSearchCmd.Flags().String("registries", "", "Filter by registry names (comma-separated, e.g., 'General,CustomRegistry')")
 	packageSearchCmd.Flags().Bool("verbose", false, "Show detailed package information")
+	packageInfoCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	packageInfoCmd.Flags().String("registries", "", "Filter by registry names (comma-separated, e.g., 'General,CustomRegistry')")
 	registryListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	registryListCmd.Flags().Bool("verbose", false, "Show detailed registry information")
 	projectListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
@@ -1248,7 +1322,7 @@ func init() {
 	authCmd.AddCommand(authLoginCmd, authRefreshCmd, authStatusCmd, authEnvCmd)
 	jobCmd.AddCommand(jobListCmd, jobStartCmd)
 	datasetCmd.AddCommand(datasetListCmd, datasetDownloadCmd, datasetUploadCmd, datasetStatusCmd)
-	packageCmd.AddCommand(packageSearchCmd)
+	packageCmd.AddCommand(packageSearchCmd, packageInfoCmd)
 	registryCmd.AddCommand(registryListCmd)
 	projectCmd.AddCommand(projectListCmd)
 	userCmd.AddCommand(userInfoCmd)

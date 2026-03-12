@@ -6,7 +6,7 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 
 - **Authentication**: OAuth2 device flow authentication with JWT token handling
 - **Dataset Management**: List, download, upload, and check status of datasets
-- **Package Search**: Search Julia packages across registries via REST API (GraphQL fallback)
+- **Package Management**: Search and explore Julia packages across registries via REST API (GraphQL fallback)
 - **Registry Management**: List and manage Julia package registries
 - **Project Management**: List and filter projects using GraphQL API
 - **Git Integration**: Clone, push, fetch, and pull with automatic JuliaHub authentication
@@ -151,7 +151,7 @@ go build -o jh .
 - `jh dataset upload [dataset-id] <file-path>` - Upload a dataset
 - `jh dataset status <dataset-id> [version]` - Show dataset status
 
-### Package Search (`jh package`)
+### Package Management (`jh package`)
 
 - `jh package search [search-term]` - Search for Julia packages
   - Default: Shows Name, Registry, Owner, Version, and Description
@@ -159,6 +159,8 @@ go build -o jh .
   - `--registries <names>` - Filter by registry names (comma-separated, e.g. `General,MyRegistry`)
   - `--limit <n>` - Maximum results to return (default: 10)
   - `--offset <n>` - Number of results to skip
+- `jh package info <package-name>` - Get detailed information about a specific package (exact name match, case-insensitive)
+  - `jh package info --registries General` - Search in specific registries only
 
 ### Registry Management (`jh registry`)
 
@@ -244,7 +246,7 @@ jh dataset upload --new ./my-data.tar.gz
 jh dataset upload my-dataset ./updated-data.tar.gz
 ```
 
-### Package Search
+### Package Operations
 
 ```bash
 # Search for packages by name
@@ -258,6 +260,10 @@ jh package search --registries General optimization
 
 # Limit and paginate results
 jh package search --limit 20 --offset 0 ml
+
+# Get detailed info about a specific package
+jh package info DataFrames
+jh package info Plots --registries General
 ```
 
 ### Registry Operations
@@ -359,7 +365,7 @@ Note: Arguments after `--` are passed directly to Julia. The `jh run` command:
 
 - **Built with Go** using the Cobra CLI framework
 - **Authentication**: OAuth2 device flow with JWT token management
-- **APIs**: REST API for datasets and package search (primary); GraphQL API for projects, user info, and package search fallback (single request returns results + total count)
+- **APIs**: REST API for datasets and package search/info (primary); GraphQL API for projects, user info, and package search/info fallback (single request returns results + total count)
 - **Git Integration**: Seamless authentication via HTTP headers or credential helper
 - **Cross-platform**: Supports Windows, macOS, and Linux
 
