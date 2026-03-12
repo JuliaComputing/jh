@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 )
@@ -407,7 +406,6 @@ func searchPackagesGraphQL(params PackageSearchParams) error {
 
 func getPackageInfo(server, packageName string, registryIDs []int, registryNames []string) error {
 	if err := getPackageInfoREST(server, packageName, registryNames); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: REST API unavailable (%v), falling back to GraphQL\n", err)
 		return getPackageInfoGraphQL(server, packageName, registryIDs, registryNames)
 	}
 	return nil
