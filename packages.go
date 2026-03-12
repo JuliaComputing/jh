@@ -58,46 +58,17 @@ type PackageDocsResponse struct {
 }
 
 type Package struct {
-	Name        string               `json:"name"`
-	Owner       string               `json:"owner"`
-	Slug        *string              `json:"slug"`
-	License     string               `json:"license"`
-	IsApp       bool                 `json:"isapp"`
-	Score       float64              `json:"score"`
-	RegistryMap []PackageRegistryMap `json:"-"` // Custom unmarshaling
-	Metadata    *PackageMetadata     `json:"metadata"`
-	UUID        string               `json:"uuid"`
-	Installed   bool                 `json:"installed"`
-	Failures    []PackageFailure     `json:"failures"`
-}
-
-// UnmarshalJSON custom unmarshaler to handle registrymap as both object and array
-func (p *Package) UnmarshalJSON(data []byte) error {
-	type Alias Package
-	aux := &struct {
-		RegistryMapRaw json.RawMessage `json:"registrymap"`
-		*Alias
-	}{
-		Alias: (*Alias)(p),
-	}
-
-	if err := json.Unmarshal(data, &aux); err != nil {
-		return err
-	}
-
-	if len(aux.RegistryMapRaw) > 0 && string(aux.RegistryMapRaw) != "null" {
-		var registryMapArray []PackageRegistryMap
-		if err := json.Unmarshal(aux.RegistryMapRaw, &registryMapArray); err == nil {
-			p.RegistryMap = registryMapArray
-		} else {
-			var registryMapObj PackageRegistryMap
-			if err := json.Unmarshal(aux.RegistryMapRaw, &registryMapObj); err == nil {
-				p.RegistryMap = []PackageRegistryMap{registryMapObj}
-			}
-		}
-	}
-
-	return nil
+	Name        string              `json:"name"`
+	Owner       string              `json:"owner"`
+	Slug        *string             `json:"slug"`
+	License     string              `json:"license"`
+	IsApp       bool                `json:"isapp"`
+	Score       float64             `json:"score"`
+	RegistryMap *PackageRegistryMap `json:"registrymap"`
+	Metadata    *PackageMetadata    `json:"metadata"`
+	UUID        string              `json:"uuid"`
+	Installed   bool                `json:"installed"`
+	Failures    []PackageFailure    `json:"failures"`
 }
 
 type PackageSearchResponse struct {
@@ -275,10 +246,10 @@ func gqlToInfo(p Package, registryIDToName map[int]string) packageInfo {
 		info.Stars = p.Metadata.StarCount
 		info.DocsURL = p.Metadata.DocsLink
 	}
-	if len(p.RegistryMap) > 0 {
-		info.Registry = registryIDToName[p.RegistryMap[0].RegistryID]
-		info.Version = p.RegistryMap[0].Version
-		if p.RegistryMap[0].Status {
+	if p.RegistryMap != nil {
+		info.Registry = registryIDToName[p.RegistryMap.RegistryID]
+		info.Version = p.RegistryMap.Version
+		if p.RegistryMap.Status {
 			info.Status = "Active"
 		} else {
 			info.Status = "Inactive"
@@ -555,7 +526,7 @@ func getPackageDependencies(server string, packageName string, registryName stri
 		return fmt.Errorf("package not found: %s", packageName)
 	}
 
-	if len(pkg.RegistryMap) == 0 {
+	if pkg.RegistryMap == nil {
 		return fmt.Errorf("no registry information found for package: %s", packageName)
 	}
 
@@ -564,8 +535,8 @@ func getPackageDependencies(server string, packageName string, registryName stri
 	if registryName != "" {
 		targetRegistry = registryName
 	} else {
-		// Find the registry name from the first entry in RegistryMap
-		firstRegistryID := pkg.RegistryMap[0].RegistryID
+		// Find the registry name from RegistryMap
+		firstRegistryID := pkg.RegistryMap.RegistryID
 		for _, reg := range allRegistries {
 			if reg.RegistryID == firstRegistryID {
 				targetRegistry = reg.Name
