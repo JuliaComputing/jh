@@ -14,7 +14,7 @@ The application follows a command-line interface pattern using the Cobra library
 - **auth.go**: OAuth2 device flow authentication with JWT token handling
 - **datasets.go**: Dataset operations (list, download, upload, status) with REST API integration
 - **registries.go**: Registry operations (list, fetch) with REST API integration
-- **packages.go**: Package operations (search, info, dependency) with GraphQL primary path, REST API fallback (`/packages/info`), and documentation API (`/docs/{registry}/{package}/stable/pkg.json`)
+- **packages.go**: Package operations (search, info, dependency) with REST API primary path (`/packages/info`), GraphQL fallback, and documentation API (`/docs/{registry}/{package}/stable/pkg.json`)
 - **projects.go**: Project management using GraphQL API with user filtering
 - **user.go**: User information retrieval using GraphQL API and REST API for listing users
 - **tokens.go**: Token management operations (list) with REST API integration
@@ -32,8 +32,8 @@ The application follows a command-line interface pattern using the Cobra library
    - Stores tokens securely in `~/.juliahub` with 0600 permissions
 
 2. **API Integration**:
-   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/registry/registries/descriptions`), package search/info fallback (`/packages/info`), token management (`/app/token/activelist`) and user management (`/app/config/features/manage`)
-   - **GraphQL API**: Used for projects, user info, package search, and package info primary path (`/v1/graphql`)
+   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/registry/registries/descriptions`), package search/info primary path (`/packages/info`), token management (`/app/token/activelist`) and user management (`/app/config/features/manage`)
+   - **GraphQL API**: Used for projects, user info, and package search/info fallback (`/v1/graphql`)
    - **Headers**: All GraphQL requests require `X-Hasura-Role: jhuser` header
    - **Authentication**: Uses ID tokens (`token.IDToken`) for API calls
 
@@ -41,7 +41,7 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh auth`: Authentication commands (login, refresh, status, env)
    - `jh dataset`: Dataset operations (list, download, upload, status)
    - `jh registry`: Registry operations (list with REST API, supports verbose mode)
-   - `jh package`: Package search, info, and dependency (GraphQL primary, REST fallback via `/packages/info`; dependency data from `/docs/{registry}/{package}/stable/pkg.json`)
+   - `jh package`: Package search, info, and dependency (REST primary via `/packages/info`, GraphQL fallback; dependency data from `/docs/{registry}/{package}/stable/pkg.json`)
    - `jh project`: Project management (list with GraphQL, supports user filtering)
    - `jh user`: User information (info with GraphQL)
    - `jh admin`: Administrative commands (user management, token management)
@@ -206,7 +206,7 @@ The application uses OAuth2 device flow:
 - **Registry operations**: `/api/v1/registry/registries/descriptions` for listing registries
 - **User management**: `/app/config/features/manage` endpoint for listing all users
 - **Token management**: `/app/token/activelist` endpoint for listing all API tokens
-- **Package search/info fallback**: `/packages/info` endpoint with `name`, `registries`, `tags`, `licenses`, `limit`, `offset` query params; returns `{packages: [...], meta: {total: N}}`
+- **Package search/info primary**: `/packages/info` endpoint with `name`, `registries`, `tags`, `licenses`, `limit`, `offset` query params; returns `{packages: [...], meta: {total: N}}`
 - **Package dependencies**: `/docs/{registry}/{package}/stable/pkg.json` for dependency information
 - **Authentication**: Bearer token with ID token
 - **Upload workflow**: 3-step process (request presigned URL, upload to URL, close upload)
@@ -364,13 +364,15 @@ jh run setup
 - Token list output is concise by default (Subject, Created By, and Expired status only); use `--verbose` flag for detailed information (signature, creation date, expiration date with estimate indicator)
 - Token dates are formatted in human-readable format and converted to local timezone (respects system timezone or TZ environment variable)
 - Token expiration estimate indicator only shown when `expires_at_is_estimate` is true in API response
-- Package search (`jh package search`) and info (`jh package info`) both try GraphQL (`FilteredPackages` via `/v1/graphql`) first, then fall back to REST API (`/packages/info`) on failure; a warning is printed to stderr when the fallback is used
-- REST fallback passes `--registries` as comma-separated registry names to the `registries` query param
-- `fetchRegistries` in `registries.go` is used by `listRegistries`, `packageSearchCmd`, `packageInfoCmd`, and `packageDependencyCmd` to resolve registry names to IDs (for GraphQL) and names (for REST fallback)
-- `getPackageDependencies` uses GraphQL to locate the package, then fetches `/docs/{registry}/{package}/stable/pkg.json` for dependency data; no REST fallback (docs endpoint is authoritative)
-- `executePackageQuery` in `packages.go` is the shared GraphQL helper used by both `searchPackages` and `getPackageInfo`
-- `fetchPackagesREST` in `packages.go` is the shared REST helper used by both `searchPackages` and `getPackageInfo` as fallback
-- `displayPackageDetails` renders GraphQL `Package` results; `displayRESTPackage` renders `RESTPackage` results from the REST fallback
+- Package search (`jh package search`) and info (`jh package info`) both try REST API (`/packages/info`) first, then fall back to GraphQL (`FilteredPackagesWithCount` via `/v1/graphql`) on failure
+- REST API passes `--registries` as comma-separated registry names to the `registries` query param; GraphQL fallback passes registry IDs to the `registries` variable
+- `fetchRegistries` in `registries.go` is used by `listRegistries`, `packageSearchCmd`, `packageInfoCmd`, and `packageDependencyCmd` to resolve registry names to IDs (for GraphQL) and names (for REST)
+- Both REST and GraphQL package search/info paths produce identical output columns (Registry and Owner); GraphQL resolves registry names from the `registryIDs`/`registryNames` already in `PackageSearchParams` — no extra API call needed
+- A package in multiple registries appears as multiple rows (one per registry) in both REST and GraphQL paths, since the GraphQL view (`package_rank_vw`) is already flattened per package-registry combination
+- GraphQL fallback uses `package_search_with_count.gql` which fetches both the package list and aggregate count in a single request (`package_search` + `package_search_aggregate` root fields)
+- `executeGraphQL(server, token, req)` in `packages.go` is a shared helper for GraphQL POST requests (sets Authorization, Content-Type, Accept, X-Hasura-Role headers)
+- `getPackageInfo` in `packages.go` implements exact name-match lookup using REST-first (`getPackageInfoREST`), GraphQL fallback (`getPackageInfoGraphQL`); `packageInfoCmd` in `main.go` resolves registries via `fetchRegistries`
+- `getPackageDependencies` uses GraphQL (`fetchGraphQLPackages`) to locate the package, then fetches `/docs/{registry}/{package}/stable/pkg.json` for dependency data; no REST fallback (docs endpoint is authoritative)
 
 ## Implementation Details
 

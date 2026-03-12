@@ -644,7 +644,15 @@ Use --verbose flag for comprehensive output, or get a concise summary by default
 			}
 		}
 
-		if err := searchPackages(server, search, limit, offset, registryIDs, registryNames, verbose); err != nil {
+		if err := searchPackages(PackageSearchParams{
+			Server:        server,
+			Search:        search,
+			Limit:         limit,
+			Offset:        offset,
+			RegistryIDs:   registryIDs,
+			RegistryNames: registryNames,
+			Verbose:       verbose,
+		}); err != nil {
 			fmt.Printf("Failed to search packages: %v\n", err)
 			os.Exit(1)
 		}
@@ -756,6 +764,7 @@ the --registry flag.`,
 		}
 	},
 }
+
 
 var registryCmd = &cobra.Command{
 	Use:   "registry",

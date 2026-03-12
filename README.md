@@ -6,7 +6,7 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 
 - **Authentication**: OAuth2 device flow authentication with JWT token handling
 - **Dataset Management**: List, download, upload, and check status of datasets
-- **Package Management**: Search and explore Julia packages across registries (GraphQL primary, REST fallback)
+- **Package Management**: Search and explore Julia packages across registries via REST API (GraphQL fallback), with dependency analysis
 - **Registry Management**: List and manage Julia package registries
 - **Project Management**: List and filter projects using GraphQL API
 - **Git Integration**: Clone, push, fetch, and pull with automatic JuliaHub authentication
@@ -154,7 +154,7 @@ go build -o jh .
 ### Package Management (`jh package`)
 
 - `jh package search [search-term]` - Search for Julia packages
-  - Default: Shows concise output with NAME, OWNER, VERSION, REGISTRIES, and DESCRIPTION columns
+  - Default: Shows Name, Registry, Owner, Version, and Description
   - `jh package search --verbose` - Show detailed package information including UUID, repository, tags, stars, docs, and license
   - `--registries <names>` - Filter by registry names (comma-separated, e.g. `General,MyRegistry`)
   - `--limit <n>` - Maximum results to return (default: 10)
@@ -378,7 +378,7 @@ Note: Arguments after `--` are passed directly to Julia. The `jh run` command:
 
 - **Built with Go** using the Cobra CLI framework
 - **Authentication**: OAuth2 device flow with JWT token management
-- **APIs**: REST API for datasets and package dependencies; GraphQL API for projects, user info, package search and info (with REST fallback)
+- **APIs**: REST API for datasets and package search/info (primary); GraphQL API for projects, user info, package search/info fallback, and package dependency lookup
 - **Git Integration**: Seamless authentication via HTTP headers or credential helper
 - **Cross-platform**: Supports Windows, macOS, and Linux
 
