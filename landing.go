@@ -182,6 +182,10 @@ func readContentFromFileOrArgOrStdin(filePath, contentArg string) (string, error
 		return contentArg, nil
 	}
 	// Fall back to stdin
+	fi, statErr := os.Stdin.Stat()
+	if statErr != nil || fi.Mode()&os.ModeCharDevice != 0 {
+		return "", fmt.Errorf("no content provided — pass content as an argument, use --file, or pipe via stdin")
+	}
 	data, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return "", fmt.Errorf("failed to read from stdin: %w", err)
