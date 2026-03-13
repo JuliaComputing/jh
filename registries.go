@@ -35,7 +35,7 @@ func fetchRegistries(server string) ([]Registry, error) {
 		return nil, fmt.Errorf("authentication required: %w", err)
 	}
 
-	body, err := apiGet(fmt.Sprintf("https://%s/api/v1/ui/registries/descriptions", server), token.IDToken)
+	body, err := apiGet(fmt.Sprintf("https://%s/api/v1/registry/registries/descriptions", server), token.IDToken)
 	if err != nil {
 		return nil, err
 	}
