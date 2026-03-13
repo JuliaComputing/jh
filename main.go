@@ -164,6 +164,7 @@ job execution, project management, Git integration, and package hosting capabili
 Available command categories:
   auth      - Authentication and token management
   dataset   - Dataset operations (list, download, upload, status)
+  package   - Package search and exploration
   registry  - Registry management (list registries)
   project   - Project management (list, filter by user)
   user      - User information and profile
@@ -640,6 +641,181 @@ PROVIDER TYPES
       "credential_key": "<token-id>"
     }
   }`
+}
+
+var packageCmd = &cobra.Command{
+	Use:   "package",
+	Short: "Package search commands",
+	Long: `Search and explore Julia packages on JuliaHub.
+
+Packages are Julia libraries that provide reusable functionality. JuliaHub
+hosts packages from multiple registries and provides comprehensive search
+capabilities including filtering by tags, registries, and more.`,
+}
+
+var packageSearchCmd = &cobra.Command{
+	Use:   "search [search-term]",
+	Short: "Search for packages",
+	Long: `Search for Julia packages on JuliaHub.
+
+Displays package information including:
+- Package name, owner, and UUID
+- Version information
+- Description and repository
+- Tags and star count
+- License information
+
+Filtering options:
+- Filter by registry using --registries flag (searches all registries by default)
+
+Use --verbose flag for comprehensive output, or get a concise summary by default.`,
+	Example: "  jh package search dataframes\n  jh package search --verbose plots\n  jh package search --limit 20 ml\n  jh package search --registries General optimization",
+	Args:    cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		search := ""
+		if len(args) > 0 {
+			search = args[0]
+		}
+
+		limit, _ := cmd.Flags().GetInt("limit")
+		offset, _ := cmd.Flags().GetInt("offset")
+		verbose, _ := cmd.Flags().GetBool("verbose")
+		registryNamesStr, _ := cmd.Flags().GetString("registries")
+
+		// Fetch all registries from the API
+		allRegistries, err := fetchRegistries(server)
+		if err != nil {
+			fmt.Printf("Failed to fetch registries: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Determine which registry IDs and names to use
+		var registryIDs []int
+		var registryNames []string
+		if registryNamesStr != "" {
+			// Use only specified registries
+			requestedNames := strings.Split(registryNamesStr, ",")
+			for _, requestedName := range requestedNames {
+				requestedName = strings.TrimSpace(requestedName)
+				if requestedName == "" {
+					continue
+				}
+
+				// Find matching registry (case-insensitive)
+				found := false
+				for _, reg := range allRegistries {
+					if strings.EqualFold(reg.Name, requestedName) {
+						registryIDs = append(registryIDs, reg.RegistryID)
+						registryNames = append(registryNames, reg.Name)
+						found = true
+						break
+					}
+				}
+
+				if !found {
+					fmt.Printf("Registry not found: '%s'\n", requestedName)
+					os.Exit(1)
+				}
+			}
+		} else {
+			// Use all registries
+			for _, reg := range allRegistries {
+				registryIDs = append(registryIDs, reg.RegistryID)
+				registryNames = append(registryNames, reg.Name)
+			}
+		}
+
+		if err := searchPackages(PackageSearchParams{
+			Server:        server,
+			Search:        search,
+			Limit:         limit,
+			Offset:        offset,
+			RegistryIDs:   registryIDs,
+			RegistryNames: registryNames,
+			Verbose:       verbose,
+		}); err != nil {
+			fmt.Printf("Failed to search packages: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var packageInfoCmd = &cobra.Command{
+	Use:   "info <package-name>",
+	Short: "Get detailed information about a package",
+	Long: `Display detailed information about a specific Julia package by exact name match.
+
+Shows comprehensive package information including:
+- Package name, UUID, and owner
+- Version information and status
+- Description and repository
+- Tags and star count
+- License information
+- Documentation links
+
+The package name must match exactly (case-insensitive).`,
+	Example: "  jh package info DataFrames\n  jh package info Plots\n  jh package info CSV",
+	Args:    cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		packageName := args[0]
+		registryNamesStr, _ := cmd.Flags().GetString("registries")
+
+		// Fetch all registries from the API
+		allRegistries, err := fetchRegistries(server)
+		if err != nil {
+			fmt.Printf("Failed to fetch registries: %v\n", err)
+			os.Exit(1)
+		}
+
+		var registryIDs []int
+		var registryNames []string
+		if registryNamesStr != "" {
+			requestedNames := strings.Split(registryNamesStr, ",")
+			for _, requestedName := range requestedNames {
+				requestedName = strings.TrimSpace(requestedName)
+				if requestedName == "" {
+					continue
+				}
+
+				found := false
+				for _, reg := range allRegistries {
+					if strings.EqualFold(reg.Name, requestedName) {
+						registryIDs = append(registryIDs, reg.RegistryID)
+						registryNames = append(registryNames, reg.Name)
+						found = true
+						break
+					}
+				}
+
+				if !found {
+					fmt.Printf("Registry not found: '%s'\n", requestedName)
+					os.Exit(1)
+				}
+			}
+		} else {
+			for _, reg := range allRegistries {
+				registryIDs = append(registryIDs, reg.RegistryID)
+				registryNames = append(registryNames, reg.Name)
+			}
+		}
+
+		if err := getPackageInfo(server, packageName, registryIDs, registryNames); err != nil {
+			fmt.Printf("Failed to get package info: %v\n", err)
+			os.Exit(1)
+		}
+	},
 }
 
 var registryCmd = &cobra.Command{
@@ -1276,6 +1452,95 @@ Provides commands to list and manage users across the JuliaHub instance.
 Note: These commands require appropriate administrative permissions.`,
 }
 
+var adminLandingCmd = &cobra.Command{
+	Use:   "landing-page",
+	Short: "Landing page management commands",
+	Long: `Administrative commands for managing the custom landing page on JuliaHub.
+
+Provides commands to get, set, or remove the custom markdown landing page
+shown to users on the JuliaHub home screen.
+
+Note: These commands require appropriate administrative permissions.`,
+}
+
+var landingShowCmd = &cobra.Command{
+	Use:   "show",
+	Short: "Show the current landing page content",
+	Long: `Fetch the current custom landing page content from JuliaHub.
+
+Displays the markdown content and last-modified date of the custom landing
+page. If no custom landing page is set, reports that the default is in use.`,
+	Example: "  jh admin landing-page show",
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		if err := showLandingPage(server); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+	},
+}
+
+var landingUpdateCmd = &cobra.Command{
+	Use:   "update [markdown-content]",
+	Short: "Update the custom landing page content",
+	Long: `Update the custom landing page content on JuliaHub.
+
+Provide the markdown content directly as an argument or use --file to read
+it from a file. If neither is provided, content is read from stdin.
+The content must be valid markdown.`,
+	Example: "  jh admin landing-page update '# Welcome'\n  jh admin landing-page update --file landing.md\n  cat landing.md | jh admin landing-page update",
+	Args:    cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		filePath, _ := cmd.Flags().GetString("file")
+		contentArg := ""
+		if len(args) > 0 {
+			contentArg = args[0]
+		}
+
+		content, err := readContentFromFileOrArgOrStdin(filePath, contentArg)
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+
+		if err := setLandingPage(server, content); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+	},
+}
+
+var landingRemoveCmd = &cobra.Command{
+	Use:   "remove",
+	Short: "Remove the custom landing page",
+	Long: `Remove the custom landing page on JuliaHub.
+
+Removes the custom landing page content, reverting to the default landing
+screen. This action can be undone by setting a new landing page with 'update'.`,
+	Example: "  jh admin landing-page remove",
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		if err := removeLandingPage(server); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+	},
+}
+
 var adminTokenCmd = &cobra.Command{
 	Use:   "token",
 	Short: "Token management commands",
@@ -1346,6 +1611,13 @@ func init() {
 	datasetUploadCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	datasetUploadCmd.Flags().Bool("new", false, "Create a new dataset")
 	datasetStatusCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	packageSearchCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	packageSearchCmd.Flags().Int("limit", 10, "Maximum number of results to return")
+	packageSearchCmd.Flags().Int("offset", 0, "Number of results to skip")
+	packageSearchCmd.Flags().String("registries", "", "Filter by registry names (comma-separated, e.g., 'General,CustomRegistry')")
+	packageSearchCmd.Flags().Bool("verbose", false, "Show detailed package information")
+	packageInfoCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	packageInfoCmd.Flags().String("registries", "", "Filter by registry names (comma-separated, e.g., 'General,CustomRegistry')")
 	registryListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	registryListCmd.Flags().Bool("verbose", false, "Show detailed registry information")
 	projectListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
@@ -1355,6 +1627,10 @@ func init() {
 	userListCmd.Flags().Bool("verbose", false, "Show detailed user information")
 	tokenListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	tokenListCmd.Flags().Bool("verbose", false, "Show detailed token information")
+	landingShowCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	landingUpdateCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	landingUpdateCmd.Flags().StringP("file", "f", "", "Path to a markdown file to use as landing page content")
+	landingRemoveCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	cloneCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	pushCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	fetchCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
@@ -1364,6 +1640,7 @@ func init() {
 	authCmd.AddCommand(authLoginCmd, authRefreshCmd, authStatusCmd, authEnvCmd)
 	jobCmd.AddCommand(jobListCmd, jobStartCmd)
 	datasetCmd.AddCommand(datasetListCmd, datasetDownloadCmd, datasetUploadCmd, datasetStatusCmd)
+	packageCmd.AddCommand(packageSearchCmd, packageInfoCmd)
 	registryConfigCmd.Flags().StringP("server", "s", "", "JuliaHub server")
 	registryConfigAddCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	registryConfigAddCmd.Flags().StringP("file", "f", "", "Path to JSON config file (reads from stdin if omitted)")
@@ -1375,12 +1652,13 @@ func init() {
 	userCmd.AddCommand(userInfoCmd)
 	adminUserCmd.AddCommand(userListCmd)
 	adminTokenCmd.AddCommand(tokenListCmd)
-	adminCmd.AddCommand(adminUserCmd, adminTokenCmd)
+	adminLandingCmd.AddCommand(landingShowCmd, landingUpdateCmd, landingRemoveCmd)
+	adminCmd.AddCommand(adminUserCmd, adminTokenCmd, adminLandingCmd)
 	juliaCmd.AddCommand(juliaInstallCmd)
 	runCmd.AddCommand(runSetupCmd)
 	gitCredentialCmd.AddCommand(gitCredentialHelperCmd, gitCredentialGetCmd, gitCredentialStoreCmd, gitCredentialEraseCmd, gitCredentialSetupCmd)
 
-	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, projectCmd, registryCmd, userCmd, adminCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd)
+	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, projectCmd, packageCmd, registryCmd, userCmd, adminCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd)
 }
 
 func main() {

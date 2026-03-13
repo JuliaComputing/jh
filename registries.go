@@ -28,6 +28,26 @@ func pluralize(count int, singular, plural string) string {
 	return plural
 }
 
+// fetchRegistries fetches all registries from the API.
+func fetchRegistries(server string) ([]Registry, error) {
+	token, err := ensureValidToken()
+	if err != nil {
+		return nil, fmt.Errorf("authentication required: %w", err)
+	}
+
+	body, err := apiGet(fmt.Sprintf("https://%s/api/v1/ui/registries/descriptions", server), token.IDToken)
+	if err != nil {
+		return nil, err
+	}
+
+	var registries []Registry
+	if err := json.Unmarshal(body, &registries); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return registries, nil
+}
+
 // apiGet performs a GET request with up to 3 attempts, retrying on transient errors.
 func apiGet(url, idToken string) ([]byte, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -67,19 +87,9 @@ func apiGet(url, idToken string) ([]byte, error) {
 }
 
 func listRegistries(server string, verbose bool) error {
-	token, err := ensureValidToken()
-	if err != nil {
-		return fmt.Errorf("authentication required: %w", err)
-	}
-
-	body, err := apiGet(fmt.Sprintf("https://%s/api/v1/registry/registries/descriptions", server), token.IDToken)
+	registries, err := fetchRegistries(server)
 	if err != nil {
 		return err
-	}
-
-	var registries []Registry
-	if err := json.Unmarshal(body, &registries); err != nil {
-		return fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	if len(registries) == 0 {
