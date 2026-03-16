@@ -556,6 +556,93 @@ Displays:
 	},
 }
 
+func registryMutateHelp(verb string) string {
+	var verbLine, nameNote, updateNote string
+	if verb == "add" {
+		verbLine = "Add a new Julia package registry on JuliaHub."
+		nameNote = "// required"
+	} else {
+		verbLine = "Update an existing Julia package registry on JuliaHub."
+		nameNote = "// required; identifies the registry to update"
+		updateNote = "\n\nThe registry is identified by the \"name\" field. All fields are replaced\nwith the provided values; omitted optional fields revert to defaults."
+	}
+
+	return verbLine + `
+
+Reads the registry configuration from a JSON file (--file) or stdin.
+The JSON is validated and forwarded to the API as-is.` + updateNote + `
+
+Registry ` + verb + ` is polled until completion (up to 2 minutes).
+Use ` + "`jh registry config <name>`" + ` to inspect the result afterward.
+
+REGISTRY JSON SCHEMA
+
+  {
+    "name":            "<registry-name>",  ` + nameNote + `
+    "license_detect":  true,
+    "artifact":        { "download": true },
+    "docs":            {
+                         "download": true,
+                         "docgen_check_installable": false,
+                         "html_size_threshold_bytes": null
+                       },
+    "metadata":        { "download": true },
+    "pkg":             { "download": true, "static_analysis_runs": [] },
+    "enabled":         true,
+    "display_apps":    true,
+    "owner":           "<username>",  // optional; defaults to current user
+    "sync_schedule":   null,          // or: see SYNC SCHEDULE below
+    "download_providers": [ <provider>, ... ]  // required; one or more entries
+  }
+
+SYNC SCHEDULE
+
+  {
+    "interval_sec": 420,
+    "days":         [1, 2, 3, 4, 5, 6, 7],
+    "start_hour":   0,
+    "end_hour":     24,
+    "timezone":     "UTC"
+  }
+
+PROVIDER TYPES
+
+  gitserver — sync from a Git repository:
+  {
+    "type":                   "gitserver",
+    "url":                    "<repo-url>",
+    "server_type":            "github|gitlab|bitbucket|bare-git",
+    "github_credential_type": "pat|app",
+    "user_name":              "<user>",
+    "credential_key":         "<token-id>",
+    "api_host":               null,
+    "host":                   ""
+  }
+
+  cacheserver — sync from a JuliaHub package cache:
+  {
+    "type":           "cacheserver",
+    "host":           "<hostname>",
+    "credential_key": "<token-id>"
+  }
+
+  bundle — local bundle (sets license_detect: false automatically):
+  {
+    "type":           "bundle",
+    "credential_key": ""
+  }
+
+  genericserver — generic server with basic auth:
+  {
+    "type": "genericserver",
+    "auth": {
+      "type":           "basic",
+      "user_name":      "<user>",
+      "credential_key": "<token-id>"
+    }
+  }`
+}
+
 var packageCmd = &cobra.Command{
 	Use:   "package",
 	Short: "Package search commands",
@@ -699,6 +786,144 @@ var registryCmd = &cobra.Command{
 Registries are collections of Julia packages that can be registered and
 installed. JuliaHub supports multiple registries including the General
 registry, custom organizational registries, and test registries.`,
+}
+
+var registryConfigCmd = &cobra.Command{
+	Use:     "config <name>",
+	Short:   "Show or modify the configuration for a registry",
+	Example: "  jh registry config JuliaSimRegistry\n  jh registry config JuliaSimRegistry -s nightly.juliahub.dev",
+	Args:    cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		if err := getRegistryConfig(server, args[0]); err != nil {
+			fmt.Printf("Failed to get registry config: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var registryConfigAddCmd = &cobra.Command{
+	Use:   "add",
+	Short: "Add a new registry",
+	Long:  registryMutateHelp("add"),
+	Example: `  # Cache server — pipe JSON via stdin
+  echo '{
+    "name": "MyRegistry",
+    "license_detect": true,
+    "artifact":  {"download": true},
+    "docs":      {"download": true, "docgen_check_installable": false, "html_size_threshold_bytes": null},
+    "metadata":  {"download": true},
+    "pkg":       {"download": true, "static_analysis_runs": []},
+    "enabled": true, "display_apps": true, "owner": "admin", "sync_schedule": null,
+    "download_providers": [{
+      "type": "cacheserver", "host": "https://pkg.juliahub.com",
+      "credential_key": "JC Auth Token"
+    }]
+  }' | jh registry config add
+
+  # Read from file
+  jh registry config add --file registry.json
+
+  # GitHub with Personal Access Token
+  echo '{
+    "name": "MyRegistry",
+    "license_detect": true,
+    "artifact": {"download": true}, "docs": {"download": true, "docgen_check_installable": false, "html_size_threshold_bytes": null},
+    "metadata": {"download": true}, "pkg": {"download": true, "static_analysis_runs": []},
+    "enabled": true, "display_apps": true, "owner": "", "sync_schedule": null,
+    "download_providers": [{
+      "type": "gitserver",
+      "url": "https://github.com/MyOrg/MyRegistry.git",
+      "server_type": "github", "github_credential_type": "pat",
+      "user_name": "myuser", "credential_key": "my-pat-token-id",
+      "api_host": null, "host": ""
+    }]
+  }' | jh registry config add`,
+	Args: cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		filePath, _ := cmd.Flags().GetString("file")
+
+		payload, err := readRegistryPayload(filePath)
+		if err != nil {
+			fmt.Printf("Failed to read registry payload: %v\n", err)
+			os.Exit(1)
+		}
+
+		if err := createRegistry(server, payload); err != nil {
+			fmt.Printf("Failed to add registry: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var registryConfigUpdateCmd = &cobra.Command{
+	Use:   "update",
+	Short: "Update an existing registry",
+	Long:  registryMutateHelp("update"),
+	Example: `  # Update cache server URL — pipe JSON via stdin
+  echo '{
+    "name": "MyRegistry",
+    "license_detect": true,
+    "artifact":  {"download": true},
+    "docs":      {"download": true, "docgen_check_installable": false, "html_size_threshold_bytes": null},
+    "metadata":  {"download": true},
+    "pkg":       {"download": true, "static_analysis_runs": []},
+    "enabled": true, "display_apps": true, "owner": "admin", "sync_schedule": null,
+    "download_providers": [{
+      "type": "cacheserver", "host": "https://pkg-new.juliahub.com",
+      "credential_key": "JC Auth Token"
+    }]
+  }' | jh registry config update
+
+  # Read from file
+  jh registry config update --file registry.json
+
+  # Update GitHub registry to use a new credential
+  echo '{
+    "name": "MyRegistry",
+    "license_detect": true,
+    "artifact": {"download": true}, "docs": {"download": true, "docgen_check_installable": false, "html_size_threshold_bytes": null},
+    "metadata": {"download": true}, "pkg": {"download": true, "static_analysis_runs": []},
+    "enabled": true, "display_apps": true, "owner": "", "sync_schedule": null,
+    "download_providers": [{
+      "type": "gitserver",
+      "url": "https://github.com/MyOrg/MyRegistry.git",
+      "server_type": "github", "github_credential_type": "pat",
+      "user_name": "myuser", "credential_key": "new-pat-token-id",
+      "api_host": null, "host": ""
+    }]
+  }' | jh registry config update`,
+	Args: cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		filePath, _ := cmd.Flags().GetString("file")
+
+		payload, err := readRegistryPayload(filePath)
+		if err != nil {
+			fmt.Printf("Failed to read registry payload: %v\n", err)
+			os.Exit(1)
+		}
+
+		if err := updateRegistry(server, payload); err != nil {
+			fmt.Printf("Failed to update registry: %v\n", err)
+			os.Exit(1)
+		}
+	},
 }
 
 var registryListCmd = &cobra.Command{
@@ -1187,6 +1412,95 @@ Provides commands to list and manage users across the JuliaHub instance.
 Note: These commands require appropriate administrative permissions.`,
 }
 
+var adminLandingCmd = &cobra.Command{
+	Use:   "landing-page",
+	Short: "Landing page management commands",
+	Long: `Administrative commands for managing the custom landing page on JuliaHub.
+
+Provides commands to get, set, or remove the custom markdown landing page
+shown to users on the JuliaHub home screen.
+
+Note: These commands require appropriate administrative permissions.`,
+}
+
+var landingShowCmd = &cobra.Command{
+	Use:   "show",
+	Short: "Show the current landing page content",
+	Long: `Fetch the current custom landing page content from JuliaHub.
+
+Displays the markdown content and last-modified date of the custom landing
+page. If no custom landing page is set, reports that the default is in use.`,
+	Example: "  jh admin landing-page show",
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		if err := showLandingPage(server); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+	},
+}
+
+var landingUpdateCmd = &cobra.Command{
+	Use:   "update [markdown-content]",
+	Short: "Update the custom landing page content",
+	Long: `Update the custom landing page content on JuliaHub.
+
+Provide the markdown content directly as an argument or use --file to read
+it from a file. If neither is provided, content is read from stdin.
+The content must be valid markdown.`,
+	Example: "  jh admin landing-page update '# Welcome'\n  jh admin landing-page update --file landing.md\n  cat landing.md | jh admin landing-page update",
+	Args:    cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		filePath, _ := cmd.Flags().GetString("file")
+		contentArg := ""
+		if len(args) > 0 {
+			contentArg = args[0]
+		}
+
+		content, err := readContentFromFileOrArgOrStdin(filePath, contentArg)
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+
+		if err := setLandingPage(server, content); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+	},
+}
+
+var landingRemoveCmd = &cobra.Command{
+	Use:   "remove",
+	Short: "Remove the custom landing page",
+	Long: `Remove the custom landing page on JuliaHub.
+
+Removes the custom landing page content, reverting to the default landing
+screen. This action can be undone by setting a new landing page with 'update'.`,
+	Example: "  jh admin landing-page remove",
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		if err := removeLandingPage(server); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+	},
+}
+
 var adminTokenCmd = &cobra.Command{
 	Use:   "token",
 	Short: "Token management commands",
@@ -1274,6 +1588,10 @@ func init() {
 	userListCmd.Flags().Bool("verbose", false, "Show detailed user information")
 	tokenListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	tokenListCmd.Flags().Bool("verbose", false, "Show detailed token information")
+	landingShowCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	landingUpdateCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	landingUpdateCmd.Flags().StringP("file", "f", "", "Path to a markdown file to use as landing page content")
+	landingRemoveCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	cloneCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	pushCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	fetchCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
@@ -1284,12 +1602,19 @@ func init() {
 	jobCmd.AddCommand(jobListCmd, jobStartCmd)
 	datasetCmd.AddCommand(datasetListCmd, datasetDownloadCmd, datasetUploadCmd, datasetStatusCmd)
 	packageCmd.AddCommand(packageSearchCmd, packageDependencyCmd)
-	registryCmd.AddCommand(registryListCmd)
+	registryConfigCmd.Flags().StringP("server", "s", "", "JuliaHub server")
+	registryConfigAddCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	registryConfigAddCmd.Flags().StringP("file", "f", "", "Path to JSON config file (reads from stdin if omitted)")
+	registryConfigUpdateCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	registryConfigUpdateCmd.Flags().StringP("file", "f", "", "Path to JSON config file (reads from stdin if omitted)")
+	registryConfigCmd.AddCommand(registryConfigAddCmd, registryConfigUpdateCmd)
+	registryCmd.AddCommand(registryListCmd, registryConfigCmd)
 	projectCmd.AddCommand(projectListCmd)
 	userCmd.AddCommand(userInfoCmd)
 	adminUserCmd.AddCommand(userListCmd)
 	adminTokenCmd.AddCommand(tokenListCmd)
-	adminCmd.AddCommand(adminUserCmd, adminTokenCmd)
+	adminLandingCmd.AddCommand(landingShowCmd, landingUpdateCmd, landingRemoveCmd)
+	adminCmd.AddCommand(adminUserCmd, adminTokenCmd, adminLandingCmd)
 	juliaCmd.AddCommand(juliaInstallCmd)
 	runCmd.AddCommand(runSetupCmd)
 	gitCredentialCmd.AddCommand(gitCredentialHelperCmd, gitCredentialGetCmd, gitCredentialStoreCmd, gitCredentialEraseCmd, gitCredentialSetupCmd)

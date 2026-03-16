@@ -6,8 +6,13 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 
 - **Authentication**: OAuth2 device flow authentication with JWT token handling
 - **Dataset Management**: List, download, upload, and check status of datasets
+<<<<<<< HEAD
 - **Package Management**: Search and explore Julia packages across registries via REST API (GraphQL fallback), with dependency analysis
 - **Registry Management**: List and manage Julia package registries
+=======
+- **Package Management**: Search and explore Julia packages across registries via REST API (GraphQL fallback)
+- **Registry Management**: List, add, and update Julia package registries
+>>>>>>> 4c422aed3b5e0e488e6e479143bd5bec64385463
 - **Project Management**: List and filter projects using GraphQL API
 - **Git Integration**: Clone, push, fetch, and pull with automatic JuliaHub authentication
 - **Julia Integration**: Install Julia and run with JuliaHub package server configuration
@@ -167,6 +172,9 @@ go build -o jh .
 - `jh registry list` - List all package registries on JuliaHub
   - Default: Shows only UUID and Name
   - `jh registry list --verbose` - Show detailed registry information including owner, creation date, package count, and description
+- `jh registry config <name>` - Show the full JSON configuration for a registry
+- `jh registry config add` - Add a new registry (JSON payload via stdin or `--file`)
+- `jh registry config update` - Update an existing registry (same JSON schema as add, same flags)
 
 - `jh package dependency <package-name>` - List package dependencies
   - Default: Shows up to 10 direct dependencies (NAME, REGISTRY, UUID, VERSIONS)
@@ -214,6 +222,13 @@ go build -o jh .
 - `jh admin token list` - List all tokens (requires appropriate permissions)
   - Default: Shows only Subject, Created By, and Expired status
   - `jh admin token list --verbose` - Show detailed token information including signature, creation date, expiration date (with estimate indicator)
+
+#### Landing Page Management
+- `jh admin landing-page show` - Show the current custom landing page content (markdown and last-modified date)
+- `jh admin landing-page update <markdown-content>` - Set a custom markdown landing page
+  - `jh admin landing-page update --file landing.md` - Read content from a file
+  - `cat landing.md | jh admin landing-page update` - Read content from stdin
+- `jh admin landing-page remove` - Remove the custom landing page and revert to the default
 
 ### Update (`jh update`)
 
@@ -290,6 +305,31 @@ jh registry list --verbose
 
 # List registries on custom server
 jh registry list -s yourinstall
+
+# Show full configuration for a registry
+jh registry config JuliaSimRegistry
+jh registry config JuliaSimRegistry -s nightly.juliahub.dev
+
+# Add a registry (JSON via stdin or --file)
+echo '{
+  "name": "MyRegistry",
+  "license_detect": true,
+  "artifact": {"download": true},
+  "docs": {"download": true, "docgen_check_installable": false, "html_size_threshold_bytes": null},
+  "metadata": {"download": true},
+  "pkg": {"download": true, "static_analysis_runs": []},
+  "enabled": true, "display_apps": true, "owner": "", "sync_schedule": null,
+  "download_providers": [{
+    "type": "cacheserver", "host": "https://pkg.juliahub.com",
+    "credential_key": "JC Auth Token"
+  }]
+}' | jh registry config add
+
+# Or use a file
+jh registry config add --file registry.json
+
+# Update an existing registry (same JSON schema, registry identified by "name" field)
+jh registry config update --file registry.json
 ```
 
 ### Project Operations
@@ -325,6 +365,25 @@ jh admin token list -s yourinstall
 
 # Use specific timezone for date display
 TZ=America/New_York jh admin token list --verbose
+```
+
+### Landing Page Operations
+
+```bash
+# Show current custom landing page
+jh admin landing-page show
+
+# Set landing page from inline markdown
+jh admin landing-page update '# Welcome to JuliaHub'
+
+# Set landing page from a file
+jh admin landing-page update --file landing.md
+
+# Set landing page from stdin
+cat landing.md | jh admin landing-page update
+
+# Remove custom landing page (revert to default)
+jh admin landing-page remove
 ```
 
 ### Git Workflow
