@@ -6,6 +6,7 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 
 - **Authentication**: OAuth2 device flow authentication with JWT token handling
 - **Dataset Management**: List, download, upload, and check status of datasets
+- **Package Management**: Search and explore Julia packages across registries via REST API (GraphQL fallback)
 - **Registry Management**: List, add, and update Julia package registries
 - **Project Management**: List and filter projects using GraphQL API
 - **Git Integration**: Clone, push, fetch, and pull with automatic JuliaHub authentication
@@ -150,6 +151,17 @@ go build -o jh .
 - `jh dataset upload [dataset-id] <file-path>` - Upload a dataset
 - `jh dataset status <dataset-id> [version]` - Show dataset status
 
+### Package Management (`jh package`)
+
+- `jh package search [search-term]` - Search for Julia packages
+  - Default: Shows Name, Registry, Owner, Version, and Description
+  - `jh package search --verbose` - Show detailed package information including UUID, repository, tags, stars, docs, and license
+  - `--registries <names>` - Filter by registry names (comma-separated, e.g. `General,MyRegistry`)
+  - `--limit <n>` - Maximum results to return (default: 10)
+  - `--offset <n>` - Number of results to skip
+- `jh package info <package-name>` - Get detailed information about a specific package (exact name match, case-insensitive)
+  - `jh package info --registries General` - Search in specific registries only
+
 ### Registry Management (`jh registry`)
 
 - `jh registry list` - List all package registries on JuliaHub
@@ -210,6 +222,13 @@ go build -o jh .
   - Default: Shows only Subject, Created By, and Expired status
   - `jh admin token list --verbose` - Show detailed token information including signature, creation date, expiration date (with estimate indicator)
 
+#### Landing Page Management
+- `jh admin landing-page show` - Show the current custom landing page content (markdown and last-modified date)
+- `jh admin landing-page update <markdown-content>` - Set a custom markdown landing page
+  - `jh admin landing-page update --file landing.md` - Read content from a file
+  - `cat landing.md | jh admin landing-page update` - Read content from stdin
+- `jh admin landing-page remove` - Remove the custom landing page and revert to the default
+
 ### Update (`jh update`)
 
 - `jh update` - Check for updates and automatically install the latest version
@@ -246,6 +265,26 @@ jh dataset upload --new ./my-data.tar.gz
 
 # Upload new version to existing dataset
 jh dataset upload my-dataset ./updated-data.tar.gz
+```
+
+### Package Operations
+
+```bash
+# Search for packages by name
+jh package search dataframes
+
+# Search with verbose output
+jh package search --verbose plots
+
+# Filter by registry
+jh package search --registries General optimization
+
+# Limit and paginate results
+jh package search --limit 20 --offset 0 ml
+
+# Get detailed info about a specific package
+jh package info DataFrames
+jh package info Plots --registries General
 ```
 
 ### Registry Operations
@@ -335,6 +374,25 @@ jh admin token list -s yourinstall
 TZ=America/New_York jh admin token list --verbose
 ```
 
+### Landing Page Operations
+
+```bash
+# Show current custom landing page
+jh admin landing-page show
+
+# Set landing page from inline markdown
+jh admin landing-page update '# Welcome to JuliaHub'
+
+# Set landing page from a file
+jh admin landing-page update --file landing.md
+
+# Set landing page from stdin
+cat landing.md | jh admin landing-page update
+
+# Remove custom landing page (revert to default)
+jh admin landing-page remove
+```
+
 ### Git Workflow
 
 ```bash
@@ -386,7 +444,7 @@ Note: Arguments after `--` are passed directly to Julia. The `jh run` command:
 
 - **Built with Go** using the Cobra CLI framework
 - **Authentication**: OAuth2 device flow with JWT token management
-- **APIs**: REST API for datasets, GraphQL API for projects and user info
+- **APIs**: REST API for datasets and package search/info (primary); GraphQL API for projects, user info, and package search/info fallback (single request returns results + total count)
 - **Git Integration**: Seamless authentication via HTTP headers or credential helper
 - **Cross-platform**: Supports Windows, macOS, and Linux
 
