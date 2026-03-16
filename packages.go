@@ -49,11 +49,6 @@ type PackageDependency struct {
 type PackageDocsResponse struct {
 	Name         string              `json:"name"`
 	Version      string              `json:"version"`
-	Description  string              `json:"description"`
-	Owner        string              `json:"owner"`
-	License      string              `json:"predicted_license"`
-	LicenseURL   string              `json:"license_url"`
-	Homepage     string              `json:"homepage"`
 	Dependencies []PackageDependency `json:"deps"`
 }
 
@@ -199,7 +194,118 @@ func printPackages(pkgs []packageInfo, total int, verbose bool) {
 	}
 }
 
-// fetchGraphQLPackages executes the package search GraphQL query and returns raw results.
+// restToInfo converts a RESTPackage to the common packageInfo display struct.
+func restToInfo(p RESTPackage) packageInfo {
+	return packageInfo{
+		Name:        p.Name,
+		UUID:        p.UUID,
+		Registry:    p.Registry,
+		Version:     p.LatestStableVersion,
+		Description: p.Description,
+		SourceURL:   p.SourceURL,
+		Tags:        p.Tags,
+		Stars:       p.StargazersCount,
+		DocsURL:     p.JHubDocsURL,
+		License:     strings.Join(p.DetectedSourceLicenses, ", "),
+	}
+}
+
+// gqlToInfo converts a GraphQL Package to the common packageInfo display struct.
+func gqlToInfo(p Package, registryIDToName map[int]string) packageInfo {
+	info := packageInfo{
+		Name:    p.Name,
+		UUID:    p.UUID,
+		Owner:   p.Owner,
+		License: p.License,
+		IsApp:   p.IsApp,
+		Score:   p.Score,
+	}
+	if p.Metadata != nil {
+		info.Description = p.Metadata.Description
+		info.SourceURL = p.Metadata.Repo
+		info.Tags = p.Metadata.Tags
+		info.Stars = p.Metadata.StarCount
+		info.DocsURL = p.Metadata.DocsLink
+	}
+	if p.RegistryMap != nil {
+		info.Registry = registryIDToName[p.RegistryMap.RegistryID]
+		info.Version = p.RegistryMap.Version
+		if p.RegistryMap.Status {
+			info.Status = "Active"
+		} else {
+			info.Status = "Inactive"
+		}
+	}
+	return info
+}
+
+// buildRegistryIDToName creates a registry ID → name lookup from parallel slices.
+func buildRegistryIDToName(ids []int, names []string) map[int]string {
+	m := make(map[int]string, len(ids))
+	for i, id := range ids {
+		if i < len(names) {
+			m[id] = names[i]
+		}
+	}
+	return m
+}
+
+// fetchRESTPackages calls the /packages/info endpoint and returns raw results and total count.
+func fetchRESTPackages(server, search string, limit, offset int, registryNames []string) ([]RESTPackage, int, error) {
+	token, err := ensureValidToken()
+	if err != nil {
+		return nil, 0, fmt.Errorf("authentication required: %w", err)
+	}
+
+	url := fmt.Sprintf("https://%s/packages/info", server)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	q := req.URL.Query()
+	if search != "" {
+		q.Add("name", search)
+	}
+	if limit > 0 {
+		q.Add("limit", fmt.Sprintf("%d", limit))
+	}
+	if offset > 0 {
+		q.Add("offset", fmt.Sprintf("%d", offset))
+	}
+	if len(registryNames) > 0 {
+		q.Add("registries", strings.Join(registryNames, ","))
+	}
+	req.URL.RawQuery = q.Encode()
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
+	req.Header.Set("Accept", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, 0, fmt.Errorf("API request failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var response PackageRESTListResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, 0, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return response.Packages, response.Meta.Total, nil
+}
+
 func buildGraphQLPackageVariables(search string, limit, offset int, registryIDs []int) map[string]interface{} {
 	variables := map[string]interface{}{
 		"filter":       map[string]interface{}{},
@@ -323,74 +429,15 @@ func fetchGraphQLPackageCount(server, search string, registryIDs []int) (int, er
 }
 
 func searchPackagesREST(params PackageSearchParams) error {
-	token, err := ensureValidToken()
+	pkgs, total, err := fetchRESTPackages(params.Server, params.Search, params.Limit, params.Offset, params.RegistryNames)
 	if err != nil {
-		return fmt.Errorf("authentication required: %w", err)
+		return err
 	}
-
-	url := fmt.Sprintf("https://%s/packages/info", params.Server)
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+	infos := make([]packageInfo, len(pkgs))
+	for i, p := range pkgs {
+		infos[i] = restToInfo(p)
 	}
-
-	q := req.URL.Query()
-	if params.Search != "" {
-		q.Add("name", params.Search)
-	}
-	if params.Limit > 0 {
-		q.Add("limit", fmt.Sprintf("%d", params.Limit))
-	}
-	if params.Offset > 0 {
-		q.Add("offset", fmt.Sprintf("%d", params.Offset))
-	}
-	if len(params.RegistryNames) > 0 {
-		q.Add("registries", strings.Join(params.RegistryNames, ","))
-	}
-	req.URL.RawQuery = q.Encode()
-
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
-	req.Header.Set("Accept", "application/json")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API request failed (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read response: %w", err)
-	}
-
-	var response PackageRESTListResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	pkgs := make([]packageInfo, len(response.Packages))
-	for i, p := range response.Packages {
-		pkgs[i] = packageInfo{
-			Name:        p.Name,
-			UUID:        p.UUID,
-			Registry:    p.Registry,
-			Version:     p.LatestStableVersion,
-			Description: p.Description,
-			SourceURL:   p.SourceURL,
-			Tags:        p.Tags,
-			Stars:       p.StargazersCount,
-			DocsURL:     p.JHubDocsURL,
-			License:     strings.Join(p.DetectedSourceLicenses, ", "),
-		}
-	}
-
-	printPackages(pkgs, response.Meta.Total, params.Verbose)
+	printPackages(infos, total, params.Verbose)
 	return nil
 }
 
@@ -403,41 +450,11 @@ func searchPackagesGraphQL(params PackageSearchParams) error {
 	if err != nil {
 		return err
 	}
-
-	registryIDToName := make(map[int]string, len(params.RegistryIDs))
-	for i, id := range params.RegistryIDs {
-		registryIDToName[id] = params.RegistryNames[i]
-	}
-
+	registryIDToName := buildRegistryIDToName(params.RegistryIDs, params.RegistryNames)
 	infos := make([]packageInfo, len(pkgs))
 	for i, p := range pkgs {
-		info := packageInfo{
-			Name:    p.Name,
-			UUID:    p.UUID,
-			Owner:   p.Owner,
-			License: p.License,
-			IsApp:   p.IsApp,
-			Score:   p.Score,
-		}
-		if p.Metadata != nil {
-			info.Description = p.Metadata.Description
-			info.SourceURL = p.Metadata.Repo
-			info.Tags = p.Metadata.Tags
-			info.Stars = p.Metadata.StarCount
-			info.DocsURL = p.Metadata.DocsLink
-		}
-		if p.RegistryMap != nil {
-			info.Registry = registryIDToName[p.RegistryMap.RegistryID]
-			info.Version = p.RegistryMap.Version
-			if p.RegistryMap.Status {
-				info.Status = "Active"
-			} else {
-				info.Status = "Inactive"
-			}
-		}
-		infos[i] = info
+		infos[i] = gqlToInfo(p, registryIDToName)
 	}
-
 	printPackages(infos, total, params.Verbose)
 	return nil
 }
@@ -483,6 +500,52 @@ func executeGraphQL(server string, token *StoredToken, gqlReq GraphQLRequest) ([
 	}
 
 	return body, nil
+}
+
+func getPackageInfo(server, packageName string, registryIDs []int, registryNames []string) error {
+	if err := getPackageInfoREST(server, packageName, registryNames); err != nil {
+		return getPackageInfoGraphQL(server, packageName, registryIDs, registryNames)
+	}
+	return nil
+}
+
+func getPackageInfoREST(server, packageName string, registryNames []string) error {
+	pkgs, _, err := fetchRESTPackages(server, packageName, 100, 0, registryNames)
+	if err != nil {
+		return err
+	}
+	var matches []packageInfo
+	for _, p := range pkgs {
+		if strings.EqualFold(p.Name, packageName) {
+			matches = append(matches, restToInfo(p))
+		}
+	}
+	if len(matches) == 0 {
+		fmt.Println("Package not found")
+		return nil
+	}
+	printPackages(matches, len(matches), true)
+	return nil
+}
+
+func getPackageInfoGraphQL(server, packageName string, registryIDs []int, registryNames []string) error {
+	pkgs, err := fetchGraphQLPackages(server, packageName, 100, 0, registryIDs)
+	if err != nil {
+		return err
+	}
+	registryIDToName := buildRegistryIDToName(registryIDs, registryNames)
+	var matches []packageInfo
+	for _, p := range pkgs {
+		if strings.EqualFold(p.Name, packageName) {
+			matches = append(matches, gqlToInfo(p, registryIDToName))
+		}
+	}
+	if len(matches) == 0 {
+		fmt.Println("Package not found")
+		return nil
+	}
+	printPackages(matches, len(matches), true)
+	return nil
 }
 
 func getPackageDependencies(server string, packageName string, registryName string, showIndirect bool) error {
@@ -557,7 +620,6 @@ func getPackageDependencies(server string, packageName string, registryName stri
 		return fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	// Filter dependencies based on showIndirect flag
 	var deps []PackageDependency
 	if showIndirect {
 		deps = docsResp.Dependencies
@@ -581,10 +643,8 @@ func getPackageDependencies(server string, packageName string, registryName stri
 	fmt.Printf("Dependencies for %s (v%s) from registry '%s':\n\n", docsResp.Name, docsResp.Version, targetRegistry)
 	if !showIndirect {
 		fmt.Printf("Showing %d direct dependencies (use --indirect to include indirect dependencies)\n\n", len(deps))
-
 		fmt.Printf("%-35s %-15s %-38s %s\n", "NAME", "REGISTRY", "UUID", "VERSIONS")
 		fmt.Printf("%-35s %-15s %-38s %s\n", strings.Repeat("-", 35), strings.Repeat("-", 15), strings.Repeat("-", 38), strings.Repeat("-", 20))
-
 		for _, dep := range deps {
 			fmt.Printf("%-35s %-15s %-38s %s\n", dep.Name, dep.Registry, dep.UUID, strings.Join(dep.Versions, ", "))
 		}
@@ -598,25 +658,20 @@ func getPackageDependencies(server string, packageName string, registryName stri
 				indirectDeps = append(indirectDeps, dep)
 			}
 		}
-
 		fmt.Printf("Showing %d total dependencies (%d direct, %d indirect)\n\n", len(deps), len(directDeps), len(indirectDeps))
-
 		if len(directDeps) > 0 {
 			fmt.Printf("Direct Dependencies (%d):\n", len(directDeps))
 			fmt.Printf("%-35s %-15s %-38s %s\n", "NAME", "REGISTRY", "UUID", "VERSIONS")
 			fmt.Printf("%-35s %-15s %-38s %s\n", strings.Repeat("-", 35), strings.Repeat("-", 15), strings.Repeat("-", 38), strings.Repeat("-", 20))
-
 			for _, dep := range directDeps {
 				fmt.Printf("%-35s %-15s %-38s %s\n", dep.Name, dep.Registry, dep.UUID, strings.Join(dep.Versions, ", "))
 			}
 			fmt.Println()
 		}
-
 		if len(indirectDeps) > 0 {
 			fmt.Printf("Indirect Dependencies (%d):\n", len(indirectDeps))
 			fmt.Printf("%-35s %-15s %-38s %s\n", "NAME", "REGISTRY", "UUID", "VERSIONS")
 			fmt.Printf("%-35s %-15s %-38s %s\n", strings.Repeat("-", 35), strings.Repeat("-", 15), strings.Repeat("-", 38), strings.Repeat("-", 20))
-
 			for _, dep := range indirectDeps {
 				fmt.Printf("%-35s %-15s %-38s %s\n", dep.Name, dep.Registry, dep.UUID, strings.Join(dep.Versions, ", "))
 			}
