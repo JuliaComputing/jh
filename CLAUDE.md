@@ -3,7 +3,6 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
-
 This is a Go-based CLI tool for interacting with JuliaHub, a platform for Julia computing. The CLI provides commands for authentication, dataset management, registry management, project management, user information, token management, Git integration, and Julia integration.
 
 ## Architecture
@@ -14,9 +13,11 @@ The application follows a command-line interface pattern using the Cobra library
 - **auth.go**: OAuth2 device flow authentication with JWT token handling
 - **datasets.go**: Dataset operations (list, download, upload, status) with REST API integration
 - **registries.go**: Registry operations (list, config, add, update) with REST API integration
+- **packages.go**: Package search with REST API primary path (`/packages/info`) and GraphQL fallback
 - **projects.go**: Project management using GraphQL API with user filtering
 - **user.go**: User information retrieval using GraphQL API and REST API for listing users
 - **tokens.go**: Token management operations (list) with REST API integration
+- **landing.go**: Landing page management (show, update, remove) with REST API integration
 - **git.go**: Git integration (clone, push, fetch, pull) with JuliaHub authentication
 - **julia.go**: Julia installation and management
 - **run.go**: Julia execution with JuliaHub configuration
@@ -31,8 +32,8 @@ The application follows a command-line interface pattern using the Cobra library
    - Stores tokens securely in `~/.juliahub` with 0600 permissions
 
 2. **API Integration**:
-   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/registry/registries/descriptions`, `/api/v1/registry/config/registry/{name}`), token management (`/app/token/activelist`), user management (`/app/config/features/manage`), and admin group management (`/app/config/groups`)
-   - **GraphQL API**: Used for projects, user info, user list (`public_users`), and group list (`/v1/graphql`)
+   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/registry/registries/descriptions`, `/api/v1/registry/config/registry/{name}`, `/api/v1/registry/config/registrator/{name}`), package search/info primary path (`/packages/info`), token management (`/app/token/activelist`), user management (`/app/config/features/manage`), admin group management (`/app/config/groups`), and landing page management (`/app/homepage` GET, `/app/config/homepage` POST/DELETE)
+   - **GraphQL API**: Used for projects, user info, user list (`public_users`), group list, and package search/info fallback (`/v1/graphql`)
    - **Headers**: All GraphQL requests require `Authorization: Bearer <id_token>`, `X-Hasura-Role: jhuser`, and `X-Juliahub-Ensure-JS: true`
    - **Authentication**: Uses ID tokens (`token.IDToken`) for API calls
 
@@ -41,14 +42,9 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh dataset`: Dataset operations (list, download, upload, status)
    - `jh registry`: Registry operations (list, config — all via REST API)
    - `jh registry config`: Show registry JSON config by name; subcommands add/update accept JSON via stdin or `--file`
-   - `jh registry permission`: Registry permission management (list, set, remove)
-   - `jh project`: Project management (list with GraphQL, supports user filtering)
-   - `jh user`: User information (info, list via GraphQL `public_users`)
-   - `jh group`: Group information (list via GraphQL)
-   - `jh admin`: Administrative commands (user management, token management, group management)
-   - `jh admin user`: User management (list all users with REST API, supports verbose mode)
-   - `jh admin token`: Token management (list all tokens with REST API, supports verbose mode)
-   - `jh admin group`: Group management (list all groups via REST API)
+   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/registry/registries/descriptions`, `/api/v1/registry/config/registry/{name}`, `/api/v1/registry/config/registrator/{name}`), package search/info primary path (`/packages/info`), token management (`/app/token/activelist`), user management (`/app/config/features/manage`), admin group management (`/app/config/groups`), and landing page management (`/app/homepage` GET, `/app/config/homepage` POST/DELETE)
+   - **GraphQL API**: Used for projects, user info, user list (`public_users`), group list, and package search/info fallback (`/v1/graphql`)
+   - **Headers**: All GraphQL requests require `Authorization: Bearer <id_token>`, `X-Hasura-Role: jhuser`, and `X-Juliahub-Ensure-JS: true`
    - `jh clone`: Git clone with JuliaHub authentication and project name resolution
    - `jh push/fetch/pull`: Git operations with JuliaHub authentication
    - `jh git-credential`: Git credential helper for seamless authentication
@@ -94,6 +90,16 @@ go run . dataset download <dataset-name>
 go run . dataset upload --new ./file.tar.gz
 ```
 
+### Test package operations
+```bash
+go run . package search dataframes
+go run . package search --verbose plots
+go run . package search --limit 20 ml
+go run . package search --registries General optimization
+go run . package info DataFrames
+go run . package info Plots --registries General
+```
+
 ### Test registry operations
 ```bash
 go run . registry list
@@ -114,6 +120,7 @@ echo '{
     "type": "cacheserver", "host": "https://pkg.juliahub.com",
     "credential_key": "JC Auth Token",
     "server_type": "", "github_credential_type": "", "api_host": "", "url": "", "user_name": ""
+    "credential_key": "JC Auth Token"
   }]
 }' | go run . registry config add
 go run . registry config add --file registry.json
@@ -140,6 +147,15 @@ go run . admin group list
 go run . admin token list
 go run . admin token list --verbose
 TZ=America/New_York go run . admin token list --verbose  # With specific timezone
+```
+
+### Test landing page operations
+```bash
+go run . admin landing-page show
+go run . admin landing-page update '# Welcome to JuliaHub'
+go run . admin landing-page update --file landing.md
+cat landing.md | go run . admin landing-page update
+go run . admin landing-page remove
 ```
 
 ### Test Git operations
@@ -216,6 +232,7 @@ The application uses OAuth2 device flow:
 - **Dataset operations**: Use presigned URLs for upload/download
 - **User management**: `/app/config/features/manage` endpoint for listing all users
 - **Token management**: `/app/token/activelist` endpoint for listing all API tokens
+- **Package search primary**: `/packages/info` endpoint with `name`, `registries`, `tags`, `licenses`, `limit`, `offset` query params; returns `{packages: [...], meta: {total: N}}`
 - **Authentication**: Bearer token with ID token
 - **Upload workflow**: 3-step process (request presigned URL, upload to URL, close upload)
 
@@ -345,6 +362,17 @@ jh run setup
 - Token list output is concise by default (Subject, Created By, and Expired status only); use `--verbose` flag for detailed information (signature, creation date, expiration date with estimate indicator)
 - Token dates are formatted in human-readable format and converted to local timezone (respects system timezone or TZ environment variable)
 - Token expiration estimate indicator only shown when `expires_at_is_estimate` is true in API response
+- Landing page commands (`jh admin landing-page`) use REST API: GET `/app/homepage` (show), POST `/app/config/homepage` (update), DELETE `/app/config/homepage` (remove); require appropriate permissions
+- Landing page `update` command accepts content inline as an argument, from a file via `--file`, or piped via stdin (priority: `--file` > arg > stdin)
+- Landing page response uses custom JSON unmarshaling (`homepageResponse`) to handle `message` being either an object or a string
+- Package search (`jh package search`) and info (`jh package info`) both try REST API (`/packages/info`) first, then fall back to GraphQL (`FilteredPackagesWithCount` via `/v1/graphql`) on failure; a warning is printed to stderr when the fallback is used
+- REST API passes `--registries` as comma-separated registry names to the `registries` query param; GraphQL fallback passes registry IDs to the `registries` variable
+- `fetchRegistries` in `registries.go` is used by `listRegistries`, `packageSearchCmd`, and `packageInfoCmd` to resolve registry names to IDs (for GraphQL) and names (for REST)
+- Both REST and GraphQL package search/info paths produce identical output columns (Registry and Owner); GraphQL resolves registry names from the `registryIDs`/`registryNames` already in `PackageSearchParams` — no extra API call needed
+- A package in multiple registries appears as multiple rows (one per registry) in both REST and GraphQL paths, since the GraphQL view (`package_rank_vw`) is already flattened per package-registry combination
+- GraphQL fallback uses `package_search_with_count.gql` which fetches both the package list and aggregate count in a single request (`package_search` + `package_search_aggregate` root fields)
+- `executeGraphQL(server, token, req)` in `packages.go` is a shared helper for GraphQL POST requests (sets Authorization, Content-Type, Accept, X-Hasura-Role headers)
+- `getPackageInfo` in `packages.go` implements exact name-match lookup using REST-first (`getPackageInfoREST`), GraphQL fallback (`getPackageInfoGraphQL`); `packageInfoCmd` in `main.go` resolves registries via `fetchRegistries`
 
 ## Implementation Details
 

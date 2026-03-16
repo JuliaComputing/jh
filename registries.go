@@ -29,6 +29,26 @@ func pluralize(count int, singular, plural string) string {
 	return plural
 }
 
+// fetchRegistries fetches all registries from the API.
+func fetchRegistries(server string) ([]Registry, error) {
+	token, err := ensureValidToken()
+	if err != nil {
+		return nil, fmt.Errorf("authentication required: %w", err)
+	}
+
+	body, err := apiGet(fmt.Sprintf("https://%s/api/v1/registry/registries/descriptions", server), token.IDToken)
+	if err != nil {
+		return nil, err
+	}
+
+	var registries []Registry
+	if err := json.Unmarshal(body, &registries); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return registries, nil
+}
+
 // apiGet performs a GET request with up to 3 attempts, retrying on transient errors.
 func apiGet(url, idToken string) ([]byte, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -68,19 +88,9 @@ func apiGet(url, idToken string) ([]byte, error) {
 }
 
 func listRegistries(server string, verbose bool) error {
-	token, err := ensureValidToken()
-	if err != nil {
-		return fmt.Errorf("authentication required: %w", err)
-	}
-
-	body, err := apiGet(fmt.Sprintf("https://%s/api/v1/registry/registries/descriptions", server), token.IDToken)
+	registries, err := fetchRegistries(server)
 	if err != nil {
 		return err
-	}
-
-	var registries []Registry
-	if err := json.Unmarshal(body, &registries); err != nil {
-		return fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	if len(registries) == 0 {
@@ -437,6 +447,89 @@ func removeRegistryPermission(server, name, user, group string) error {
 		subject = group
 	}
 	fmt.Printf("Permission removed: %s\n", subject)
+	return nil
+}
+
+func getRegistrator(server, name string) error {
+	token, err := ensureValidToken()
+	if err != nil {
+		return fmt.Errorf("authentication required: %w", err)
+	}
+
+	body, err := apiGet(fmt.Sprintf("https://%s/api/v1/registry/config/registrator/%s", server, name), token.IDToken)
+	if err != nil {
+		return err
+	}
+
+	var pretty bytes.Buffer
+	if err := json.Indent(&pretty, body, "", "  "); err != nil {
+		fmt.Println(string(body))
+		return nil
+	}
+	fmt.Println(pretty.String())
+	return nil
+}
+
+func setRegistrator(server, name, filePath string) error {
+	token, err := ensureValidToken()
+	if err != nil {
+		return fmt.Errorf("authentication required: %w", err)
+	}
+
+	var data []byte
+	if filePath != "" {
+		data, err = os.ReadFile(filePath)
+		if err != nil {
+			return fmt.Errorf("failed to read file %q: %w", filePath, err)
+		}
+	} else {
+		stat, _ := os.Stdin.Stat()
+		if (stat.Mode() & os.ModeCharDevice) != 0 {
+			return fmt.Errorf("no JSON payload provided — pipe JSON via stdin or use --file")
+		}
+		data, err = io.ReadAll(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("failed to read stdin: %w", err)
+		}
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	if enabled, _ := payload["enabled"].(bool); enabled {
+		if email, _ := payload["email"].(string); email == "" {
+			return fmt.Errorf("\"email\" is required when registrator is enabled")
+		}
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	apiURL := fmt.Sprintf("https://%s/api/v1/registry/config/registrator/%s", server, name)
+	client := &http.Client{Timeout: 30 * time.Second}
+	req, err := http.NewRequest("POST", apiURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("API request failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	fmt.Println("Registrator updated successfully")
 	return nil
 }
 
