@@ -736,15 +736,14 @@ var packageDependencyCmd = &cobra.Command{
 	Short: "List package dependencies",
 	Long: `List dependencies for a specific Julia package.
 
-By default, shows up to 10 direct dependencies. Use --indirect flag to include
-both direct and indirect dependencies (up to 10 direct and 50 indirect).
-Use --all flag to show all dependencies without limits.
+By default, shows all direct dependencies. Use --indirect flag to include
+both direct and indirect dependencies.
 
 The command fetches dependency information from the package documentation
 JSON endpoint. If a package exists in multiple registries, it uses the
 first registry by default. You can specify a different registry using
 the --registry flag.`,
-	Example: "  jh package dependency DataFrames\n  jh package dependency --indirect Plots\n  jh package dependency --all --indirect CSV\n  jh package dependency --registry General CSV",
+	Example: "  jh package dependency DataFrames\n  jh package dependency --indirect Plots\n  jh package dependency --registry General CSV",
 	Args:    cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
@@ -756,9 +755,8 @@ the --registry flag.`,
 		packageName := args[0]
 		registryName, _ := cmd.Flags().GetString("registry")
 		showIndirect, _ := cmd.Flags().GetBool("indirect")
-		showAll, _ := cmd.Flags().GetBool("all")
 
-		if err := getPackageDependencies(server, packageName, registryName, showIndirect, showAll); err != nil {
+		if err := getPackageDependencies(server, packageName, registryName, showIndirect); err != nil {
 			fmt.Printf("Failed to get package dependencies: %v\n", err)
 			os.Exit(1)
 		}
@@ -1341,7 +1339,6 @@ func init() {
 	packageDependencyCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	packageDependencyCmd.Flags().String("registry", "", "Specify registry name (uses first registry if not specified)")
 	packageDependencyCmd.Flags().Bool("indirect", false, "Include indirect dependencies")
-	packageDependencyCmd.Flags().Bool("all", false, "Show all dependencies without limits (default: 10 direct, 50 indirect)")
 	registryListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	registryListCmd.Flags().Bool("verbose", false, "Show detailed registry information")
 	projectListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")

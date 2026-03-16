@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-//go:embed package_search_with_count.gql
+//go:embed package_search.gql package_search_count.gql
 var packageSearchFS embed.FS
 
 type PackageMetadata struct {
@@ -69,20 +69,6 @@ type Package struct {
 	UUID        string              `json:"uuid"`
 	Installed   bool                `json:"installed"`
 	Failures    []PackageFailure    `json:"failures"`
-}
-
-type PackageSearchResponse struct {
-	Data struct {
-		PackageSearch    []Package `json:"package_search"`
-		PackageAggregate struct {
-			Aggregate struct {
-				Count int `json:"count"`
-			} `json:"aggregate"`
-		} `json:"package_search_aggregate"`
-	} `json:"data"`
-	Errors []struct {
-		Message string `json:"message"`
-	} `json:"errors"`
 }
 
 type RESTPackage struct {
@@ -325,18 +311,8 @@ func fetchRESTPackages(server, search string, limit, offset int, registryNames [
 	return response.Packages, response.Meta.Total, nil
 }
 
-// fetchGraphQLPackages executes the package search GraphQL query and returns raw results and total count.
-func fetchGraphQLPackages(server, search string, limit, offset int, registryIDs []int) ([]Package, int, error) {
-	token, err := ensureValidToken()
-	if err != nil {
-		return nil, 0, fmt.Errorf("authentication required: %w", err)
-	}
-
-	queryBytes, err := packageSearchFS.ReadFile("package_search_with_count.gql")
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to read GraphQL query: %w", err)
-	}
-
+// fetchGraphQLPackages executes the package search GraphQL query and returns raw results.
+func buildGraphQLPackageVariables(search string, limit, offset int, registryIDs []int) map[string]interface{} {
 	variables := map[string]interface{}{
 		"filter":       map[string]interface{}{},
 		"order":        map[string]string{"score": "desc"},
@@ -358,25 +334,104 @@ func fetchGraphQLPackages(server, search string, limit, offset int, registryIDs 
 		}
 		variables["registries"] = fmt.Sprintf("{%s}", strings.Join(registryStrs, ","))
 	}
+	return variables
+}
+
+func fetchGraphQLPackages(server, search string, limit, offset int, registryIDs []int) ([]Package, error) {
+	token, err := ensureValidToken()
+	if err != nil {
+		return nil, fmt.Errorf("authentication required: %w", err)
+	}
+
+	queryBytes, err := packageSearchFS.ReadFile("package_search.gql")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read GraphQL query: %w", err)
+	}
 
 	body, err := executeGraphQL(server, token, GraphQLRequest{
-		OperationName: "FilteredPackagesWithCount",
+		OperationName: "FilteredPackages",
+		Query:         string(queryBytes),
+		Variables:     buildGraphQLPackageVariables(search, limit, offset, registryIDs),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var response struct {
+		Data struct {
+			PackageSearch []Package `json:"package_search"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse GraphQL response: %w", err)
+	}
+	if len(response.Errors) > 0 {
+		return nil, fmt.Errorf("GraphQL errors: %v", response.Errors)
+	}
+
+	return response.Data.PackageSearch, nil
+}
+
+func fetchGraphQLPackageCount(server, search string, registryIDs []int) (int, error) {
+	token, err := ensureValidToken()
+	if err != nil {
+		return 0, fmt.Errorf("authentication required: %w", err)
+	}
+
+	queryBytes, err := packageSearchFS.ReadFile("package_search_count.gql")
+	if err != nil {
+		return 0, fmt.Errorf("failed to read GraphQL query: %w", err)
+	}
+
+	variables := map[string]interface{}{
+		"filter":       map[string]interface{}{},
+		"matchtags":    "{}",
+		"licenses":     "{}",
+		"search":       search,
+		"hasfailures":  false,
+		"installed":    true,
+		"notinstalled": true,
+	}
+	if len(registryIDs) > 0 {
+		registryStrs := make([]string, len(registryIDs))
+		for i, id := range registryIDs {
+			registryStrs[i] = fmt.Sprintf("%d", id)
+		}
+		variables["registries"] = fmt.Sprintf("{%s}", strings.Join(registryStrs, ","))
+	}
+
+	body, err := executeGraphQL(server, token, GraphQLRequest{
+		OperationName: "FilteredPackagesCounts",
 		Query:         string(queryBytes),
 		Variables:     variables,
 	})
 	if err != nil {
-		return nil, 0, err
+		return 0, err
 	}
 
-	var response PackageSearchResponse
+	var response struct {
+		Data struct {
+			PackageAggregate struct {
+				Aggregate struct {
+					Count int `json:"count"`
+				} `json:"aggregate"`
+			} `json:"package_search_aggregate"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
 	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, 0, fmt.Errorf("failed to parse GraphQL response: %w", err)
+		return 0, fmt.Errorf("failed to parse GraphQL response: %w", err)
 	}
 	if len(response.Errors) > 0 {
-		return nil, 0, fmt.Errorf("GraphQL errors: %v", response.Errors)
+		return 0, fmt.Errorf("GraphQL errors: %v", response.Errors)
 	}
 
-	return response.Data.PackageSearch, response.Data.PackageAggregate.Aggregate.Count, nil
+	return response.Data.PackageAggregate.Aggregate.Count, nil
 }
 
 func searchPackagesREST(params PackageSearchParams) error {
@@ -393,7 +448,11 @@ func searchPackagesREST(params PackageSearchParams) error {
 }
 
 func searchPackagesGraphQL(params PackageSearchParams) error {
-	pkgs, total, err := fetchGraphQLPackages(params.Server, params.Search, params.Limit, params.Offset, params.RegistryIDs)
+	pkgs, err := fetchGraphQLPackages(params.Server, params.Search, params.Limit, params.Offset, params.RegistryIDs)
+	if err != nil {
+		return err
+	}
+	total, err := fetchGraphQLPackageCount(params.Server, params.Search, params.RegistryIDs)
 	if err != nil {
 		return err
 	}
@@ -476,7 +535,7 @@ func getPackageInfoREST(server, packageName string, registryNames []string) erro
 }
 
 func getPackageInfoGraphQL(server, packageName string, registryIDs []int, registryNames []string) error {
-	pkgs, _, err := fetchGraphQLPackages(server, packageName, 100, 0, registryIDs)
+	pkgs, err := fetchGraphQLPackages(server, packageName, 100, 0, registryIDs)
 	if err != nil {
 		return err
 	}
@@ -495,56 +554,54 @@ func getPackageInfoGraphQL(server, packageName string, registryIDs []int, regist
 	return nil
 }
 
-func getPackageDependencies(server string, packageName string, registryName string, showIndirect bool, showAll bool) error {
-	// Fetch all registries to get registry IDs for the query
-	allRegistries, err := fetchRegistries(server)
-	if err != nil {
-		return fmt.Errorf("failed to fetch registries: %w", err)
-	}
-
-	var registryIDs []int
-	for _, reg := range allRegistries {
-		registryIDs = append(registryIDs, reg.RegistryID)
-	}
-
-	// Get package info to find the registry it belongs to
-	packages, _, err := fetchGraphQLPackages(server, packageName, 100, 0, registryIDs)
-	if err != nil {
-		return err
-	}
-
-	// Find exact match (case-insensitive)
-	var pkg *Package
-	for i := range packages {
-		if strings.EqualFold(packages[i].Name, packageName) {
-			pkg = &packages[i]
-			break
-		}
-	}
-
-	if pkg == nil {
-		return fmt.Errorf("package not found: %s", packageName)
-	}
-
-	if pkg.RegistryMap == nil {
-		return fmt.Errorf("no registry information found for package: %s", packageName)
-	}
-
-	// Determine which registry to use
+func getPackageDependencies(server string, packageName string, registryName string, showIndirect bool) error {
+	// Determine which registry to use via REST first, GraphQL fallback
 	var targetRegistry string
 	if registryName != "" {
 		targetRegistry = registryName
 	} else {
-		// Find the registry name from RegistryMap
-		firstRegistryID := pkg.RegistryMap.RegistryID
-		for _, reg := range allRegistries {
-			if reg.RegistryID == firstRegistryID {
-				targetRegistry = reg.Name
-				break
+		// Try REST API first
+		restPkgs, _, err := fetchRESTPackages(server, packageName, 100, 0, nil)
+		if err == nil {
+			for _, p := range restPkgs {
+				if strings.EqualFold(p.Name, packageName) {
+					targetRegistry = p.Registry
+					break
+				}
 			}
 		}
+
+		// Fall back to GraphQL if REST didn't find the registry
 		if targetRegistry == "" {
-			return fmt.Errorf("failed to find registry name for ID: %d", firstRegistryID)
+			allRegistries, err := fetchRegistries(server)
+			if err != nil {
+				return fmt.Errorf("failed to fetch registries: %w", err)
+			}
+			var registryIDs []int
+			for _, reg := range allRegistries {
+				registryIDs = append(registryIDs, reg.RegistryID)
+			}
+			gqlPkgs, err := fetchGraphQLPackages(server, packageName, 100, 0, registryIDs)
+			if err != nil {
+				return fmt.Errorf("failed to search for package %q: %w", packageName, err)
+			}
+			for i := range gqlPkgs {
+				if strings.EqualFold(gqlPkgs[i].Name, packageName) {
+					if gqlPkgs[i].RegistryMap != nil {
+						for _, reg := range allRegistries {
+							if reg.RegistryID == gqlPkgs[i].RegistryMap.RegistryID {
+								targetRegistry = reg.Name
+								break
+							}
+						}
+					}
+					break
+				}
+			}
+		}
+
+		if targetRegistry == "" {
+			return fmt.Errorf("package not found: %s", packageName)
 		}
 	}
 
@@ -608,33 +665,13 @@ func getPackageDependencies(server string, packageName string, registryName stri
 
 	fmt.Printf("Dependencies for %s (v%s) from registry '%s':\n\n", docsResp.Name, docsResp.Version, targetRegistry)
 	if !showIndirect {
-		directLimit := 10
-		displayDeps := deps
-		truncated := false
-		if !showAll && len(deps) > directLimit {
-			displayDeps = deps[:directLimit]
-			truncated = true
-		}
-
-		if truncated {
-			fmt.Printf("Showing %d of %d direct dependencies (use --all to see all, --indirect for indirect)\n\n", len(displayDeps), len(deps))
-		} else {
-			fmt.Printf("Showing %d direct dependencies (use --indirect to include indirect dependencies)\n\n", len(deps))
-		}
+		fmt.Printf("Showing %d direct dependencies (use --indirect to include indirect dependencies)\n\n", len(deps))
 
 		fmt.Printf("%-35s %-15s %-38s %s\n", "NAME", "REGISTRY", "UUID", "VERSIONS")
 		fmt.Printf("%-35s %-15s %-38s %s\n", strings.Repeat("-", 35), strings.Repeat("-", 15), strings.Repeat("-", 38), strings.Repeat("-", 20))
 
-		for _, dep := range displayDeps {
-			versionsStr := strings.Join(dep.Versions, ", ")
-			if len(versionsStr) > 20 {
-				versionsStr = versionsStr[:17] + "..."
-			}
-			registry := dep.Registry
-			if len(registry) > 15 {
-				registry = registry[:12] + "..."
-			}
-			fmt.Printf("%-35s %-15s %-38s %s\n", dep.Name, registry, dep.UUID, versionsStr)
+		for _, dep := range deps {
+			fmt.Printf("%-35s %-15s %-38s %s\n", dep.Name, dep.Registry, dep.UUID, strings.Join(dep.Versions, ", "))
 		}
 	} else {
 		var directDeps []PackageDependency
@@ -647,75 +684,26 @@ func getPackageDependencies(server string, packageName string, registryName stri
 			}
 		}
 
-		directLimit := 10
-		indirectLimit := 50
-		displayDirectDeps := directDeps
-		displayIndirectDeps := indirectDeps
-		directTruncated := false
-		indirectTruncated := false
+		fmt.Printf("Showing %d total dependencies (%d direct, %d indirect)\n\n", len(deps), len(directDeps), len(indirectDeps))
 
-		if !showAll {
-			if len(directDeps) > directLimit {
-				displayDirectDeps = directDeps[:directLimit]
-				directTruncated = true
-			}
-			if len(indirectDeps) > indirectLimit {
-				displayIndirectDeps = indirectDeps[:indirectLimit]
-				indirectTruncated = true
-			}
-		}
-
-		if directTruncated || indirectTruncated {
-			fmt.Printf("Showing %d of %d total dependencies (%d of %d direct, %d of %d indirect) - use --all to see all\n\n",
-				len(displayDirectDeps)+len(displayIndirectDeps), len(deps),
-				len(displayDirectDeps), len(directDeps),
-				len(displayIndirectDeps), len(indirectDeps))
-		} else {
-			fmt.Printf("Showing %d total dependencies (%d direct, %d indirect)\n\n", len(deps), len(directDeps), len(indirectDeps))
-		}
-
-		if len(displayDirectDeps) > 0 {
-			if directTruncated {
-				fmt.Printf("Direct Dependencies (showing %d of %d):\n", len(displayDirectDeps), len(directDeps))
-			} else {
-				fmt.Printf("Direct Dependencies (%d):\n", len(directDeps))
-			}
+		if len(directDeps) > 0 {
+			fmt.Printf("Direct Dependencies (%d):\n", len(directDeps))
 			fmt.Printf("%-35s %-15s %-38s %s\n", "NAME", "REGISTRY", "UUID", "VERSIONS")
 			fmt.Printf("%-35s %-15s %-38s %s\n", strings.Repeat("-", 35), strings.Repeat("-", 15), strings.Repeat("-", 38), strings.Repeat("-", 20))
 
-			for _, dep := range displayDirectDeps {
-				versionsStr := strings.Join(dep.Versions, ", ")
-				if len(versionsStr) > 20 {
-					versionsStr = versionsStr[:17] + "..."
-				}
-				registry := dep.Registry
-				if len(registry) > 15 {
-					registry = registry[:12] + "..."
-				}
-				fmt.Printf("%-35s %-15s %-38s %s\n", dep.Name, registry, dep.UUID, versionsStr)
+			for _, dep := range directDeps {
+				fmt.Printf("%-35s %-15s %-38s %s\n", dep.Name, dep.Registry, dep.UUID, strings.Join(dep.Versions, ", "))
 			}
 			fmt.Println()
 		}
 
-		if len(displayIndirectDeps) > 0 {
-			if indirectTruncated {
-				fmt.Printf("Indirect Dependencies (showing %d of %d):\n", len(displayIndirectDeps), len(indirectDeps))
-			} else {
-				fmt.Printf("Indirect Dependencies (%d):\n", len(indirectDeps))
-			}
+		if len(indirectDeps) > 0 {
+			fmt.Printf("Indirect Dependencies (%d):\n", len(indirectDeps))
 			fmt.Printf("%-35s %-15s %-38s %s\n", "NAME", "REGISTRY", "UUID", "VERSIONS")
 			fmt.Printf("%-35s %-15s %-38s %s\n", strings.Repeat("-", 35), strings.Repeat("-", 15), strings.Repeat("-", 38), strings.Repeat("-", 20))
 
-			for _, dep := range displayIndirectDeps {
-				versionsStr := strings.Join(dep.Versions, ", ")
-				if len(versionsStr) > 20 {
-					versionsStr = versionsStr[:17] + "..."
-				}
-				registry := dep.Registry
-				if len(registry) > 15 {
-					registry = registry[:12] + "..."
-				}
-				fmt.Printf("%-35s %-15s %-38s %s\n", dep.Name, registry, dep.UUID, versionsStr)
+			for _, dep := range indirectDeps {
+				fmt.Printf("%-35s %-15s %-38s %s\n", dep.Name, dep.Registry, dep.UUID, strings.Join(dep.Versions, ", "))
 			}
 		}
 	}
