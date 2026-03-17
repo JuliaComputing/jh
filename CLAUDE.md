@@ -107,7 +107,6 @@ go run . package info Plots --registries General
 # Get package dependencies
 go run . package dependency DataFrames
 go run . package dependency DataFrames --indirect
-go run . package dependency DataFrames --all --indirect
 go run . package dependency CSV --registry General
 ```
 
@@ -310,7 +309,6 @@ The CLI provides comprehensive package discovery and dependency analysis:
 - **Display limits**:
   - Default: Shows up to 10 direct dependencies
   - With `--indirect`: Shows up to 10 direct and 50 indirect dependencies
-  - With `--all`: Shows all dependencies without limits
 - **Output format**:
   - Direct-only mode: Single table with columns: NAME, REGISTRY, UUID, VERSIONS
   - Indirect mode: Separate sections for direct and indirect dependencies with columns: NAME, REGISTRY, UUID, VERSIONS

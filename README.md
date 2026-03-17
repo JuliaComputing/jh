@@ -6,13 +6,8 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 
 - **Authentication**: OAuth2 device flow authentication with JWT token handling
 - **Dataset Management**: List, download, upload, and check status of datasets
-<<<<<<< HEAD
 - **Package Management**: Search and explore Julia packages across registries via REST API (GraphQL fallback), with dependency analysis
-- **Registry Management**: List and manage Julia package registries
-=======
-- **Package Management**: Search and explore Julia packages across registries via REST API (GraphQL fallback)
 - **Registry Management**: List, add, and update Julia package registries
->>>>>>> 4c422aed3b5e0e488e6e479143bd5bec64385463
 - **Project Management**: List and filter projects using GraphQL API
 - **Git Integration**: Clone, push, fetch, and pull with automatic JuliaHub authentication
 - **Julia Integration**: Install Julia and run with JuliaHub package server configuration
@@ -166,6 +161,10 @@ go build -o jh .
   - `--offset <n>` - Number of results to skip
 - `jh package info <package-name>` - Get detailed information about a specific package (exact name match, case-insensitive)
   - `jh package info --registries General` - Search in specific registries only
+- `jh package dependency <package-name>` - List package dependencies
+  - Default: Shows up to 10 direct dependencies (NAME, REGISTRY, UUID, VERSIONS)
+  - `jh package dependency --indirect` - Include both direct and indirect dependencies
+  - `jh package dependency --registry General` - Specify registry to use
 
 ### Registry Management (`jh registry`)
 
@@ -175,12 +174,6 @@ go build -o jh .
 - `jh registry config <name>` - Show the full JSON configuration for a registry
 - `jh registry config add` - Add a new registry (JSON payload via stdin or `--file`)
 - `jh registry config update` - Update an existing registry (same JSON schema as add, same flags)
-
-- `jh package dependency <package-name>` - List package dependencies
-  - Default: Shows up to 10 direct dependencies (NAME, REGISTRY, UUID, VERSIONS)
-  - `jh package dependency --indirect` - Include indirect dependencies (up to 10 direct, 50 indirect)
-  - `jh package dependency --all` - Show all dependencies without limits
-  - `jh package dependency --registry General` - Specify registry to use
 
 
 ### Project Management (`jh project`)
@@ -290,7 +283,6 @@ jh package info Plots --registries General
 # List package dependencies
 jh package dependency DataFrames              # Shows up to 10 direct dependencies
 jh package dependency DataFrames --indirect   # Includes indirect dependencies
-jh package dependency DataFrames --all --indirect  # Shows all dependencies
 jh package dependency CSV --registry General  # Use specific registry
 ```
 
