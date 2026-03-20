@@ -829,6 +829,38 @@ The package name must match exactly (case-insensitive).`,
 	},
 }
 
+var packageDependencyCmd = &cobra.Command{
+	Use:   "dependency <package-name>",
+	Short: "List package dependencies",
+	Long: `List dependencies for a specific Julia package.
+
+By default, shows all direct dependencies. Use --indirect flag to include
+both direct and indirect dependencies.
+
+The command fetches dependency information from the package documentation
+JSON endpoint. If a package exists in multiple registries, it uses the
+first registry by default. You can specify a different registry using
+the --registry flag.`,
+	Example: "  jh package dependency DataFrames\n  jh package dependency --indirect Plots\n  jh package dependency --registry General CSV",
+	Args:    cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		packageName := args[0]
+		registryName, _ := cmd.Flags().GetString("registry")
+		showIndirect, _ := cmd.Flags().GetBool("indirect")
+
+		if err := getPackageDependencies(server, packageName, registryName, showIndirect); err != nil {
+			fmt.Printf("Failed to get package dependencies: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
 var registryCmd = &cobra.Command{
 	Use:   "registry",
 	Short: "Registry management commands",
@@ -1794,6 +1826,9 @@ func init() {
 	packageSearchCmd.Flags().Bool("verbose", false, "Show detailed package information")
 	packageInfoCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	packageInfoCmd.Flags().String("registries", "", "Filter by registry names (comma-separated, e.g., 'General,CustomRegistry')")
+	packageDependencyCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	packageDependencyCmd.Flags().String("registry", "", "Specify registry name (uses first registry if not specified)")
+	packageDependencyCmd.Flags().Bool("indirect", false, "Include indirect dependencies")
 	registryListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	registryListCmd.Flags().Bool("verbose", false, "Show detailed registry information")
 	projectListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
@@ -1816,7 +1851,7 @@ func init() {
 	authCmd.AddCommand(authLoginCmd, authRefreshCmd, authStatusCmd, authEnvCmd)
 	jobCmd.AddCommand(jobListCmd, jobStartCmd)
 	datasetCmd.AddCommand(datasetListCmd, datasetDownloadCmd, datasetUploadCmd, datasetStatusCmd)
-	packageCmd.AddCommand(packageSearchCmd, packageInfoCmd)
+	packageCmd.AddCommand(packageSearchCmd, packageInfoCmd, packageDependencyCmd)
 	registryConfigCmd.Flags().StringP("server", "s", "", "JuliaHub server")
 	registryConfigAddCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	registryConfigAddCmd.Flags().StringP("file", "f", "", "Path to JSON config file (reads from stdin if omitted)")
