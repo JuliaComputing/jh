@@ -6,7 +6,7 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 
 - **Authentication**: OAuth2 device flow authentication with JWT token handling
 - **Dataset Management**: List, download, upload, and check status of datasets
-- **Package Management**: Search and explore Julia packages across registries via REST API (GraphQL fallback)
+- **Package Management**: Search and explore Julia packages across registries via REST API (GraphQL fallback), with dependency analysis
 - **Registry Management**: List, add, and update Julia package registries
 - **Project Management**: List and filter projects using GraphQL API
 - **Git Integration**: Clone, push, fetch, and pull with automatic JuliaHub authentication
@@ -161,6 +161,10 @@ go build -o jh .
   - `--offset <n>` - Number of results to skip
 - `jh package info <package-name>` - Get detailed information about a specific package (exact name match, case-insensitive)
   - `jh package info --registries General` - Search in specific registries only
+- `jh package dependency <package-name>` - List package dependencies
+  - Default: Shows up to 10 direct dependencies (NAME, REGISTRY, UUID, VERSIONS)
+  - `jh package dependency --indirect` - Include both direct and indirect dependencies
+  - `jh package dependency --registry General` - Specify registry to use
 
 ### Registry Management (`jh registry`)
 
@@ -170,6 +174,7 @@ go build -o jh .
 - `jh registry config <name>` - Show the full JSON configuration for a registry
 - `jh registry config add` - Add a new registry (JSON payload via stdin or `--file`)
 - `jh registry config update` - Update an existing registry (same JSON schema as add, same flags)
+
 
 ### Project Management (`jh project`)
 
@@ -274,6 +279,11 @@ jh package search --limit 20 --offset 0 ml
 # Get detailed info about a specific package
 jh package info DataFrames
 jh package info Plots --registries General
+
+# List package dependencies
+jh package dependency DataFrames              # Shows up to 10 direct dependencies
+jh package dependency DataFrames --indirect   # Includes indirect dependencies
+jh package dependency CSV --registry General  # Use specific registry
 ```
 
 ### Registry Operations
@@ -419,7 +429,7 @@ Note: Arguments after `--` are passed directly to Julia. The `jh run` command:
 
 - **Built with Go** using the Cobra CLI framework
 - **Authentication**: OAuth2 device flow with JWT token management
-- **APIs**: REST API for datasets and package search/info (primary); GraphQL API for projects, user info, and package search/info fallback (single request returns results + total count)
+- **APIs**: REST API for datasets and package search/info (primary); GraphQL API for projects, user info, package search/info fallback, and package dependency lookup
 - **Git Integration**: Seamless authentication via HTTP headers or credential helper
 - **Cross-platform**: Supports Windows, macOS, and Linux
 
