@@ -12,6 +12,7 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 - **Git Integration**: Clone, push, fetch, and pull with automatic JuliaHub authentication
 - **Julia Integration**: Install Julia and run with JuliaHub package server configuration
 - **User Management**: Display user information and view profile details
+- **Vulnerability Scanning**: Scan Julia packages for known security vulnerabilities
 - **Administrative Commands**: Manage users, tokens, and system resources (requires admin permissions)
 
 ## Installation
@@ -218,6 +219,14 @@ go build -o jh .
   - `cat landing.md | jh admin landing-page update` - Read content from stdin
 - `jh admin landing-page remove` - Remove the custom landing page and revert to the default
 
+### Vulnerability Scanning (`jh scan`)
+
+- `jh scan <package-name>` - Scan a Julia package for known security vulnerabilities
+  - Default: Shows a table with ADVISORY, SEVERITY, AFFECTED, ALIASES, and SUMMARY columns
+  - `--version <ver>` - Check a specific version and show whether it is affected
+  - `--advisory <id>` - Show which versions of the package are affected by a specific advisory ID (e.g. a CVE or GHSA identifier)
+  - `--verbose` - Show full advisory details (aliases, severity scores, dates, version ranges, references, description); combinable with `--advisory`
+
 ### Update (`jh update`)
 
 - `jh update` - Check for updates and automatically install the latest version
@@ -366,6 +375,28 @@ cat landing.md | jh admin landing-page update
 
 # Remove custom landing page (revert to default)
 jh admin landing-page remove
+```
+
+### Vulnerability Scanning
+
+```bash
+# Scan a package for known vulnerabilities
+jh scan MbedTLS_jll
+
+# Scan a specific version (shows whether that version is affected)
+jh scan MbedTLS_jll --version 2.28.1010+0
+
+# Show which versions are affected by a specific advisory
+jh scan MbedTLS_jll --advisory GHSA-xxx-yyy-zzz
+
+# Same, but with full advisory details
+jh scan MbedTLS_jll --advisory GHSA-xxx-yyy-zzz --verbose
+
+# Show full advisory details for all vulnerabilities
+jh scan MbedTLS_jll --version 2.28.1010+0 --verbose
+
+# Scan against a custom server
+jh scan SomePackage -s nightly.juliahub.dev
 ```
 
 ### Git Workflow

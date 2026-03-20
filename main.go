@@ -175,6 +175,7 @@ Available command categories:
   pull      - Pull changes with authentication
   julia     - Julia installation and management
   run       - Run Julia with JuliaHub configuration
+  scan      - Scan a package for known vulnerabilities
 
 Use 'jh <command> --help' for more information about a specific command.`,
 }
@@ -641,6 +642,59 @@ PROVIDER TYPES
       "credential_key": "<token-id>"
     }
   }`
+}
+
+var scanCmd = &cobra.Command{
+	Use:   "scan <package-name>",
+	Short: "Scan a package for known vulnerabilities",
+	Long: `Show known security vulnerabilities for a Julia package.
+
+Displays vulnerability information including:
+- Advisory ID (e.g. JLSEC-2024-001)
+- Severity score (CVSS_V3 or other)
+- CVE/GHSA aliases
+- Summary description
+
+Optionally filter by a specific version to see whether that version is affected.
+Use --advisory to show which versions are affected by a specific advisory.
+Use --verbose for full details including version ranges, references, and descriptions.`,
+	Example: "  jh scan MbedTLS_jll\n  jh scan MbedTLS_jll --version 2.28.1010+0\n  jh scan MbedTLS_jll --advisory GHSA-xxx-yyy-zzz\n  jh scan MbedTLS_jll --version 2.28.1010+0 --verbose",
+	Args:    cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		packageName := args[0]
+		version, _ := cmd.Flags().GetString("version")
+		verbose, _ := cmd.Flags().GetBool("verbose")
+		advisory, _ := cmd.Flags().GetString("advisory")
+
+		vulns, err := fetchVulnerabilities(server, packageName, version)
+		if err != nil {
+			fmt.Printf("Failed to fetch vulnerabilities: %v\n", err)
+			os.Exit(1)
+		}
+
+		if advisory != "" {
+			for i, v := range vulns {
+				if strings.EqualFold(v.AdvisoryID, advisory) {
+					if verbose {
+						printVulnerabilities(packageName, version, []PackageVulnerability{vulns[i]}, true)
+					} else {
+						printVersionsForAdvisory(packageName, &vulns[i])
+					}
+					return
+				}
+			}
+			fmt.Printf("Advisory %q not found for package %s.\n", advisory, packageName)
+			os.Exit(1)
+		}
+
+		printVulnerabilities(packageName, version, vulns, verbose)
+	},
 }
 
 var packageCmd = &cobra.Command{
@@ -1636,6 +1690,10 @@ func init() {
 	fetchCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	pullCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	updateCmd.Flags().Bool("force", false, "Force update even if current version is newer than latest release")
+	scanCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	scanCmd.Flags().StringP("version", "V", "", "Package version to check (shows whether that version is affected)")
+	scanCmd.Flags().BoolP("verbose", "v", false, "Show full vulnerability details")
+	scanCmd.Flags().StringP("advisory", "a", "", "Show which versions are affected by a specific advisory ID")
 
 	authCmd.AddCommand(authLoginCmd, authRefreshCmd, authStatusCmd, authEnvCmd)
 	jobCmd.AddCommand(jobListCmd, jobStartCmd)
@@ -1658,7 +1716,7 @@ func init() {
 	runCmd.AddCommand(runSetupCmd)
 	gitCredentialCmd.AddCommand(gitCredentialHelperCmd, gitCredentialGetCmd, gitCredentialStoreCmd, gitCredentialEraseCmd, gitCredentialSetupCmd)
 
-	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, projectCmd, packageCmd, registryCmd, userCmd, adminCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd)
+	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, projectCmd, packageCmd, registryCmd, userCmd, adminCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd, scanCmd)
 }
 
 func main() {

@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
-This is a Go-based CLI tool for interacting with JuliaHub, a platform for Julia computing. The CLI provides commands for authentication, dataset management, registry management, project management, user information, token management, Git integration, and Julia integration.
+This is a Go-based CLI tool for interacting with JuliaHub, a platform for Julia computing. The CLI provides commands for authentication, dataset management, registry management, project management, user information, token management, vulnerability scanning, Git integration, and Julia integration.
 
 ## Architecture
 
@@ -18,6 +18,7 @@ The application follows a command-line interface pattern using the Cobra library
 - **user.go**: User information retrieval using GraphQL API and REST API for listing users
 - **tokens.go**: Token management operations (list) with REST API integration
 - **landing.go**: Landing page management (show, update, remove) with REST API integration
+- **scan.go**: Vulnerability scanning for Julia packages via REST API
 - **git.go**: Git integration (clone, push, fetch, pull) with JuliaHub authentication
 - **julia.go**: Julia installation and management
 - **run.go**: Julia execution with JuliaHub configuration
@@ -32,7 +33,7 @@ The application follows a command-line interface pattern using the Cobra library
    - Stores tokens securely in `~/.juliahub` with 0600 permissions
 
 2. **API Integration**:
-   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/registry/registries/descriptions`, `/api/v1/registry/config/registry/{name}`), package search/info primary path (`/packages/info`), token management (`/app/token/activelist`), user management (`/app/config/features/manage`), and landing page management (`/app/homepage` GET, `/app/config/homepage` POST/DELETE)
+   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/registry/registries/descriptions`, `/api/v1/registry/config/registry/{name}`), package search/info primary path (`/packages/info`), token management (`/app/token/activelist`), user management (`/app/config/features/manage`), landing page management (`/app/homepage` GET, `/app/config/homepage` POST/DELETE), and vulnerability scanning (`/api/v1/ui/vulnerabilities/packages/{name}`)
    - **GraphQL API**: Used for projects, user info, and package search/info fallback (`/v1/graphql`)
    - **Headers**: All GraphQL requests require `X-Hasura-Role: jhuser` header
    - **Authentication**: Uses ID tokens (`token.IDToken`) for API calls
@@ -50,6 +51,7 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh admin user`: User management (list all users with REST API, supports verbose mode)
    - `jh admin token`: Token management (list all tokens with REST API, supports verbose mode)
    - `jh admin landing-page`: Landing page management (show/update/remove custom markdown landing page with REST API)
+   - `jh scan`: Vulnerability scanning for Julia packages (REST API; supports `--version` to check a specific version, `--advisory` to show which versions are affected by a specific advisory ID, and `--verbose` for full advisory details)
    - `jh clone`: Git clone with JuliaHub authentication and project name resolution
    - `jh push/fetch/pull`: Git operations with JuliaHub authentication
    - `jh git-credential`: Git credential helper for seamless authentication
@@ -156,6 +158,16 @@ go run . admin landing-page update '# Welcome to JuliaHub'
 go run . admin landing-page update --file landing.md
 cat landing.md | go run . admin landing-page update
 go run . admin landing-page remove
+```
+
+### Test vulnerability scan operations
+```bash
+go run . scan MbedTLS_jll
+go run . scan MbedTLS_jll --version 2.28.1010+0
+go run . scan MbedTLS_jll --version 2.28.1010+0 --verbose
+go run . scan MbedTLS_jll --advisory GHSA-xxx-yyy-zzz
+go run . scan MbedTLS_jll --advisory GHSA-xxx-yyy-zzz --verbose
+go run . scan SomePackage -s nightly.juliahub.dev
 ```
 
 ### Test Git operations
@@ -370,6 +382,13 @@ jh run setup
 - GraphQL fallback uses `package_search_with_count.gql` which fetches both the package list and aggregate count in a single request (`package_search` + `package_search_aggregate` root fields)
 - `executeGraphQL(server, token, req)` in `packages.go` is a shared helper for GraphQL POST requests (sets Authorization, Content-Type, Accept, X-Hasura-Role headers)
 - `getPackageInfo` in `packages.go` implements exact name-match lookup using REST-first (`getPackageInfoREST`), GraphQL fallback (`getPackageInfoGraphQL`); `packageInfoCmd` in `main.go` resolves registries via `fetchRegistries`
+- `jh scan` uses REST API endpoint `/api/v1/ui/vulnerabilities/packages/{name}` with optional `?version=` query param; no GraphQL fallback
+- Scan concise output columns: ADVISORY, SEVERITY (top CVSS_V3 score or first available), AFFECTED (Yes/No/Unknown/- depending on whether `--version` was given), ALIASES, SUMMARY
+- Scan `--verbose` flag shows full advisory details: advisory ID, affected status, summary, aliases, all severity scores, published/modified dates, affected versions, version ranges, details, and references
+- Scan `--advisory <id>` flag filters to a single advisory (case-insensitive match on `advisory_id`) and prints a versions-focused view: summary, affected versions list, range events table; combine with `--verbose` for full details
+- `printVersionsForAdvisory` in `scan.go` handles the `--advisory`-only output path
+- `topSeverity` in `scan.go` prefers CVSS_V3 scores; falls back to first available score; returns "N/A" if none
+- `affectedLabel` returns `-` when no version was queried, `Unknown` when `is_affected` is null, otherwise `Yes`/`No`
 
 ## Implementation Details
 
