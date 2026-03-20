@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-//go:embed package_search_with_count.gql
+//go:embed package_search.gql package_search_count.gql
 var packageSearchFS embed.FS
 
 type PackageMetadata struct {
@@ -37,20 +37,6 @@ type PackageFailure struct {
 	PackageVersion string `json:"package_version"`
 }
 
-type Package struct {
-	Name        string              `json:"name"`
-	Owner       string              `json:"owner"`
-	Slug        *string             `json:"slug"`
-	License     string              `json:"license"`
-	IsApp       bool                `json:"isapp"`
-	Score       float64             `json:"score"`
-	RegistryMap *PackageRegistryMap `json:"registrymap"`
-	Metadata    *PackageMetadata    `json:"metadata"`
-	UUID        string              `json:"uuid"`
-	Installed   bool                `json:"installed"`
-	Failures    []PackageFailure    `json:"failures"`
-}
-
 type PackageSearchResponse struct {
 	Data struct {
 		PackageSearch    []Package `json:"package_search"`
@@ -63,6 +49,35 @@ type PackageSearchResponse struct {
 	Errors []struct {
 		Message string `json:"message"`
 	} `json:"errors"`
+}
+
+type PackageDependency struct {
+	Direct   bool     `json:"direct"`
+	Name     string   `json:"name"`
+	UUID     string   `json:"uuid"`
+	Versions []string `json:"versions"`
+	Registry string   `json:"registry"`
+	Slug     string   `json:"slug"`
+}
+
+type PackageDocsResponse struct {
+	Name         string              `json:"name"`
+	Version      string              `json:"version"`
+	Dependencies []PackageDependency `json:"deps"`
+}
+
+type Package struct {
+	Name        string              `json:"name"`
+	Owner       string              `json:"owner"`
+	Slug        *string             `json:"slug"`
+	License     string              `json:"license"`
+	IsApp       bool                `json:"isapp"`
+	Score       float64             `json:"score"`
+	RegistryMap *PackageRegistryMap `json:"registrymap"`
+	Metadata    *PackageMetadata    `json:"metadata"`
+	UUID        string              `json:"uuid"`
+	Installed   bool                `json:"installed"`
+	Failures    []PackageFailure    `json:"failures"`
 }
 
 type RESTPackage struct {
@@ -305,18 +320,7 @@ func fetchRESTPackages(server, search string, limit, offset int, registryNames [
 	return response.Packages, response.Meta.Total, nil
 }
 
-// fetchGraphQLPackages executes the package search GraphQL query and returns raw results and total count.
-func fetchGraphQLPackages(server, search string, limit, offset int, registryIDs []int) ([]Package, int, error) {
-	token, err := ensureValidToken()
-	if err != nil {
-		return nil, 0, fmt.Errorf("authentication required: %w", err)
-	}
-
-	queryBytes, err := packageSearchFS.ReadFile("package_search_with_count.gql")
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to read GraphQL query: %w", err)
-	}
-
+func buildGraphQLPackageVariables(search string, limit, offset int, registryIDs []int) map[string]interface{} {
 	variables := map[string]interface{}{
 		"filter":       map[string]interface{}{},
 		"order":        map[string]string{"score": "desc"},
@@ -338,25 +342,104 @@ func fetchGraphQLPackages(server, search string, limit, offset int, registryIDs 
 		}
 		variables["registries"] = fmt.Sprintf("{%s}", strings.Join(registryStrs, ","))
 	}
+	return variables
+}
+
+func fetchGraphQLPackages(server, search string, limit, offset int, registryIDs []int) ([]Package, error) {
+	token, err := ensureValidToken()
+	if err != nil {
+		return nil, fmt.Errorf("authentication required: %w", err)
+	}
+
+	queryBytes, err := packageSearchFS.ReadFile("package_search.gql")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read GraphQL query: %w", err)
+	}
 
 	body, err := executeGraphQL(server, token, GraphQLRequest{
-		OperationName: "FilteredPackagesWithCount",
+		OperationName: "FilteredPackages",
+		Query:         string(queryBytes),
+		Variables:     buildGraphQLPackageVariables(search, limit, offset, registryIDs),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var response struct {
+		Data struct {
+			PackageSearch []Package `json:"package_search"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse GraphQL response: %w", err)
+	}
+	if len(response.Errors) > 0 {
+		return nil, fmt.Errorf("GraphQL errors: %v", response.Errors)
+	}
+
+	return response.Data.PackageSearch, nil
+}
+
+func fetchGraphQLPackageCount(server, search string, registryIDs []int) (int, error) {
+	token, err := ensureValidToken()
+	if err != nil {
+		return 0, fmt.Errorf("authentication required: %w", err)
+	}
+
+	queryBytes, err := packageSearchFS.ReadFile("package_search_count.gql")
+	if err != nil {
+		return 0, fmt.Errorf("failed to read GraphQL query: %w", err)
+	}
+
+	variables := map[string]interface{}{
+		"filter":       map[string]interface{}{},
+		"matchtags":    "{}",
+		"licenses":     "{}",
+		"search":       search,
+		"hasfailures":  false,
+		"installed":    true,
+		"notinstalled": true,
+	}
+	if len(registryIDs) > 0 {
+		registryStrs := make([]string, len(registryIDs))
+		for i, id := range registryIDs {
+			registryStrs[i] = fmt.Sprintf("%d", id)
+		}
+		variables["registries"] = fmt.Sprintf("{%s}", strings.Join(registryStrs, ","))
+	}
+
+	body, err := executeGraphQL(server, token, GraphQLRequest{
+		OperationName: "FilteredPackagesCounts",
 		Query:         string(queryBytes),
 		Variables:     variables,
 	})
 	if err != nil {
-		return nil, 0, err
+		return 0, err
 	}
 
-	var response PackageSearchResponse
+	var response struct {
+		Data struct {
+			PackageAggregate struct {
+				Aggregate struct {
+					Count int `json:"count"`
+				} `json:"aggregate"`
+			} `json:"package_search_aggregate"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
 	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, 0, fmt.Errorf("failed to parse GraphQL response: %w", err)
+		return 0, fmt.Errorf("failed to parse GraphQL response: %w", err)
 	}
 	if len(response.Errors) > 0 {
-		return nil, 0, fmt.Errorf("GraphQL errors: %v", response.Errors)
+		return 0, fmt.Errorf("GraphQL errors: %v", response.Errors)
 	}
 
-	return response.Data.PackageSearch, response.Data.PackageAggregate.Aggregate.Count, nil
+	return response.Data.PackageAggregate.Aggregate.Count, nil
 }
 
 func searchPackagesREST(params PackageSearchParams) error {
@@ -373,7 +456,11 @@ func searchPackagesREST(params PackageSearchParams) error {
 }
 
 func searchPackagesGraphQL(params PackageSearchParams) error {
-	pkgs, total, err := fetchGraphQLPackages(params.Server, params.Search, params.Limit, params.Offset, params.RegistryIDs)
+	pkgs, err := fetchGraphQLPackages(params.Server, params.Search, params.Limit, params.Offset, params.RegistryIDs)
+	if err != nil {
+		return err
+	}
+	total, err := fetchGraphQLPackageCount(params.Server, params.Search, params.RegistryIDs)
 	if err != nil {
 		return err
 	}
@@ -456,7 +543,7 @@ func getPackageInfoREST(server, packageName string, registryNames []string) erro
 }
 
 func getPackageInfoGraphQL(server, packageName string, registryIDs []int, registryNames []string) error {
-	pkgs, _, err := fetchGraphQLPackages(server, packageName, 100, 0, registryIDs)
+	pkgs, err := fetchGraphQLPackages(server, packageName, 100, 0, registryIDs)
 	if err != nil {
 		return err
 	}
@@ -472,5 +559,138 @@ func getPackageInfoGraphQL(server, packageName string, registryIDs []int, regist
 		return nil
 	}
 	printPackages(matches, len(matches), true)
+	return nil
+}
+
+func getPackageDependencies(server string, packageName string, registryName string, showIndirect bool) error {
+	var targetRegistry string
+	if registryName != "" {
+		targetRegistry = registryName
+	} else {
+		allRegistries, err := fetchRegistries(server)
+		if err != nil {
+			return fmt.Errorf("failed to fetch registries: %w", err)
+		}
+		var registryIDs []int
+		for _, reg := range allRegistries {
+			registryIDs = append(registryIDs, reg.RegistryID)
+		}
+		gqlPkgs, err := fetchGraphQLPackages(server, packageName, 100, 0, registryIDs)
+		if err != nil {
+			return fmt.Errorf("failed to search for package %q: %w", packageName, err)
+		}
+		for i := range gqlPkgs {
+			if strings.EqualFold(gqlPkgs[i].Name, packageName) {
+				if gqlPkgs[i].RegistryMap != nil {
+					for _, reg := range allRegistries {
+						if reg.RegistryID == gqlPkgs[i].RegistryMap.RegistryID {
+							targetRegistry = reg.Name
+							break
+						}
+					}
+				}
+				break
+			}
+		}
+		if targetRegistry == "" {
+			return fmt.Errorf("package not found: %s", packageName)
+		}
+	}
+
+	docsURL := fmt.Sprintf("https://%s/docs/%s/%s/stable/pkg.json", server, targetRegistry, packageName)
+
+	token, err := ensureValidToken()
+	if err != nil {
+		return fmt.Errorf("authentication required: %w", err)
+	}
+
+	req, err := http.NewRequest("GET", docsURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
+	req.Header.Set("Accept", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to fetch package documentation: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("API request failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var docsResp PackageDocsResponse
+	if err := json.Unmarshal(body, &docsResp); err != nil {
+		return fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	var deps []PackageDependency
+	if showIndirect {
+		deps = docsResp.Dependencies
+	} else {
+		for _, dep := range docsResp.Dependencies {
+			if dep.Direct {
+				deps = append(deps, dep)
+			}
+		}
+	}
+
+	if len(deps) == 0 {
+		if showIndirect {
+			fmt.Printf("Package %s (v%s) has no dependencies\n", docsResp.Name, docsResp.Version)
+		} else {
+			fmt.Printf("Package %s (v%s) has no direct dependencies\n", docsResp.Name, docsResp.Version)
+		}
+		return nil
+	}
+
+	fmt.Printf("Dependencies for %s (v%s) from registry '%s':\n\n", docsResp.Name, docsResp.Version, targetRegistry)
+	if !showIndirect {
+		fmt.Printf("Showing %d direct dependencies (use --indirect to include indirect dependencies)\n\n", len(deps))
+		fmt.Printf("%-35s %-15s %-38s %s\n", "NAME", "REGISTRY", "UUID", "VERSIONS")
+		fmt.Printf("%-35s %-15s %-38s %s\n", strings.Repeat("-", 35), strings.Repeat("-", 15), strings.Repeat("-", 38), strings.Repeat("-", 20))
+		for _, dep := range deps {
+			fmt.Printf("%-35s %-15s %-38s %s\n", dep.Name, dep.Registry, dep.UUID, strings.Join(dep.Versions, ", "))
+		}
+	} else {
+		var directDeps []PackageDependency
+		var indirectDeps []PackageDependency
+		for _, dep := range deps {
+			if dep.Direct {
+				directDeps = append(directDeps, dep)
+			} else {
+				indirectDeps = append(indirectDeps, dep)
+			}
+		}
+		fmt.Printf("Showing %d total dependencies (%d direct, %d indirect)\n\n", len(deps), len(directDeps), len(indirectDeps))
+		if len(directDeps) > 0 {
+			fmt.Printf("Direct Dependencies (%d):\n", len(directDeps))
+			fmt.Printf("%-35s %-15s %-38s %s\n", "NAME", "REGISTRY", "UUID", "VERSIONS")
+			fmt.Printf("%-35s %-15s %-38s %s\n", strings.Repeat("-", 35), strings.Repeat("-", 15), strings.Repeat("-", 38), strings.Repeat("-", 20))
+			for _, dep := range directDeps {
+				fmt.Printf("%-35s %-15s %-38s %s\n", dep.Name, dep.Registry, dep.UUID, strings.Join(dep.Versions, ", "))
+			}
+			fmt.Println()
+		}
+		if len(indirectDeps) > 0 {
+			fmt.Printf("Indirect Dependencies (%d):\n", len(indirectDeps))
+			fmt.Printf("%-35s %-15s %-38s %s\n", "NAME", "REGISTRY", "UUID", "VERSIONS")
+			fmt.Printf("%-35s %-15s %-38s %s\n", strings.Repeat("-", 35), strings.Repeat("-", 15), strings.Repeat("-", 38), strings.Repeat("-", 20))
+			for _, dep := range indirectDeps {
+				fmt.Printf("%-35s %-15s %-38s %s\n", dep.Name, dep.Registry, dep.UUID, strings.Join(dep.Versions, ", "))
+			}
+		}
+	}
+
 	return nil
 }
