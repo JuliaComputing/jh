@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"strings"
+"strings"
 	"time"
 )
 
@@ -57,6 +57,28 @@ func fetchVulnerabilities(server, packageName, version string) ([]PackageVulnera
 	return vulns, nil
 }
 
+func fetchLatestVersion(server, registry, packageName string) (string, error) {
+	token, err := ensureValidToken()
+	if err != nil {
+		return "", fmt.Errorf("authentication required: %w", err)
+	}
+
+	endpoint := fmt.Sprintf("https://%s/docs/%s/%s/versions.json", server, url.PathEscape(registry), url.PathEscape(packageName))
+	body, err := apiGet(endpoint, token.IDToken)
+	if err != nil {
+		return "", err
+	}
+
+	var versions []string
+	if err := json.Unmarshal(body, &versions); err != nil {
+		return "", fmt.Errorf("failed to parse versions: %w", err)
+	}
+	if len(versions) == 0 {
+		return "", fmt.Errorf("no versions found for %s", packageName)
+	}
+	return versions[0], nil
+}
+
 // topSeverity returns the highest CVSS_V3 score string, or the first available, or "N/A".
 func topSeverity(scores []SeverityScore) string {
 	for _, s := range scores {
@@ -70,175 +92,63 @@ func topSeverity(scores []SeverityScore) string {
 	return "N/A"
 }
 
-func affectedLabel(v *PackageVulnerability, versionQueried bool) string {
-	if !versionQueried {
-		return "-"
+func advisoryLink(v *PackageVulnerability) string {
+	year := "unknown"
+	if v.Published != nil {
+		year = fmt.Sprintf("%d", v.Published.Year())
 	}
-	if v.IsAffected == nil {
-		return "Unknown"
-	}
-	if *v.IsAffected {
-		return "Yes"
-	}
-	return "No"
+	url := fmt.Sprintf("https://github.com/JuliaLang/SecurityAdvisories.jl/blob/main/advisories/published/%s/%s.md", year, v.AdvisoryID)
+	return fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", url, v.AdvisoryID)
 }
 
-func printVersionsForAdvisory(packageName string, v *PackageVulnerability) {
-	fmt.Printf("Package:  %s\n", packageName)
-	fmt.Printf("Advisory: %s\n", v.AdvisoryID)
-	if len(v.Aliases) > 0 {
-		fmt.Printf("Aliases:  %s\n", strings.Join(v.Aliases, ", "))
+func printAdvisory(v *PackageVulnerability, showRanges bool, verbose bool) {
+	fmt.Printf("Advisory: %s\n", advisoryLink(v))
+	if v.IsAffected != nil {
+		if *v.IsAffected {
+			fmt.Println("Affected: Yes")
+		} else {
+			fmt.Println("Affected: No")
+		}
+	}
+	if len(v.SeverityScores) > 0 {
+		parts := make([]string, len(v.SeverityScores))
+		for i, s := range v.SeverityScores {
+			parts[i] = s.Type + ": " + s.Score
+		}
+		fmt.Printf("Severity: %s\n", strings.Join(parts, ", "))
 	}
 	if v.Summary != "" {
 		fmt.Printf("Summary:  %s\n", v.Summary)
 	}
-	if v.Details != "" {
-		fmt.Printf("Details:\n  %s\n", strings.ReplaceAll(strings.TrimSpace(v.Details), "\n", "\n  "))
-	}
-	fmt.Println()
-
 	if len(v.AffectedVersions) > 0 {
-		fmt.Println("Affected versions:")
-		for _, av := range v.AffectedVersions {
-			fmt.Printf("  %s\n", av)
-		}
-		fmt.Println()
+		fmt.Printf("Affected versions: %s\n", strings.Join(v.AffectedVersions, ", "))
 	}
-
 	if len(v.RangeEvents) > 0 {
+		parts := make([]string, len(v.RangeEvents))
+		for i, re := range v.RangeEvents {
+			parts[i] = re.EventType + ": " + re.Version
+		}
 		rangeLabel := "Version ranges"
 		if v.RangesType != "" {
 			rangeLabel += fmt.Sprintf(" (%s)", v.RangesType)
 		}
-		fmt.Printf("%s:\n", rangeLabel)
-		for _, re := range v.RangeEvents {
-			fmt.Printf("  %-16s %s\n", re.EventType+":", re.Version)
-		}
-		fmt.Println()
+		fmt.Printf("%s: %s\n", rangeLabel, strings.Join(parts, ", "))
 	}
-
-	if len(v.AffectedVersions) == 0 && len(v.RangeEvents) == 0 {
-		fmt.Println("No version information available for this advisory.")
-	}
-}
-
-func printVulnerabilities(packageName, version string, vulns []PackageVulnerability, verbose bool) {
-	versionQueried := version != ""
-
-	header := fmt.Sprintf("Package: %s", packageName)
-	if versionQueried {
-		header += fmt.Sprintf(" (version: %s)", version)
-	}
-	fmt.Println(header)
-	fmt.Println()
-
-	if len(vulns) == 0 {
-		fmt.Println("No vulnerabilities found.")
-		return
-	}
-
-	count := len(vulns)
-	suffix := "ies"
-	if count == 1 {
-		suffix = "y"
-	}
-	fmt.Printf("Found %d vulnerabilit%s:\n\n", count, suffix)
-
 	if verbose {
-		for i, v := range vulns {
-			if i > 0 {
-				fmt.Println(strings.Repeat("-", 60))
-			}
-			fmt.Printf("Advisory:  %s\n", v.AdvisoryID)
-			if versionQueried {
-				fmt.Printf("Affected:  %s\n", affectedLabel(&v, versionQueried))
-			}
-			if v.Summary != "" {
-				fmt.Printf("Summary:   %s\n", v.Summary)
-			}
-			if len(v.Aliases) > 0 {
-				fmt.Printf("Aliases:   %s\n", strings.Join(v.Aliases, ", "))
-			}
-			if len(v.SeverityScores) > 0 {
-				parts := make([]string, len(v.SeverityScores))
-				for i, s := range v.SeverityScores {
-					parts[i] = fmt.Sprintf("%s: %s", s.Type, s.Score)
-				}
-				fmt.Printf("Severity:  %s\n", strings.Join(parts, ", "))
-			}
-			if v.Published != nil {
-				fmt.Printf("Published: %s\n", v.Published.Local().Format("2006-01-02 15:04:05 MST"))
-			}
-			if v.Modified != nil {
-				fmt.Printf("Modified:  %s\n", v.Modified.Local().Format("2006-01-02 15:04:05 MST"))
-			}
-			if len(v.AffectedVersions) > 0 {
-				fmt.Printf("Affected Versions: %s\n", strings.Join(v.AffectedVersions, ", "))
-			}
-			if len(v.RangeEvents) > 0 {
-				rangeLabel := "Version Ranges"
-				if v.RangesType != "" {
-					rangeLabel += fmt.Sprintf(" (%s)", v.RangesType)
-				}
-				fmt.Printf("%s:\n", rangeLabel)
-				for _, re := range v.RangeEvents {
-					fmt.Printf("  %-16s %s\n", re.EventType+":", re.Version)
-				}
-			}
-			if v.Details != "" {
-				fmt.Printf("Details:\n  %s\n", strings.ReplaceAll(strings.TrimSpace(v.Details), "\n", "\n  "))
-			}
-			if len(v.References) > 0 {
-				fmt.Printf("References:\n")
-				for _, ref := range v.References {
-					fmt.Printf("  - %s\n", ref)
-				}
-			}
-			fmt.Println()
+		if len(v.Aliases) > 0 {
+			fmt.Printf("Aliases:  %s\n", strings.Join(v.Aliases, ", "))
 		}
-		return
-	}
-
-	// Concise table
-	const (
-		colAdvisory = 22
-		colSeverity = 10
-		colAffected = 10
-		colAliases  = 30
-		colSummary  = 50
-	)
-
-	fmt.Printf("%-*s %-*s %-*s %-*s %s\n",
-		colAdvisory, "ADVISORY",
-		colSeverity, "SEVERITY",
-		colAffected, "AFFECTED",
-		colAliases, "ALIASES",
-		"SUMMARY")
-	fmt.Printf("%-*s %-*s %-*s %-*s %s\n",
-		colAdvisory, strings.Repeat("-", colAdvisory),
-		colSeverity, strings.Repeat("-", colSeverity),
-		colAffected, strings.Repeat("-", colAffected),
-		colAliases, strings.Repeat("-", colAliases),
-		strings.Repeat("-", colSummary))
-
-	for _, v := range vulns {
-		severity := topSeverity(v.SeverityScores)
-
-		aliases := strings.Join(v.Aliases, ", ")
-		if len(aliases) > colAliases {
-			aliases = aliases[:colAliases-3] + "..."
+		if v.Published != nil {
+			fmt.Printf("Published: %s\n", v.Published.Format("2006-01-02"))
 		}
-
-		summary := v.Summary
-		if len(summary) > colSummary {
-			summary = summary[:colSummary-3] + "..."
+		if v.Modified != nil {
+			fmt.Printf("Modified:  %s\n", v.Modified.Format("2006-01-02"))
 		}
-
-		fmt.Printf("%-*s %-*s %-*s %-*s %s\n",
-			colAdvisory, v.AdvisoryID,
-			colSeverity, severity,
-			colAffected, affectedLabel(&v, versionQueried),
-			colAliases, aliases,
-			summary)
+if len(v.References) > 0 {
+			fmt.Println("References:")
+			for _, r := range v.References {
+				fmt.Printf("  %s\n", r)
+			}
+		}
 	}
 }

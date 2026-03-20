@@ -222,10 +222,14 @@ go build -o jh .
 ### Vulnerability Scanning (`jh scan`)
 
 - `jh scan <package-name>` - Scan a Julia package for known security vulnerabilities
-  - Default: Shows a table with ADVISORY, SEVERITY, AFFECTED, ALIASES, and SUMMARY columns
-  - `--version <ver>` - Check a specific version and show whether it is affected
-  - `--advisory <id>` - Show which versions of the package are affected by a specific advisory ID (e.g. a CVE or GHSA identifier)
-  - `--verbose` - Show full advisory details (aliases, severity scores, dates, version ranges, references, description); combinable with `--advisory`
+  - Defaults to the latest stable version (fetched from the registry); only shows advisories where that version is affected
+  - `--version <ver>` - Check a specific version instead of the latest
+  - `--registry <name>` - Registry to use for version lookup (default: `General`)
+  - `--advisory <id>` - Filter to a specific advisory ID (e.g. a CVE or GHSA identifier)
+  - `--all` - Show all advisories regardless of whether the queried version is affected
+  - `--verbose` / `-v` - Show additional details: aliases, published/modified dates, and references
+  - Advisory IDs are clickable links to the JuliaLang SecurityAdvisories repository
+  - Each advisory shows: severity scores, affected status, full summary, affected versions, and version ranges
 
 ### Update (`jh update`)
 
@@ -380,20 +384,23 @@ jh admin landing-page remove
 ### Vulnerability Scanning
 
 ```bash
-# Scan a package for known vulnerabilities
+# Scan latest stable version (only shows advisories where it is affected)
 jh scan MbedTLS_jll
 
-# Scan a specific version (shows whether that version is affected)
+# Scan a specific version
 jh scan MbedTLS_jll --version 2.28.1010+0
 
-# Show which versions are affected by a specific advisory
-jh scan MbedTLS_jll --advisory GHSA-xxx-yyy-zzz
+# Show all advisories regardless of affected status
+jh scan MbedTLS_jll --all
 
-# Same, but with full advisory details
-jh scan MbedTLS_jll --advisory GHSA-xxx-yyy-zzz --verbose
+# Filter to a specific advisory
+jh scan MbedTLS_jll --advisory JLSEC-2025-232
 
-# Show full advisory details for all vulnerabilities
-jh scan MbedTLS_jll --version 2.28.1010+0 --verbose
+# Show extra details (aliases, dates, references)
+jh scan MbedTLS_jll --verbose
+
+# Use a non-General registry for version lookup
+jh scan MyPkg --registry MyRegistry
 
 # Scan against a custom server
 jh scan SomePackage -s nightly.juliahub.dev

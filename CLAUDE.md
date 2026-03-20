@@ -51,7 +51,7 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh admin user`: User management (list all users with REST API, supports verbose mode)
    - `jh admin token`: Token management (list all tokens with REST API, supports verbose mode)
    - `jh admin landing-page`: Landing page management (show/update/remove custom markdown landing page with REST API)
-   - `jh scan`: Vulnerability scanning for Julia packages (REST API; supports `--version` to check a specific version, `--advisory` to show which versions are affected by a specific advisory ID, and `--verbose` for full advisory details)
+   - `jh scan`: Vulnerability scanning for Julia packages (REST API; defaults to latest stable version via `GET /docs/<registry>/<package>/versions.json`; supports `--version` for a specific version, `--registry` to specify the registry for version lookup (default: General), `--advisory` to filter to a specific advisory ID, `--all` to show all advisories regardless of affected status, and `--verbose` for additional details)
    - `jh clone`: Git clone with JuliaHub authentication and project name resolution
    - `jh push/fetch/pull`: Git operations with JuliaHub authentication
    - `jh git-credential`: Git credential helper for seamless authentication
@@ -164,9 +164,11 @@ go run . admin landing-page remove
 ```bash
 go run . scan MbedTLS_jll
 go run . scan MbedTLS_jll --version 2.28.1010+0
-go run . scan MbedTLS_jll --version 2.28.1010+0 --verbose
-go run . scan MbedTLS_jll --advisory GHSA-xxx-yyy-zzz
-go run . scan MbedTLS_jll --advisory GHSA-xxx-yyy-zzz --verbose
+go run . scan MbedTLS_jll --all
+go run . scan MbedTLS_jll --advisory JLSEC-2025-232
+go run . scan MbedTLS_jll --advisory JLSEC-2025-232 --verbose
+go run . scan MbedTLS_jll --verbose
+go run . scan MyPkg --registry MyRegistry
 go run . scan SomePackage -s nightly.juliahub.dev
 ```
 
@@ -382,13 +384,14 @@ jh run setup
 - GraphQL fallback uses `package_search_with_count.gql` which fetches both the package list and aggregate count in a single request (`package_search` + `package_search_aggregate` root fields)
 - `executeGraphQL(server, token, req)` in `packages.go` is a shared helper for GraphQL POST requests (sets Authorization, Content-Type, Accept, X-Hasura-Role headers)
 - `getPackageInfo` in `packages.go` implements exact name-match lookup using REST-first (`getPackageInfoREST`), GraphQL fallback (`getPackageInfoGraphQL`); `packageInfoCmd` in `main.go` resolves registries via `fetchRegistries`
-- `jh scan` uses REST API endpoint `/api/v1/ui/vulnerabilities/packages/{name}` with optional `?version=` query param; no GraphQL fallback
-- Scan concise output columns: ADVISORY, SEVERITY (top CVSS_V3 score or first available), AFFECTED (Yes/No/Unknown/- depending on whether `--version` was given), ALIASES, SUMMARY
-- Scan `--verbose` flag shows full advisory details: advisory ID, affected status, summary, aliases, all severity scores, published/modified dates, affected versions, version ranges, details, and references
-- Scan `--advisory <id>` flag filters to a single advisory (case-insensitive match on `advisory_id`) and prints a versions-focused view: summary, affected versions list, range events table; combine with `--verbose` for full details
-- `printVersionsForAdvisory` in `scan.go` handles the `--advisory`-only output path
+- `jh scan` uses two REST endpoints: vulnerabilities at `/api/v1/ui/vulnerabilities/packages/{name}?version=<ver>` and latest version at `/docs/<registry>/<package>/versions.json` (first entry is latest); no GraphQL fallback
+- When no `--version` is given, `fetchLatestVersion` calls the versions.json endpoint (registry defaults to `General`, overridable with `--registry`)
+- By default only advisories where `is_affected == true` are shown; `--all` overrides this
+- Each advisory is printed as: Advisory ID (clickable OSC8 hyperlink to JuliaLang SecurityAdvisories), Affected (Yes/No), Severity scores (all, comma-separated), full Summary, Affected versions (one line), Version ranges (one line, with ranges type)
+- `--advisory <id>` filters to a single advisory (case-insensitive match); same output format
+- `--verbose` adds: Aliases, Published date, Modified date, References
+- `advisoryLink` in `scan.go` builds the OSC8 terminal hyperlink to `https://github.com/JuliaLang/SecurityAdvisories.jl/blob/main/advisories/published/<year>/<id>.md`
 - `topSeverity` in `scan.go` prefers CVSS_V3 scores; falls back to first available score; returns "N/A" if none
-- `affectedLabel` returns `-` when no version was queried, `Unknown` when `is_affected` is null, otherwise `Yes`/`No`
 
 ## Implementation Details
 

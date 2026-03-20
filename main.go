@@ -649,16 +649,12 @@ var scanCmd = &cobra.Command{
 	Short: "Scan a package for known vulnerabilities",
 	Long: `Show known security vulnerabilities for a Julia package.
 
-Displays vulnerability information including:
-- Advisory ID (e.g. JLSEC-2024-001)
-- Severity score (CVSS_V3 or other)
-- CVE/GHSA aliases
-- Summary description
+Defaults to checking the latest stable version of the package. Use --version to
+check a specific version. Only advisories that affect the queried version are shown
+by default; use --all to list all advisories regardless of affected status.
 
-Optionally filter by a specific version to see whether that version is affected.
-Use --advisory to show which versions are affected by a specific advisory.
-Use --verbose for full details including version ranges, references, and descriptions.`,
-	Example: "  jh scan MbedTLS_jll\n  jh scan MbedTLS_jll --version 2.28.1010+0\n  jh scan MbedTLS_jll --advisory GHSA-xxx-yyy-zzz\n  jh scan MbedTLS_jll --version 2.28.1010+0 --verbose",
+Use --advisory to look up a specific advisory by ID.`,
+	Example: "  jh scan MbedTLS_jll\n  jh scan MbedTLS_jll --version 2.28.1010+0\n  jh scan MbedTLS_jll --all\n  jh scan MbedTLS_jll --advisory GHSA-xxx-yyy-zzz",
 	Args:    cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
@@ -669,8 +665,19 @@ Use --verbose for full details including version ranges, references, and descrip
 
 		packageName := args[0]
 		version, _ := cmd.Flags().GetString("version")
-		verbose, _ := cmd.Flags().GetBool("verbose")
 		advisory, _ := cmd.Flags().GetString("advisory")
+		registry, _ := cmd.Flags().GetString("registry")
+		all, _ := cmd.Flags().GetBool("all")
+		verbose, _ := cmd.Flags().GetBool("verbose")
+
+		if version == "" {
+			latest, err := fetchLatestVersion(server, registry, packageName)
+			if err != nil {
+				fmt.Printf("Failed to fetch latest version: %v\n", err)
+				os.Exit(1)
+			}
+			version = latest
+		}
 
 		vulns, err := fetchVulnerabilities(server, packageName, version)
 		if err != nil {
@@ -678,14 +685,17 @@ Use --verbose for full details including version ranges, references, and descrip
 			os.Exit(1)
 		}
 
+		fmt.Printf("Package: %s", packageName)
+		if version != "" {
+			fmt.Printf(" (%s)", version)
+		}
+		fmt.Println()
+		fmt.Println()
+
 		if advisory != "" {
-			for i, v := range vulns {
+			for _, v := range vulns {
 				if strings.EqualFold(v.AdvisoryID, advisory) {
-					if verbose {
-						printVulnerabilities(packageName, version, []PackageVulnerability{vulns[i]}, true)
-					} else {
-						printVersionsForAdvisory(packageName, &vulns[i])
-					}
+					printAdvisory(&v, true, verbose)
 					return
 				}
 			}
@@ -693,7 +703,34 @@ Use --verbose for full details including version ranges, references, and descrip
 			os.Exit(1)
 		}
 
-		printVulnerabilities(packageName, version, vulns, verbose)
+		var toShow []PackageVulnerability
+		for _, v := range vulns {
+			if all || (v.IsAffected != nil && *v.IsAffected) {
+				toShow = append(toShow, v)
+			}
+		}
+
+		if len(toShow) == 0 {
+			if all {
+				fmt.Println("No vulnerabilities found.")
+			} else {
+				fmt.Println("No known vulnerabilities affecting this version.")
+			}
+			return
+		}
+
+		suffix := "ies"
+		if len(toShow) == 1 {
+			suffix = "y"
+		}
+		fmt.Printf("Found %d vulnerabilit%s:\n\n", len(toShow), suffix)
+
+		for i := range toShow {
+			if i > 0 {
+				fmt.Println()
+			}
+			printAdvisory(&toShow[i], false, verbose)
+		}
 	},
 }
 
@@ -1691,9 +1728,11 @@ func init() {
 	pullCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	updateCmd.Flags().Bool("force", false, "Force update even if current version is newer than latest release")
 	scanCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
-	scanCmd.Flags().StringP("version", "V", "", "Package version to check (shows whether that version is affected)")
-	scanCmd.Flags().BoolP("verbose", "v", false, "Show full vulnerability details")
-	scanCmd.Flags().StringP("advisory", "a", "", "Show which versions are affected by a specific advisory ID")
+	scanCmd.Flags().StringP("version", "V", "", "Package version to check (defaults to latest stable)")
+	scanCmd.Flags().StringP("advisory", "a", "", "Look up a specific advisory by ID")
+	scanCmd.Flags().StringP("registry", "r", "General", "Registry name for version lookup")
+	scanCmd.Flags().Bool("all", false, "Show all advisories regardless of affected status")
+	scanCmd.Flags().BoolP("verbose", "v", false, "Show full advisory details (aliases, dates, details, references)")
 
 	authCmd.AddCommand(authLoginCmd, authRefreshCmd, authStatusCmd, authEnvCmd)
 	jobCmd.AddCommand(jobListCmd, jobStartCmd)
