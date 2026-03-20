@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-//go:embed package_search_with_count.gql
+//go:embed package_search.gql package_search_count.gql
 var packageSearchFS embed.FS
 
 type PackageMetadata struct {
@@ -49,20 +49,6 @@ type Package struct {
 	UUID        string              `json:"uuid"`
 	Installed   bool                `json:"installed"`
 	Failures    []PackageFailure    `json:"failures"`
-}
-
-type PackageSearchResponse struct {
-	Data struct {
-		PackageSearch    []Package `json:"package_search"`
-		PackageAggregate struct {
-			Aggregate struct {
-				Count int `json:"count"`
-			} `json:"aggregate"`
-		} `json:"package_search_aggregate"`
-	} `json:"data"`
-	Errors []struct {
-		Message string `json:"message"`
-	} `json:"errors"`
 }
 
 type RESTPackage struct {
@@ -305,18 +291,7 @@ func fetchRESTPackages(server, search string, limit, offset int, registryNames [
 	return response.Packages, response.Meta.Total, nil
 }
 
-// fetchGraphQLPackages executes the package search GraphQL query and returns raw results and total count.
-func fetchGraphQLPackages(server, search string, limit, offset int, registryIDs []int) ([]Package, int, error) {
-	token, err := ensureValidToken()
-	if err != nil {
-		return nil, 0, fmt.Errorf("authentication required: %w", err)
-	}
-
-	queryBytes, err := packageSearchFS.ReadFile("package_search_with_count.gql")
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to read GraphQL query: %w", err)
-	}
-
+func buildGraphQLPackageVariables(search string, limit, offset int, registryIDs []int) map[string]interface{} {
 	variables := map[string]interface{}{
 		"filter":       map[string]interface{}{},
 		"order":        map[string]string{"score": "desc"},
@@ -338,25 +313,104 @@ func fetchGraphQLPackages(server, search string, limit, offset int, registryIDs 
 		}
 		variables["registries"] = fmt.Sprintf("{%s}", strings.Join(registryStrs, ","))
 	}
+	return variables
+}
+
+func fetchGraphQLPackages(server, search string, limit, offset int, registryIDs []int) ([]Package, error) {
+	token, err := ensureValidToken()
+	if err != nil {
+		return nil, fmt.Errorf("authentication required: %w", err)
+	}
+
+	queryBytes, err := packageSearchFS.ReadFile("package_search.gql")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read GraphQL query: %w", err)
+	}
 
 	body, err := executeGraphQL(server, token, GraphQLRequest{
-		OperationName: "FilteredPackagesWithCount",
+		OperationName: "FilteredPackages",
+		Query:         string(queryBytes),
+		Variables:     buildGraphQLPackageVariables(search, limit, offset, registryIDs),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var response struct {
+		Data struct {
+			PackageSearch []Package `json:"package_search"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse GraphQL response: %w", err)
+	}
+	if len(response.Errors) > 0 {
+		return nil, fmt.Errorf("GraphQL errors: %v", response.Errors)
+	}
+
+	return response.Data.PackageSearch, nil
+}
+
+func fetchGraphQLPackageCount(server, search string, registryIDs []int) (int, error) {
+	token, err := ensureValidToken()
+	if err != nil {
+		return 0, fmt.Errorf("authentication required: %w", err)
+	}
+
+	queryBytes, err := packageSearchFS.ReadFile("package_search_count.gql")
+	if err != nil {
+		return 0, fmt.Errorf("failed to read GraphQL query: %w", err)
+	}
+
+	variables := map[string]interface{}{
+		"filter":       map[string]interface{}{},
+		"matchtags":    "{}",
+		"licenses":     "{}",
+		"search":       search,
+		"hasfailures":  false,
+		"installed":    true,
+		"notinstalled": true,
+	}
+	if len(registryIDs) > 0 {
+		registryStrs := make([]string, len(registryIDs))
+		for i, id := range registryIDs {
+			registryStrs[i] = fmt.Sprintf("%d", id)
+		}
+		variables["registries"] = fmt.Sprintf("{%s}", strings.Join(registryStrs, ","))
+	}
+
+	body, err := executeGraphQL(server, token, GraphQLRequest{
+		OperationName: "FilteredPackagesCounts",
 		Query:         string(queryBytes),
 		Variables:     variables,
 	})
 	if err != nil {
-		return nil, 0, err
+		return 0, err
 	}
 
-	var response PackageSearchResponse
+	var response struct {
+		Data struct {
+			PackageAggregate struct {
+				Aggregate struct {
+					Count int `json:"count"`
+				} `json:"aggregate"`
+			} `json:"package_search_aggregate"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
 	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, 0, fmt.Errorf("failed to parse GraphQL response: %w", err)
+		return 0, fmt.Errorf("failed to parse GraphQL response: %w", err)
 	}
 	if len(response.Errors) > 0 {
-		return nil, 0, fmt.Errorf("GraphQL errors: %v", response.Errors)
+		return 0, fmt.Errorf("GraphQL errors: %v", response.Errors)
 	}
 
-	return response.Data.PackageSearch, response.Data.PackageAggregate.Aggregate.Count, nil
+	return response.Data.PackageAggregate.Aggregate.Count, nil
 }
 
 func searchPackagesREST(params PackageSearchParams) error {
@@ -373,7 +427,11 @@ func searchPackagesREST(params PackageSearchParams) error {
 }
 
 func searchPackagesGraphQL(params PackageSearchParams) error {
-	pkgs, total, err := fetchGraphQLPackages(params.Server, params.Search, params.Limit, params.Offset, params.RegistryIDs)
+	pkgs, err := fetchGraphQLPackages(params.Server, params.Search, params.Limit, params.Offset, params.RegistryIDs)
+	if err != nil {
+		return err
+	}
+	total, err := fetchGraphQLPackageCount(params.Server, params.Search, params.RegistryIDs)
 	if err != nil {
 		return err
 	}
@@ -456,7 +514,7 @@ func getPackageInfoREST(server, packageName string, registryNames []string) erro
 }
 
 func getPackageInfoGraphQL(server, packageName string, registryIDs []int, registryNames []string) error {
-	pkgs, _, err := fetchGraphQLPackages(server, packageName, 100, 0, registryIDs)
+	pkgs, err := fetchGraphQLPackages(server, packageName, 100, 0, registryIDs)
 	if err != nil {
 		return err
 	}
