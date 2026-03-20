@@ -11,8 +11,8 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 - **Project Management**: List and filter projects using GraphQL API
 - **Git Integration**: Clone, push, fetch, and pull with automatic JuliaHub authentication
 - **Julia Integration**: Install Julia and run with JuliaHub package server configuration
-- **User Management**: Display user information and view profile details
-- **Administrative Commands**: Manage users, tokens, and system resources (requires admin permissions)
+- **User Management**: Display user information, list users and groups
+- **Administrative Commands**: Manage users, groups, tokens, and system resources (requires admin permissions)
 
 ## Installation
 
@@ -174,6 +174,9 @@ go build -o jh .
 - `jh registry config <name>` - Show the full JSON configuration for a registry
 - `jh registry config add` - Add a new registry (JSON payload via stdin or `--file`)
 - `jh registry config update` - Update an existing registry (same JSON schema as add, same flags)
+- `jh registry permission list <registry>` - List permissions for a registry
+- `jh registry permission set <registry> --user|--group <name> --privilege download|register` - Add or update a permission
+- `jh registry permission remove <registry> --user|--group <name>` - Remove a permission
 
 
 ### Project Management (`jh project`)
@@ -202,14 +205,22 @@ go build -o jh .
 
 ### User Information (`jh user`)
 
-- `jh user info` - Show detailed user information
+- `jh user info` - Show detailed information about the logged-in user
+- `jh user list` - List all users (`<name> (<username>)` format, via GraphQL)
+
+### Group Information (`jh group`)
+
+- `jh group list` - List all groups (one per line, via GraphQL)
 
 ### Administrative Commands (`jh admin`)
 
 #### User Management
 - `jh admin user list` - List all users (requires appropriate permissions)
-  - Default: Shows only Name and Email
+  - Default: Shows `<name> (<email>)` per line
   - `jh admin user list --verbose` - Show detailed user information including UUID, groups, and features
+
+#### Group Management
+- `jh admin group list` - List all groups via REST API (requires appropriate permissions)
 
 #### Token Management
 - `jh admin token list` - List all tokens (requires appropriate permissions)
@@ -313,6 +324,8 @@ echo '{
   "enabled": true, "display_apps": true, "owner": "", "sync_schedule": null,
   "download_providers": [{
     "type": "cacheserver", "host": "https://pkg.juliahub.com",
+    "credential_key": "JC Auth Token",
+    "server_type": "", "github_credential_type": "", "api_host": "", "url": "", "user_name": ""
     "credential_key": "JC Auth Token"
   }]
 }' | jh registry config add
@@ -337,6 +350,16 @@ jh project list --user
 jh project list --user alice
 ```
 
+### User and Group Operations
+
+```bash
+# List users (GraphQL)
+jh user list
+
+# List groups (GraphQL)
+jh group list
+```
+
 ### Administrative Operations
 
 ```bash
@@ -345,6 +368,9 @@ jh admin user list
 
 # List users with detailed information
 jh admin user list --verbose
+
+# List all groups via REST (requires admin permissions)
+jh admin group list
 
 # List all tokens (requires admin permissions)
 jh admin token list
