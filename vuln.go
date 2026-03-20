@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-"strings"
+	"strings"
 	"time"
 )
 
@@ -144,7 +144,7 @@ func printAdvisory(v *PackageVulnerability, showRanges bool, verbose bool) {
 		if v.Modified != nil {
 			fmt.Printf("Modified:  %s\n", v.Modified.Format("2006-01-02"))
 		}
-if len(v.References) > 0 {
+		if len(v.References) > 0 {
 			fmt.Println("References:")
 			for _, r := range v.References {
 				fmt.Printf("  %s\n", r)

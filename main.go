@@ -644,9 +644,9 @@ PROVIDER TYPES
   }`
 }
 
-var scanCmd = &cobra.Command{
-	Use:   "scan <package-name>",
-	Short: "Scan a package for known vulnerabilities",
+var vulnCmd = &cobra.Command{
+	Use:   "vuln <package-name>",
+	Short: "Show known vulnerabilities for a package",
 	Long: `Show known security vulnerabilities for a Julia package.
 
 Defaults to checking the latest stable version of the package. Use --version to
@@ -1762,12 +1762,12 @@ func init() {
 	fetchCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	pullCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	updateCmd.Flags().Bool("force", false, "Force update even if current version is newer than latest release")
-	scanCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
-	scanCmd.Flags().StringP("version", "V", "", "Package version to check (defaults to latest stable)")
-	scanCmd.Flags().StringP("advisory", "a", "", "Look up a specific advisory by ID")
-	scanCmd.Flags().StringP("registry", "r", "General", "Registry name for version lookup")
-	scanCmd.Flags().Bool("all", false, "Show all advisories regardless of affected status")
-	scanCmd.Flags().BoolP("verbose", "v", false, "Show full advisory details (aliases, dates, details, references)")
+	vulnCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	vulnCmd.Flags().StringP("version", "V", "", "Package version to check (defaults to latest stable)")
+	vulnCmd.Flags().StringP("advisory", "a", "", "Look up a specific advisory by ID")
+	vulnCmd.Flags().StringP("registry", "r", "General", "Registry name for version lookup")
+	vulnCmd.Flags().Bool("all", false, "Show all advisories regardless of affected status")
+	vulnCmd.Flags().BoolP("verbose", "v", false, "Show full advisory details (aliases, dates, details, references)")
 
 	authCmd.AddCommand(authLoginCmd, authRefreshCmd, authStatusCmd, authEnvCmd)
 	jobCmd.AddCommand(jobListCmd, jobStartCmd)
@@ -1790,7 +1790,7 @@ func init() {
 	runCmd.AddCommand(runSetupCmd)
 	gitCredentialCmd.AddCommand(gitCredentialHelperCmd, gitCredentialGetCmd, gitCredentialStoreCmd, gitCredentialEraseCmd, gitCredentialSetupCmd)
 
-	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, projectCmd, packageCmd, registryCmd, userCmd, adminCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd, scanCmd)
+	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, projectCmd, packageCmd, registryCmd, userCmd, adminCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd, vulnCmd)
 }
 
 func main() {

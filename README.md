@@ -224,9 +224,9 @@ go build -o jh .
   - `cat landing.md | jh admin landing-page update` - Read content from stdin
 - `jh admin landing-page remove` - Remove the custom landing page and revert to the default
 
-### Vulnerability Scanning (`jh scan`)
+### Vulnerability Scanning (`jh vuln`)
 
-- `jh scan <package-name>` - Scan a Julia package for known security vulnerabilities
+- `jh vuln <package-name>` - Show known vulnerabilities for a Julia package
   - Defaults to the latest stable version (fetched from the registry); only shows advisories where that version is affected
   - `--version <ver>` - Check a specific version instead of the latest
   - `--registry <name>` - Registry to use for version lookup (default: `General`)
@@ -395,25 +395,25 @@ jh admin landing-page remove
 
 ```bash
 # Scan latest stable version (only shows advisories where it is affected)
-jh scan MbedTLS_jll
+jh vuln MbedTLS_jll
 
 # Scan a specific version
-jh scan MbedTLS_jll --version 2.28.1010+0
+jh vuln MbedTLS_jll --version 2.28.1010+0
 
 # Show all advisories regardless of affected status
-jh scan MbedTLS_jll --all
+jh vuln MbedTLS_jll --all
 
 # Filter to a specific advisory
-jh scan MbedTLS_jll --advisory JLSEC-2025-232
+jh vuln MbedTLS_jll --advisory JLSEC-2025-232
 
 # Show extra details (aliases, dates, references)
-jh scan MbedTLS_jll --verbose
+jh vuln MbedTLS_jll --verbose
 
 # Use a non-General registry for version lookup
-jh scan MyPkg --registry MyRegistry
+jh vuln MyPkg --registry MyRegistry
 
 # Scan against a custom server
-jh scan SomePackage -s nightly.juliahub.dev
+jh vuln SomePackage -s nightly.juliahub.dev
 ```
 
 ### Git Workflow
