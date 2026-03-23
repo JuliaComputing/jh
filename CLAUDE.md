@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Go-based CLI tool for interacting with JuliaHub, a platform for Julia computing. The CLI provides commands for authentication, dataset management, registry management, project management, user information, token management, registry credential management, Git integration, and Julia integration.
+This is a Go-based CLI tool for interacting with JuliaHub, a platform for Julia computing. The CLI provides commands for authentication, dataset management, registry management, package management, project management, user information, token management, registry credential management, landing page management, Git integration, and Julia integration.
 
 ## Architecture
 
@@ -13,11 +13,13 @@ The application follows a command-line interface pattern using the Cobra library
 - **main.go**: Core CLI structure with command definitions and configuration management
 - **auth.go**: OAuth2 device flow authentication with JWT token handling
 - **datasets.go**: Dataset operations (list, download, upload, status) with REST API integration
-- **registries.go**: Registry operations (list) with REST API integration
+- **registries.go**: Registry operations (list, config, add, update) with REST API integration
+- **packages.go**: Package operations (search, dependency) with REST API primary path (`/packages/info`), GraphQL fallback, and documentation API (`/docs/{registry}/{package}/stable/pkg.json`)
 - **projects.go**: Project management using GraphQL API with user filtering
 - **user.go**: User information retrieval using GraphQL API and REST API for listing users
 - **tokens.go**: Token management operations (list) with REST API integration
 - **credentials.go**: Registry credential management (list, add, update, delete) with REST API integration
+- **landing.go**: Landing page management (show, update, remove) with REST API integration
 - **git.go**: Git integration (clone, push, fetch, pull) with JuliaHub authentication
 - **julia.go**: Julia installation and management
 - **run.go**: Julia execution with JuliaHub configuration
@@ -32,18 +34,20 @@ The application follows a command-line interface pattern using the Cobra library
    - Stores tokens securely in `~/.juliahub` with 0600 permissions
 
 2. **API Integration**:
-   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/ui/registries/descriptions`), token management (`/app/token/activelist`), user management (`/app/config/features/manage`), and registry credential management (old API tried first, new API fallback)
-   - **GraphQL API**: Used for projects and user info (`/v1/graphql`)
+   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/registry/registries/descriptions`, `/api/v1/registry/config/registry/{name}`), package search/info primary path (`/packages/info`), token management (`/app/token/activelist`), user management (`/app/config/features/manage`), registry credential management (old API tried first, new API fallback), and landing page management (`/app/homepage` GET, `/app/config/homepage` POST/DELETE)
+   - **GraphQL API**: Used for projects, user info, and package search/info fallback (`/v1/graphql`)
    - **Headers**: All GraphQL requests require `X-Hasura-Role: jhuser` header
    - **Authentication**: Uses ID tokens (`token.IDToken`) for API calls
 
 3. **Command Structure**:
    - `jh auth`: Authentication commands (login, refresh, status, env)
    - `jh dataset`: Dataset operations (list, download, upload, status)
-   - `jh registry`: Registry operations (list with REST API, supports verbose mode)
+   - `jh registry`: Registry operations (list, config — all via REST API)
+   - `jh registry config`: Show registry JSON config by name; subcommands add/update accept JSON via stdin or `--file`
+   - `jh package`: Package search and dependency (REST primary via `/packages/info`, GraphQL fallback; dependency data from `/docs/{registry}/{package}/stable/pkg.json`)
    - `jh project`: Project management (list with GraphQL, supports user filtering)
    - `jh user`: User information (info with GraphQL)
-   - `jh admin`: Administrative commands (user management, token management, credential management)
+   - `jh admin`: Administrative commands (user management, token management, credential management, landing page)
    - `jh admin user`: User management (list all users with REST API, supports verbose mode)
    - `jh admin token`: Token management (list all tokens with REST API, supports verbose mode)
    - `jh admin credential`: Registry credential management (list, add, update, delete via REST API)
@@ -51,6 +55,7 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh admin credential add`: Add a credential — subcommands: `token`, `ssh`, `github-app`; accepts JSON argument or stdin
    - `jh admin credential update`: Update a credential — subcommands: `token`, `ssh`, `github-app`; accepts JSON argument or stdin
    - `jh admin credential delete`: Delete a credential — subcommands: `token`, `ssh`, `github-app`; takes positional identifier
+   - `jh admin landing-page`: Landing page management (show/update/remove custom markdown landing page with REST API)
    - `jh clone`: Git clone with JuliaHub authentication and project name resolution
    - `jh push/fetch/pull`: Git operations with JuliaHub authentication
    - `jh git-credential`: Git credential helper for seamless authentication
@@ -96,10 +101,46 @@ go run . dataset download <dataset-name>
 go run . dataset upload --new ./file.tar.gz
 ```
 
+### Test package operations
+```bash
+go run . package search dataframes
+go run . package search --verbose plots
+go run . package search --limit 20 ml
+go run . package search --registries General optimization
+go run . package info DataFrames
+go run . package info Plots --registries General
+
+# Get package dependencies
+go run . package dependency DataFrames
+go run . package dependency DataFrames --indirect
+go run . package dependency CSV --registry General
+```
+
 ### Test registry operations
 ```bash
 go run . registry list
 go run . registry list --verbose
+go run . registry config JuliaSimRegistry
+go run . registry config JuliaSimRegistry -s nightly.juliahub.dev
+
+# Add a registry (JSON via stdin or --file)
+echo '{
+  "name": "MyRegistry",
+  "license_detect": true,
+  "artifact": {"download": true},
+  "docs": {"download": true, "docgen_check_installable": false, "html_size_threshold_bytes": null},
+  "metadata": {"download": true},
+  "pkg": {"download": true, "static_analysis_runs": []},
+  "enabled": true, "display_apps": true, "owner": "", "sync_schedule": null,
+  "download_providers": [{
+    "type": "cacheserver", "host": "https://pkg.juliahub.com",
+    "credential_key": "JC Auth Token"
+  }]
+}' | go run . registry config add
+go run . registry config add --file registry.json
+
+# Update an existing registry (same JSON schema, same flags)
+go run . registry config update --file registry.json
 ```
 
 ### Test project and user operations
@@ -138,6 +179,15 @@ go run . admin credential update github-app '{"app_id":"12345","private_key_file
 go run . admin credential delete token MyToken
 go run . admin credential delete ssh 1
 go run . admin credential delete github-app 12345
+```
+
+### Test landing page operations
+```bash
+go run . admin landing-page show
+go run . admin landing-page update '# Welcome to JuliaHub'
+go run . admin landing-page update --file landing.md
+cat landing.md | go run . admin landing-page update
+go run . admin landing-page remove
 ```
 
 ### Test Git operations
@@ -212,14 +262,15 @@ The application uses OAuth2 device flow:
 
 ### REST API Integration
 - **Dataset operations**: Use presigned URLs for upload/download
+- **Registry operations**: `/api/v1/registry/registries/descriptions` for listing registries
 - **User management**: `/app/config/features/manage` endpoint for listing all users
 - **Token management**: `/app/token/activelist` endpoint for listing all API tokens
-- **Registry credentials**: Old API tried first, falls back to new API on failure:
-  - **Old API**: `GET /app/config/credentials/info` to fetch (returns `{"success":true,"creds":{...}}`), `POST /app/config/credentials/store` to write full payload
-  - **New API** (fallback): `GET /app/config/credentials` to fetch (returns credentials object directly); `POST` to add tokens/apps; `PUT` to update tokens/apps or replace all SSH credentials; `DELETE /app/config/credentials` with `{tokens:[...], githubApps:[...]}` to delete
+- **Registry credentials**: `GET /api/v1/sysconfig/credentials` to fetch (returns `CredentialsInfo` object directly); `POST` to add tokens/apps; `PUT` to update tokens/apps or replace all SSH credentials; `DELETE` with `{tokens:[...], githubApps:[...]}` to delete
+- **Package search/info primary**: `/packages/info` endpoint with `name`, `registries`, `tags`, `licenses`, `limit`, `offset` query params; returns `{packages: [...], meta: {total: N}}`
+- **Package dependencies**: `/docs/{registry}/{package}/stable/pkg.json` for dependency information
 - **Authentication**: Bearer token with ID token
 - **Upload workflow**: 3-step process (request presigned URL, upload to URL, close upload)
-- **Credential write pattern**: For the old API — read-modify-write (fetch full state, apply change, post full payload). For the new API — targeted mutations; SSH operations still require read-modify-write since `sshcreds` in PUT is a full replacement
+- **Credential write pattern**: Targeted mutations via `POST`/`PUT`/`DELETE`; SSH operations require read-modify-write (fetch + full-replacement `PUT`) since `sshcreds` in PUT is a full replacement
 
 ### Data Type Handling
 - Project/dataset IDs are UUID strings, not integers
@@ -270,6 +321,40 @@ git clone https://github.com/user/repo.git                          # Ignored by
 - **Automatic login**: Runs OAuth2 device flow when server mismatch detected
 - **Token management**: Stores and refreshes tokens per server automatically
 - **Error handling**: Graceful fallback to other credential helpers for non-JuliaHub URLs
+
+## Package Management
+
+The CLI provides comprehensive package discovery and dependency analysis:
+
+### Package Search and Info
+- **Search**: `jh package search` uses GraphQL API to search packages across registries
+- **Info**: `jh package info` retrieves detailed package metadata
+- **Filtering**: Supports filtering by registry, installation status, and failures
+
+### Package Dependency (`jh package dependency`)
+- **Endpoint**: Uses package documentation API at `/docs/{registry}/{package}/stable/pkg.json`
+- **Registry resolution**: Automatically uses first registry package belongs to, or specific registry via `--registry` flag
+- **Dependency types**: Distinguishes between direct and indirect dependencies via `direct` field in API response
+- **Display limits**:
+  - Default: Shows up to 10 direct dependencies
+  - With `--indirect`: Shows up to 10 direct and 50 indirect dependencies
+- **Output format**:
+  - Direct-only mode: Single table with columns: NAME, REGISTRY, UUID, VERSIONS
+  - Indirect mode: Separate sections for direct and indirect dependencies with columns: NAME, REGISTRY, UUID, VERSIONS
+  - Registry column shows which registry each dependency belongs to (empty for stdlib packages)
+
+#### Implementation Details (`packages.go`)
+- `getPackageDependencies()`: Main function for dependency retrieval
+  1. Fetches all registries to get registry IDs for GraphQL query
+  2. Searches for package using GraphQL to get registry information
+  3. Determines target registry (first registry or user-specified)
+  4. Fetches package documentation JSON from docs endpoint
+  5. Filters and limits dependencies based on flags
+  6. Displays results in formatted tables with separate sections
+
+#### Data Structures
+- `PackageDependency`: Represents a single dependency with fields for direct/indirect status, name, UUID, versions, registry, and slug
+- `PackageDocsResponse`: Response from documentation API containing package metadata and dependencies array
 
 ## Julia Integration
 
@@ -335,6 +420,11 @@ jh run setup
 - Admin user list command (`jh admin user list`) uses REST API endpoint `/app/config/features/manage` which requires appropriate permissions
 - User list output is concise by default (Name and Email only); use `--verbose` flag for detailed information (UUID, groups, features)
 - Registry list output is concise by default (UUID and Name only); use `--verbose` flag for detailed information (owner, creation date, package count, description)
+- Registry config command (`jh registry config <name>`) uses REST API endpoint `/api/v1/registry/config/registry/{name}` (GET) and prints the full JSON response
+- Registry add/update commands (`jh registry config add` / `jh registry config update`) use REST API endpoint `/api/v1/registry/config/registry/{name}` (POST); the backend creates or updates based on whether the registry already exists
+- Both commands accept the full registry JSON payload via `--file <path>` or stdin; the payload `name` field identifies the registry
+- Registry add/update always poll `/api/v1/registry/config/registry/{name}/savestatus` every 3 seconds up to a 2-minute timeout
+- Bundle provider type automatically sets `license_detect: false` in the payload
 - Admin token list command (`jh admin token list`) uses REST API endpoint `/app/token/activelist` which requires appropriate permissions
 - Token list output is concise by default (Subject, Created By, and Expired status only); use `--verbose` flag for detailed information (signature, creation date, expiration date with estimate indicator)
 - Token dates are formatted in human-readable format and converted to local timezone (respects system timezone or TZ environment variable)
@@ -344,10 +434,41 @@ jh run setup
 - SSH and GitHub App private keys can be supplied inline (`private_key`, raw PEM) or via file path (`private_key_file`); both are base64-encoded into a `data:application/octet-stream;base64,...` data URL before sending
 - Credential list output is concise by default; use `--verbose` to show token metadata (account login, expiry, scopes, rate limit) and SSH host keys
 - SSH credentials are identified by 1-based index (from `list` output) for update and delete operations
-- Existing sensitive values (token values, private keys) are omitted when re-posting unchanged credentials to avoid re-sending masked server-side values
+- Token and GitHub App values/private keys are omitted from update requests when not changing them (server keeps existing value)
 - `rate_limit_reset` in token metadata is a Unix timestamp (int64), displayed as local time in verbose mode
+- Landing page commands (`jh admin landing-page`) use REST API: GET `/app/homepage` (show), POST `/app/config/homepage` (update), DELETE `/app/config/homepage` (remove); require appropriate permissions
+- Landing page `update` command accepts content inline as an argument, from a file via `--file`, or piped via stdin (priority: `--file` > arg > stdin)
+- Landing page response uses custom JSON unmarshaling (`homepageResponse`) to handle `message` being either an object or a string
+- Package search (`jh package search`) and info (`jh package info`) both try REST API (`/packages/info`) first, then fall back to GraphQL (`FilteredPackages` / `FilteredPackagesCount` via `/v1/graphql`) on failure; a warning is printed to stderr when the fallback is used
+- REST API passes `--registries` as comma-separated registry names to the `registries` query param; GraphQL fallback passes registry IDs to the `registries` variable
+- `fetchRegistries` in `registries.go` is used by `listRegistries`, `packageSearchCmd`, `packageInfoCmd`, and `packageDependencyCmd` to resolve registry names to IDs (for GraphQL) and names (for REST)
+- Both REST and GraphQL package search/info paths produce identical output columns (Registry and Owner); GraphQL resolves registry names from the `registryIDs`/`registryNames` already in `PackageSearchParams` — no extra API call needed
+- A package in multiple registries appears as multiple rows (one per registry) in both REST and GraphQL paths, since the GraphQL view (`package_rank_vw`) is already flattened per package-registry combination
+- GraphQL fallback uses `package_search.gql` (`FilteredPackages`) for the package list and `package_search_count.gql` (`FilteredPackagesCount`) for the aggregate count as separate requests
+- `executeGraphQL(server, token, req)` in `packages.go` is a shared helper for GraphQL POST requests (sets Authorization, Content-Type, Accept, X-Hasura-Role headers)
+- `getPackageInfo` in `packages.go` implements exact name-match lookup using REST-first (`getPackageInfoREST`), GraphQL fallback (`getPackageInfoGraphQL`); `packageInfoCmd` in `main.go` resolves registries via `fetchRegistries`
+- `getPackageDependencies` uses GraphQL (`fetchGraphQLPackages`) to locate the package, then fetches `/docs/{registry}/{package}/stable/pkg.json` for dependency data; no REST fallback (docs endpoint is authoritative)
 
 ## Implementation Details
+
+### Registry Operations (`registries.go`)
+
+**Shared helpers:**
+
+- **`apiGet(url, idToken)`**: shared GET helper used by `listRegistries` and `getRegistryConfig`; retries up to 3 times on network errors or 500s, returns `[]byte` body on success
+- **`readRegistryPayload(filePath)`**: reads JSON from `filePath` or stdin; validates `name` and `download_providers` are present and non-empty; returns raw `map[string]interface{}` for direct API forwarding
+
+**`jh registry list` / `jh registry config`:**
+
+- Both use `apiGet` for the HTTP call
+- `listRegistries` unmarshals into `[]Registry` and formats output; `--verbose` adds owner, date, package count, and description
+- `getRegistryConfig` pretty-prints the raw JSON response
+
+**`jh registry config add` / `jh registry config update`:**
+
+- Both call `submitRegistry(server, payload, operation)` with `operation` set to `"creation"` or `"update"` for status messages
+- `submitRegistry` POSTs to `/api/v1/registry/config/registry/{name}` with retry on 500s, then calls `pollRegistrySaveStatus()`
+- `pollRegistrySaveStatus` GETs `/api/v1/registry/config/registry/{name}/savestatus` every 3 seconds up to a 2-minute deadline
 
 ### Julia Credentials Management (`run.go`)
 

@@ -6,7 +6,8 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 
 - **Authentication**: OAuth2 device flow authentication with JWT token handling
 - **Dataset Management**: List, download, upload, and check status of datasets
-- **Registry Management**: List and manage Julia package registries
+- **Package Management**: Search and explore Julia packages across registries via REST API (GraphQL fallback), with dependency analysis
+- **Registry Management**: List, add, and update Julia package registries
 - **Project Management**: List and filter projects using GraphQL API
 - **Git Integration**: Clone, push, fetch, and pull with automatic JuliaHub authentication
 - **Julia Integration**: Install Julia and run with JuliaHub package server configuration
@@ -150,11 +151,30 @@ go build -o jh .
 - `jh dataset upload [dataset-id] <file-path>` - Upload a dataset
 - `jh dataset status <dataset-id> [version]` - Show dataset status
 
+### Package Management (`jh package`)
+
+- `jh package search [search-term]` - Search for Julia packages
+  - Default: Shows Name, Registry, Owner, Version, and Description
+  - `jh package search --verbose` - Show detailed package information including UUID, repository, tags, stars, docs, and license
+  - `--registries <names>` - Filter by registry names (comma-separated, e.g. `General,MyRegistry`)
+  - `--limit <n>` - Maximum results to return (default: 10)
+  - `--offset <n>` - Number of results to skip
+- `jh package info <package-name>` - Get detailed information about a specific package (exact name match, case-insensitive)
+  - `jh package info --registries General` - Search in specific registries only
+- `jh package dependency <package-name>` - List package dependencies
+  - Default: Shows up to 10 direct dependencies (NAME, REGISTRY, UUID, VERSIONS)
+  - `jh package dependency --indirect` - Include both direct and indirect dependencies
+  - `jh package dependency --registry General` - Specify registry to use
+
 ### Registry Management (`jh registry`)
 
 - `jh registry list` - List all package registries on JuliaHub
   - Default: Shows only UUID and Name
   - `jh registry list --verbose` - Show detailed registry information including owner, creation date, package count, and description
+- `jh registry config <name>` - Show the full JSON configuration for a registry
+- `jh registry config add` - Add a new registry (JSON payload via stdin or `--file`)
+- `jh registry config update` - Update an existing registry (same JSON schema as add, same flags)
+
 
 ### Project Management (`jh project`)
 
@@ -215,6 +235,13 @@ jh admin credential add token '{"name":"MyToken","url":"https://github.com","val
 echo '{"name":"MyToken","url":"https://github.com","value":"ghp_xxxx"}' | jh admin credential add token
 ```
 
+#### Landing Page Management
+- `jh admin landing-page show` - Show the current custom landing page content (markdown and last-modified date)
+- `jh admin landing-page update <markdown-content>` - Set a custom markdown landing page
+  - `jh admin landing-page update --file landing.md` - Read content from a file
+  - `cat landing.md | jh admin landing-page update` - Read content from stdin
+- `jh admin landing-page remove` - Remove the custom landing page and revert to the default
+
 ### Update (`jh update`)
 
 - `jh update` - Check for updates and automatically install the latest version
@@ -253,6 +280,31 @@ jh dataset upload --new ./my-data.tar.gz
 jh dataset upload my-dataset ./updated-data.tar.gz
 ```
 
+### Package Operations
+
+```bash
+# Search for packages by name
+jh package search dataframes
+
+# Search with verbose output
+jh package search --verbose plots
+
+# Filter by registry
+jh package search --registries General optimization
+
+# Limit and paginate results
+jh package search --limit 20 --offset 0 ml
+
+# Get detailed info about a specific package
+jh package info DataFrames
+jh package info Plots --registries General
+
+# List package dependencies
+jh package dependency DataFrames              # Shows up to 10 direct dependencies
+jh package dependency DataFrames --indirect   # Includes indirect dependencies
+jh package dependency CSV --registry General  # Use specific registry
+```
+
 ### Registry Operations
 
 ```bash
@@ -264,6 +316,31 @@ jh registry list --verbose
 
 # List registries on custom server
 jh registry list -s yourinstall
+
+# Show full configuration for a registry
+jh registry config JuliaSimRegistry
+jh registry config JuliaSimRegistry -s nightly.juliahub.dev
+
+# Add a registry (JSON via stdin or --file)
+echo '{
+  "name": "MyRegistry",
+  "license_detect": true,
+  "artifact": {"download": true},
+  "docs": {"download": true, "docgen_check_installable": false, "html_size_threshold_bytes": null},
+  "metadata": {"download": true},
+  "pkg": {"download": true, "static_analysis_runs": []},
+  "enabled": true, "display_apps": true, "owner": "", "sync_schedule": null,
+  "download_providers": [{
+    "type": "cacheserver", "host": "https://pkg.juliahub.com",
+    "credential_key": "JC Auth Token"
+  }]
+}' | jh registry config add
+
+# Or use a file
+jh registry config add --file registry.json
+
+# Update an existing registry (same JSON schema, registry identified by "name" field)
+jh registry config update --file registry.json
 ```
 
 ### Project Operations
@@ -325,6 +402,25 @@ jh admin credential delete ssh 1
 jh admin credential delete github-app 12345
 ```
 
+### Landing Page Operations
+
+```bash
+# Show current custom landing page
+jh admin landing-page show
+
+# Set landing page from inline markdown
+jh admin landing-page update '# Welcome to JuliaHub'
+
+# Set landing page from a file
+jh admin landing-page update --file landing.md
+
+# Set landing page from stdin
+cat landing.md | jh admin landing-page update
+
+# Remove custom landing page (revert to default)
+jh admin landing-page remove
+```
+
 ### Git Workflow
 
 ```bash
@@ -376,7 +472,7 @@ Note: Arguments after `--` are passed directly to Julia. The `jh run` command:
 
 - **Built with Go** using the Cobra CLI framework
 - **Authentication**: OAuth2 device flow with JWT token management
-- **APIs**: REST API for datasets, GraphQL API for projects and user info
+- **APIs**: REST API for datasets and package search/info (primary); GraphQL API for projects, user info, package search/info fallback, and package dependency lookup
 - **Git Integration**: Seamless authentication via HTTP headers or credential helper
 - **Cross-platform**: Supports Windows, macOS, and Linux
 
