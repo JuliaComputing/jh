@@ -3,7 +3,8 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
-This is a Go-based CLI tool for interacting with JuliaHub, a platform for Julia computing. The CLI provides commands for authentication, dataset management, registry management, project management, user information, token management, Git integration, and Julia integration.
+
+This is a Go-based CLI tool for interacting with JuliaHub, a platform for Julia computing. The CLI provides commands for authentication, dataset management, registry management, package management, project management, user information, token management, Git integration, and Julia integration.
 
 ## Architecture
 
@@ -13,7 +14,7 @@ The application follows a command-line interface pattern using the Cobra library
 - **auth.go**: OAuth2 device flow authentication with JWT token handling
 - **datasets.go**: Dataset operations (list, download, upload, status) with REST API integration
 - **registries.go**: Registry operations (list, config, add, update, registrator) with REST API integration
-- **packages.go**: Package search with REST API primary path (`/packages/info`) and GraphQL fallback
+- **packages.go**: Package operations (search, dependency) with REST API primary path (`/packages/info`), GraphQL fallback, and documentation API (`/docs/{registry}/{package}/stable/pkg.json`)
 - **projects.go**: Project management using GraphQL API with user filtering
 - **user.go**: User information retrieval using GraphQL API and REST API for listing users
 - **tokens.go**: Token management operations (list) with REST API integration
@@ -44,7 +45,7 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh registry config`: Show registry JSON config by name; subcommands add/update accept JSON via stdin or `--file`
    - `jh registry permission`: Registry permission management (list, set, remove)
    - `jh registry registrator`: Show registrator config by name; subcommand update accepts JSON via stdin or `--file`
-   - `jh package`: Package search and info (REST primary via `/packages/info`, GraphQL fallback; supports filtering by registry)
+   - `jh package`: Package search and dependency (REST primary via `/packages/info`, GraphQL fallback; dependency data from `/docs/{registry}/{package}/stable/pkg.json`)
    - `jh project`: Project management (list with GraphQL, supports user filtering)
    - `jh user`: User information (info, list via GraphQL `public_users`)
    - `jh group`: Group information (list via GraphQL)
@@ -106,6 +107,11 @@ go run . package search --limit 20 ml
 go run . package search --registries General optimization
 go run . package info DataFrames
 go run . package info Plots --registries General
+
+# Get package dependencies
+go run . package dependency DataFrames
+go run . package dependency DataFrames --indirect
+go run . package dependency CSV --registry General
 ```
 
 ### Test registry operations
@@ -255,9 +261,11 @@ The application uses OAuth2 device flow:
 
 ### REST API Integration
 - **Dataset operations**: Use presigned URLs for upload/download
+- **Registry operations**: `/api/v1/registry/registries/descriptions` for listing registries
 - **User management**: `/app/config/features/manage` endpoint for listing all users
 - **Token management**: `/app/token/activelist` endpoint for listing all API tokens
-- **Package search primary**: `/packages/info` endpoint with `name`, `registries`, `tags`, `licenses`, `limit`, `offset` query params; returns `{packages: [...], meta: {total: N}}`
+- **Package search/info primary**: `/packages/info` endpoint with `name`, `registries`, `tags`, `licenses`, `limit`, `offset` query params; returns `{packages: [...], meta: {total: N}}`
+- **Package dependencies**: `/docs/{registry}/{package}/stable/pkg.json` for dependency information
 - **Authentication**: Bearer token with ID token
 - **Upload workflow**: 3-step process (request presigned URL, upload to URL, close upload)
 
@@ -310,6 +318,40 @@ git clone https://github.com/user/repo.git                          # Ignored by
 - **Automatic login**: Runs OAuth2 device flow when server mismatch detected
 - **Token management**: Stores and refreshes tokens per server automatically
 - **Error handling**: Graceful fallback to other credential helpers for non-JuliaHub URLs
+
+## Package Management
+
+The CLI provides comprehensive package discovery and dependency analysis:
+
+### Package Search and Info
+- **Search**: `jh package search` uses GraphQL API to search packages across registries
+- **Info**: `jh package info` retrieves detailed package metadata
+- **Filtering**: Supports filtering by registry, installation status, and failures
+
+### Package Dependency (`jh package dependency`)
+- **Endpoint**: Uses package documentation API at `/docs/{registry}/{package}/stable/pkg.json`
+- **Registry resolution**: Automatically uses first registry package belongs to, or specific registry via `--registry` flag
+- **Dependency types**: Distinguishes between direct and indirect dependencies via `direct` field in API response
+- **Display limits**:
+  - Default: Shows up to 10 direct dependencies
+  - With `--indirect`: Shows up to 10 direct and 50 indirect dependencies
+- **Output format**:
+  - Direct-only mode: Single table with columns: NAME, REGISTRY, UUID, VERSIONS
+  - Indirect mode: Separate sections for direct and indirect dependencies with columns: NAME, REGISTRY, UUID, VERSIONS
+  - Registry column shows which registry each dependency belongs to (empty for stdlib packages)
+
+#### Implementation Details (`packages.go`)
+- `getPackageDependencies()`: Main function for dependency retrieval
+  1. Fetches all registries to get registry IDs for GraphQL query
+  2. Searches for package using GraphQL to get registry information
+  3. Determines target registry (first registry or user-specified)
+  4. Fetches package documentation JSON from docs endpoint
+  5. Filters and limits dependencies based on flags
+  6. Displays results in formatted tables with separate sections
+
+#### Data Structures
+- `PackageDependency`: Represents a single dependency with fields for direct/indirect status, name, UUID, versions, registry, and slug
+- `PackageDocsResponse`: Response from documentation API containing package metadata and dependencies array
 
 ## Julia Integration
 
@@ -394,14 +436,15 @@ jh run setup
 - Landing page commands (`jh admin landing-page`) use REST API: GET `/app/homepage` (show), POST `/app/config/homepage` (update), DELETE `/app/config/homepage` (remove); require appropriate permissions
 - Landing page `update` command accepts content inline as an argument, from a file via `--file`, or piped via stdin (priority: `--file` > arg > stdin)
 - Landing page response uses custom JSON unmarshaling (`homepageResponse`) to handle `message` being either an object or a string
-- Package search (`jh package search`) and info (`jh package info`) both try REST API (`/packages/info`) first, then fall back to GraphQL (`FilteredPackagesWithCount` via `/v1/graphql`) on failure; a warning is printed to stderr when the fallback is used
+- Package search (`jh package search`) and info (`jh package info`) both try REST API (`/packages/info`) first, then fall back to GraphQL (`FilteredPackages` / `FilteredPackagesCount` via `/v1/graphql`) on failure; a warning is printed to stderr when the fallback is used
 - REST API passes `--registries` as comma-separated registry names to the `registries` query param; GraphQL fallback passes registry IDs to the `registries` variable
-- `fetchRegistries` in `registries.go` is used by `listRegistries`, `packageSearchCmd`, and `packageInfoCmd` to resolve registry names to IDs (for GraphQL) and names (for REST)
+- `fetchRegistries` in `registries.go` is used by `listRegistries`, `packageSearchCmd`, `packageInfoCmd`, and `packageDependencyCmd` to resolve registry names to IDs (for GraphQL) and names (for REST)
 - Both REST and GraphQL package search/info paths produce identical output columns (Registry and Owner); GraphQL resolves registry names from the `registryIDs`/`registryNames` already in `PackageSearchParams` — no extra API call needed
 - A package in multiple registries appears as multiple rows (one per registry) in both REST and GraphQL paths, since the GraphQL view (`package_rank_vw`) is already flattened per package-registry combination
-- GraphQL fallback uses `package_search_with_count.gql` which fetches both the package list and aggregate count in a single request (`package_search` + `package_search_aggregate` root fields)
+- GraphQL fallback uses `package_search.gql` (`FilteredPackages`) for the package list and `package_search_count.gql` (`FilteredPackagesCount`) for the aggregate count as separate requests
 - `executeGraphQL(server, token, req)` in `packages.go` is a shared helper for GraphQL POST requests (sets Authorization, Content-Type, Accept, X-Hasura-Role headers)
 - `getPackageInfo` in `packages.go` implements exact name-match lookup using REST-first (`getPackageInfoREST`), GraphQL fallback (`getPackageInfoGraphQL`); `packageInfoCmd` in `main.go` resolves registries via `fetchRegistries`
+- `getPackageDependencies` uses GraphQL (`fetchGraphQLPackages`) to locate the package, then fetches `/docs/{registry}/{package}/stable/pkg.json` for dependency data; no REST fallback (docs endpoint is authoritative)
 
 ## Implementation Details
 
