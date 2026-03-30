@@ -12,6 +12,7 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 - **Git Integration**: Clone, push, fetch, and pull with automatic JuliaHub authentication
 - **Julia Integration**: Install Julia and run with JuliaHub package server configuration
 - **User Management**: Display user information and view profile details
+- **Vulnerability Scanning**: Scan Julia packages for known security vulnerabilities
 - **Administrative Commands**: Manage users, tokens, and system resources (requires admin permissions)
 
 ## Installation
@@ -223,6 +224,18 @@ go build -o jh .
   - `cat landing.md | jh admin landing-page update` - Read content from stdin
 - `jh admin landing-page remove` - Remove the custom landing page and revert to the default
 
+### Vulnerability Scanning (`jh vuln`)
+
+- `jh vuln <package-name>` - Show known vulnerabilities for a Julia package
+  - Defaults to the latest stable version (fetched from the registry); only shows advisories where that version is affected
+  - `--version <ver>` - Check a specific version instead of the latest
+  - `--registry <name>` - Registry to use for version lookup (default: `General`)
+  - `--advisory <id>` - Filter to a specific advisory ID (e.g. a CVE or GHSA identifier)
+  - `--all` - Show all advisories regardless of whether the queried version is affected
+  - `--verbose` / `-v` - Show additional details: aliases, published/modified dates, and references
+  - Advisory IDs are clickable links to the JuliaLang SecurityAdvisories repository
+  - Each advisory shows: severity scores, affected status, full summary, affected versions, and version ranges
+
 ### Update (`jh update`)
 
 - `jh update` - Check for updates and automatically install the latest version
@@ -376,6 +389,31 @@ cat landing.md | jh admin landing-page update
 
 # Remove custom landing page (revert to default)
 jh admin landing-page remove
+```
+
+### Vulnerability Scanning
+
+```bash
+# Scan latest stable version (only shows advisories where it is affected)
+jh vuln MbedTLS_jll
+
+# Scan a specific version
+jh vuln MbedTLS_jll --version 2.28.1010+0
+
+# Show all advisories regardless of affected status
+jh vuln MbedTLS_jll --all
+
+# Filter to a specific advisory
+jh vuln MbedTLS_jll --advisory JLSEC-2025-232
+
+# Show extra details (aliases, dates, references)
+jh vuln MbedTLS_jll --verbose
+
+# Use a non-General registry for version lookup
+jh vuln MyPkg --registry MyRegistry
+
+# Scan against a custom server
+jh vuln SomePackage -s nightly.juliahub.dev
 ```
 
 ### Git Workflow
