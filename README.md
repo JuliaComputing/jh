@@ -12,7 +12,7 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 - **Git Integration**: Clone, push, fetch, and pull with automatic JuliaHub authentication
 - **Julia Integration**: Install Julia and run with JuliaHub package server configuration
 - **User Management**: Display user information and view profile details
-- **Administrative Commands**: Manage users, tokens, and system resources (requires admin permissions)
+- **Administrative Commands**: Manage users, tokens, credentials, and system resources (requires admin permissions)
 
 ## Installation
 
@@ -216,6 +216,25 @@ go build -o jh .
   - Default: Shows only Subject, Created By, and Expired status
   - `jh admin token list --verbose` - Show detailed token information including signature, creation date, expiration date (with estimate indicator)
 
+#### Credential Management
+- `jh admin credential list` - List all credentials (tokens, SSH keys, GitHub Apps)
+  - `jh admin credential list --verbose` - Show detailed info including token metadata (account, expiry, scopes, rate limit) and SSH host keys
+- `jh admin credential add token <JSON>` - Add a token credential
+- `jh admin credential add ssh <JSON>` - Add SSH key credentials
+- `jh admin credential add github-app <JSON>` - Add a GitHub App credential
+- `jh admin credential update token <JSON>` - Update an existing token credential
+- `jh admin credential update ssh <JSON>` - Update an SSH credential by 1-based index
+- `jh admin credential update github-app <JSON>` - Update an existing GitHub App credential
+- `jh admin credential delete token <name>` - Delete a token credential
+- `jh admin credential delete ssh <index>` - Delete an SSH credential by 1-based index
+- `jh admin credential delete github-app <app-id>` - Delete a GitHub App credential
+
+All `add` and `update` commands accept JSON as a positional argument or from stdin:
+```bash
+jh admin credential add token '{"name":"MyToken","url":"https://github.com","value":"ghp_xxxx"}'
+echo '{"name":"MyToken","url":"https://github.com","value":"ghp_xxxx"}' | jh admin credential add token
+```
+
 #### Landing Page Management
 - `jh admin landing-page show` - Show the current custom landing page content (markdown and last-modified date)
 - `jh admin landing-page update <markdown-content>` - Set a custom markdown landing page
@@ -357,6 +376,30 @@ jh admin token list -s yourinstall
 
 # Use specific timezone for date display
 TZ=America/New_York jh admin token list --verbose
+
+# List credentials
+jh admin credential list
+jh admin credential list --verbose
+
+# Add a token credential (JSON as argument or via stdin)
+jh admin credential add token '{"name":"MyGHToken","url":"https://github.com","value":"ghp_xxxx"}'
+
+# Add SSH credentials (private key from file)
+jh admin credential add ssh '{"host_key":"github.com ssh-ed25519 AAAA...","private_key_file":"/home/user/.ssh/id_ed25519"}'
+
+# Add a GitHub App credential
+jh admin credential add github-app '{"app_id":"12345","url":"https://github.com/my-org","private_key_file":"app.pem"}'
+
+# Update a token's URL (partial update — only supply fields to change)
+jh admin credential update token '{"name":"MyGHToken","url":"https://github.com/new-org"}'
+
+# Update an SSH key by index (use list to find the index)
+jh admin credential update ssh '{"index":1,"private_key_file":"/home/user/.ssh/new_key"}'
+
+# Delete credentials
+jh admin credential delete token MyGHToken
+jh admin credential delete ssh 1
+jh admin credential delete github-app 12345
 ```
 
 ### Landing Page Operations
