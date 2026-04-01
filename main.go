@@ -904,8 +904,6 @@ var registryConfigAddCmd = &cobra.Command{
     "enabled": true, "display_apps": true, "owner": "admin", "sync_schedule": null,
     "download_providers": [{
       "type": "cacheserver", "host": "https://pkg.juliahub.com",
-      "credential_key": "JC Auth Token",
-      "server_type": "", "github_credential_type": "", "api_host": "", "url": "", "user_name": ""
       "credential_key": "JC Auth Token"
     }]
   }' | jh registry config add
@@ -966,8 +964,6 @@ var registryConfigUpdateCmd = &cobra.Command{
     "enabled": true, "display_apps": true, "owner": "admin", "sync_schedule": null,
     "download_providers": [{
       "type": "cacheserver", "host": "https://pkg-new.juliahub.com",
-      "credential_key": "JC Auth Token",
-      "server_type": "", "github_credential_type": "", "api_host": "", "url": "", "user_name": ""
       "credential_key": "JC Auth Token"
     }]
   }' | jh registry config update
