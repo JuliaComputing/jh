@@ -621,26 +621,15 @@ PROVIDER TYPES
 
   cacheserver — sync from a JuliaHub package cache:
   {
-    "type":                   "cacheserver",
-    "host":                   "<hostname>",
-    "credential_key":         "<token-id>",
-    "server_type":            "",
-    "github_credential_type": "",
-    "api_host":               "",
-    "url":                    "",
-    "user_name":              ""
+    "type":           "cacheserver",
+    "host":           "<hostname>",
+    "credential_key": "<token-id>"
   }
 
   bundle — local bundle (sets license_detect: false automatically):
   {
-    "type":                   "bundle",
-    "credential_key":         "",
-    "server_type":            "",
-    "github_credential_type": "",
-    "api_host":               "",
-    "url":                    "",
-    "user_name":              "",
-    "host":                   ""
+    "type":           "bundle",
+    "credential_key": ""
   }
 
   genericserver — generic server with basic auth:
