@@ -1760,6 +1760,353 @@ var groupListCmd = &cobra.Command{
 	},
 }
 
+var adminCredentialCmd = &cobra.Command{
+	Use:   "credential",
+	Short: "Credential management commands",
+	Long: `Administrative commands for managing credentials on JuliaHub.
+
+Provides commands to list and add credentials including tokens,
+SSH keys, and GitHub Apps used for private package registry access.
+
+Note: These commands require appropriate administrative permissions.`,
+}
+
+var credentialListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List credentials",
+	Long: `List all credentials configured on JuliaHub.
+
+Displays credentials grouped by type: Tokens, SSH Keys, and GitHub Apps.
+
+By default, shows Name and URL for tokens, and index number and hostname for SSH keys.
+Use --verbose flag to display additional details including:
+- Token account login, expiry, scopes, and rate limit info
+- SSH host key strings`,
+	Example: "  jh admin credential list\n  jh admin credential list --verbose",
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		verbose, _ := cmd.Flags().GetBool("verbose")
+
+		if err := listCredentials(server, verbose); err != nil {
+			fmt.Printf("Failed to list credentials: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var credentialAddCmd = &cobra.Command{
+	Use:   "add",
+	Short: "Add a credential",
+	Long: `Add a new credential to JuliaHub.
+
+Use one of the subcommands to add a specific credential type:
+  token      - Add a token-based credential (e.g. GitHub PAT)
+  ssh        - Add SSH key credentials (host key + private key)
+  github-app - Add a GitHub App credential`,
+}
+
+var credentialAddTokenCmd = &cobra.Command{
+	Use:   "token [JSON]",
+	Short: "Add a token credential",
+	Long: `Add a token-based registry credential (e.g. a GitHub personal access token).
+
+Accepts a JSON object as a positional argument or from stdin (use "-" or omit
+the argument to read from stdin).
+
+JSON fields:
+  name   string  Token name (required)
+  url    string  URL prefix this token applies to (required)
+  value  string  Token value (required)`,
+	Example: `  jh admin credential add token '{"name":"MyGHToken","url":"https://github.com","value":"ghp_xxxx"}'
+  echo '{"name":"MyGHToken","url":"https://github.com","value":"ghp_xxxx"}' | jh admin credential add token`,
+	Args: cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		jsonData, err := readJSONInput(args)
+		if err != nil {
+			fmt.Printf("Failed to read input: %v\n", err)
+			os.Exit(1)
+		}
+
+		if err := addCredentialToken(server, jsonData); err != nil {
+			fmt.Printf("Failed to add token credential: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var credentialAddSSHCmd = &cobra.Command{
+	Use:   "ssh [JSON]",
+	Short: "Add an SSH credential",
+	Long: `Add SSH key credential.
+
+Accepts a JSON object as a positional argument or from stdin (use "-" or omit
+the argument to read from stdin).
+
+JSON fields:
+  host_key         string  SSH host key string, e.g. from ssh-keyscan (required)
+  private_key      string  Raw SSH private key content (PEM)
+  private_key_file string  Path to SSH private key file
+
+Provide either private_key or private_key_file, not both.`,
+	Example: `  jh admin credential add ssh '{"host_key":"github.com ssh-ed25519 AAAA...","private_key_file":"/home/user/.ssh/id_ed25519"}'
+  jh admin credential add ssh '{"host_key":"github.com ssh-ed25519 AAAA...","private_key":"-----BEGIN OPENSSH PRIVATE KEY-----\n..."}'`,
+	Args: cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		jsonData, err := readJSONInput(args)
+		if err != nil {
+			fmt.Printf("Failed to read input: %v\n", err)
+			os.Exit(1)
+		}
+
+		if err := addCredentialSSH(server, jsonData); err != nil {
+			fmt.Printf("Failed to add SSH credential: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var credentialAddGitHubAppCmd = &cobra.Command{
+	Use:   "github-app [JSON]",
+	Short: "Add a GitHub App credential",
+	Long: `Add a GitHub App credential.
+
+Accepts a JSON object as a positional argument or from stdin (use "-" or omit
+the argument to read from stdin).
+
+JSON fields:
+  app_id           string  GitHub App numeric ID (required)
+  url              string  URL prefix this App applies to (required)
+  private_key      string  Raw App private key content (PEM)
+  private_key_file string  Path to GitHub App private key (.pem) file
+
+Provide either private_key or private_key_file, not both.`,
+	Example: `  jh admin credential add github-app '{"app_id":"12345","url":"https://github.com/my-org","private_key_file":"app.pem"}'
+  jh admin credential add github-app '{"app_id":"12345","url":"https://github.com/my-org","private_key":"-----BEGIN RSA PRIVATE KEY-----\n..."}'`,
+	Args: cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		jsonData, err := readJSONInput(args)
+		if err != nil {
+			fmt.Printf("Failed to read input: %v\n", err)
+			os.Exit(1)
+		}
+
+		if err := addCredentialGitHubApp(server, jsonData); err != nil {
+			fmt.Printf("Failed to add GitHub App credential: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var credentialUpdateCmd = &cobra.Command{
+	Use:   "update",
+	Short: "Update an existing credential",
+	Long: `Update an existing credential on JuliaHub.
+
+Use one of the subcommands to update a specific credential type:
+  token      - Update a token credential (url and/or value)
+  ssh        - Update an SSH credential (host key and/or private key)
+  github-app - Update a GitHub App credential (url and/or private key)`,
+}
+
+var credentialUpdateTokenCmd = &cobra.Command{
+	Use:   "token [JSON]",
+	Short: "Update a token credential",
+	Long: `Update an existing token credential.
+
+Accepts a JSON object as a positional argument or from stdin.
+
+JSON fields:
+  name   string  Token name — identifies the token to update (required)
+  url    string  New URL prefix
+  value  string  New token value
+
+At least one of url or value must be provided.`,
+	Example: `  jh admin credential update token '{"name":"MyGHToken","url":"https://github.com/new-org"}'
+  jh admin credential update token '{"name":"MyGHToken","value":"ghp_newvalue"}'`,
+	Args: cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		jsonData, err := readJSONInput(args)
+		if err != nil {
+			fmt.Printf("Failed to read input: %v\n", err)
+			os.Exit(1)
+		}
+		if err := updateCredentialToken(server, jsonData); err != nil {
+			fmt.Printf("Failed to update token credential: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var credentialUpdateSSHCmd = &cobra.Command{
+	Use:   "ssh [JSON]",
+	Short: "Update an SSH credential",
+	Long: `Update an existing SSH credential by its 1-based index.
+
+Accepts a JSON object as a positional argument or from stdin.
+
+JSON fields:
+  index            int     1-based position in the SSH key list (required)
+  host_key         string  New SSH host key string
+  private_key      string  New raw SSH private key content (PEM)
+  private_key_file string  Path to new SSH private key file
+
+At least one of host_key, private_key, or private_key_file must be provided.
+Provide either private_key or private_key_file, not both.`,
+	Example: `  jh admin credential update ssh '{"index":1,"host_key":"github.com ssh-ed25519 AAAA..."}'
+  jh admin credential update ssh '{"index":1,"private_key_file":"/home/user/.ssh/new_key"}'`,
+	Args: cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		jsonData, err := readJSONInput(args)
+		if err != nil {
+			fmt.Printf("Failed to read input: %v\n", err)
+			os.Exit(1)
+		}
+		if err := updateCredentialSSH(server, jsonData); err != nil {
+			fmt.Printf("Failed to update SSH credential: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var credentialUpdateGitHubAppCmd = &cobra.Command{
+	Use:   "github-app [JSON]",
+	Short: "Update a GitHub App credential",
+	Long: `Update an existing GitHub App credential.
+
+Accepts a JSON object as a positional argument or from stdin.
+
+JSON fields:
+  app_id           string  GitHub App ID — identifies the App to update (required)
+  url              string  New URL prefix
+  private_key      string  New raw App private key content (PEM)
+  private_key_file string  Path to new GitHub App private key (.pem) file
+
+At least one of url, private_key, or private_key_file must be provided.
+Provide either private_key or private_key_file, not both.`,
+	Example: `  jh admin credential update github-app '{"app_id":"12345","url":"https://github.com/new-org"}'
+  jh admin credential update github-app '{"app_id":"12345","private_key_file":"new_app.pem"}'`,
+	Args: cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		jsonData, err := readJSONInput(args)
+		if err != nil {
+			fmt.Printf("Failed to read input: %v\n", err)
+			os.Exit(1)
+		}
+		if err := updateCredentialGitHubApp(server, jsonData); err != nil {
+			fmt.Printf("Failed to update GitHub App credential: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var credentialDeleteCmd = &cobra.Command{
+	Use:   "delete",
+	Short: "Delete a credential",
+	Long: `Delete a credential from JuliaHub.
+
+Use one of the subcommands to delete a specific credential type:
+  token      - Delete a token by name
+  ssh        - Delete an SSH key by 1-based index
+  github-app - Delete a GitHub App by App ID`,
+}
+
+var credentialDeleteTokenCmd = &cobra.Command{
+	Use:     "token <name>",
+	Short:   "Delete a token credential",
+	Example: "  jh admin credential delete token MyGHToken",
+	Args:    cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		if err := deleteCredentialToken(server, args[0]); err != nil {
+			fmt.Printf("Failed to delete token credential: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var credentialDeleteSSHCmd = &cobra.Command{
+	Use:     "ssh <index>",
+	Short:   "Delete an SSH credential by 1-based index",
+	Example: "  jh admin credential delete ssh 1",
+	Args:    cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		var index int
+		if _, err := fmt.Sscan(args[0], &index); err != nil || index <= 0 {
+			fmt.Printf("Invalid index %q: must be a positive integer\n", args[0])
+			os.Exit(1)
+		}
+		if err := deleteCredentialSSH(server, index); err != nil {
+			fmt.Printf("Failed to delete SSH credential: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var credentialDeleteGitHubAppCmd = &cobra.Command{
+	Use:     "github-app <app-id>",
+	Short:   "Delete a GitHub App credential by App ID",
+	Example: "  jh admin credential delete github-app 12345",
+	Args:    cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		if err := deleteCredentialGitHubApp(server, args[0]); err != nil {
+			fmt.Printf("Failed to delete GitHub App credential: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
 var tokenListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all tokens",
@@ -1838,6 +2185,7 @@ func init() {
 	userListCmd.Flags().Bool("verbose", false, "Show detailed user information")
 	tokenListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	tokenListCmd.Flags().Bool("verbose", false, "Show detailed token information")
+	credentialListCmd.Flags().Bool("verbose", false, "Show detailed credential information")
 	landingShowCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	landingUpdateCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	landingUpdateCmd.Flags().StringP("file", "f", "", "Path to a markdown file to use as landing page content")
@@ -1877,8 +2225,12 @@ func init() {
 	adminGroupCmd.AddCommand(groupListCmd)
 	adminUserCmd.AddCommand(userListCmd)
 	adminTokenCmd.AddCommand(tokenListCmd)
+	credentialAddCmd.AddCommand(credentialAddTokenCmd, credentialAddSSHCmd, credentialAddGitHubAppCmd)
+	credentialUpdateCmd.AddCommand(credentialUpdateTokenCmd, credentialUpdateSSHCmd, credentialUpdateGitHubAppCmd)
+	credentialDeleteCmd.AddCommand(credentialDeleteTokenCmd, credentialDeleteSSHCmd, credentialDeleteGitHubAppCmd)
+	adminCredentialCmd.AddCommand(credentialListCmd, credentialAddCmd, credentialUpdateCmd, credentialDeleteCmd)
 	adminLandingCmd.AddCommand(landingShowCmd, landingUpdateCmd, landingRemoveCmd)
-	adminCmd.AddCommand(adminUserCmd, adminTokenCmd, adminGroupCmd, adminLandingCmd)
+	adminCmd.AddCommand(adminUserCmd, adminTokenCmd, adminGroupCmd, adminCredentialCmd, adminLandingCmd)
 	juliaCmd.AddCommand(juliaInstallCmd)
 	runCmd.AddCommand(runSetupCmd)
 	gitCredentialCmd.AddCommand(gitCredentialHelperCmd, gitCredentialGetCmd, gitCredentialStoreCmd, gitCredentialEraseCmd, gitCredentialSetupCmd)
