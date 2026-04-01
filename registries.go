@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -254,6 +255,282 @@ type saveStatusResponse struct {
 		Success bool   `json:"success"`
 		Message string `json:"message"`
 	} `json:"result"`
+}
+
+// RegistryPermission represents a single user or group permission entry for a registry.
+type RegistryPermission struct {
+	User      *string `json:"user"`
+	Realm     *string `json:"realm"`
+	Group     *string `json:"group"`
+	Privilege string  `json:"privilege"`
+}
+
+func resolveRegistryUUID(server, idToken, nameOrUUID string) (string, error) {
+	body, err := apiGet(fmt.Sprintf("https://%s/api/v1/registry/registries/descriptions", server), idToken)
+	if err != nil {
+		return "", err
+	}
+	var registries []Registry
+	if err := json.Unmarshal(body, &registries); err != nil {
+		return "", fmt.Errorf("failed to parse registries: %w", err)
+	}
+	for _, r := range registries {
+		if r.UUID == nameOrUUID || r.Name == nameOrUUID {
+			return r.UUID, nil
+		}
+	}
+	return "", fmt.Errorf("registry %q not found", nameOrUUID)
+}
+
+func getRegistryPermissions(server, idToken, uuid string) ([]RegistryPermission, error) {
+	body, err := apiGet(fmt.Sprintf("https://%s/api/v1/registry/config/registry/%s/sharing", server, uuid), idToken)
+	if err != nil {
+		return nil, err
+	}
+	var perms []RegistryPermission
+	if err := json.Unmarshal(body, &perms); err != nil {
+		return nil, fmt.Errorf("failed to parse permissions: %w", err)
+	}
+	return perms, nil
+}
+
+func putRegistryPermissions(server, idToken, uuid string, perms []RegistryPermission) error {
+	data, err := json.Marshal(perms)
+	if err != nil {
+		return fmt.Errorf("failed to marshal permissions: %w", err)
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	req, err := http.NewRequest("POST", fmt.Sprintf("https://%s/api/v1/registry/config/registry/%s/sharing", server, uuid), bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", idToken))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("API request failed (status %d): %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+func listRegistryPermissions(server, name string) error {
+	token, err := ensureValidToken()
+	if err != nil {
+		return fmt.Errorf("authentication required: %w", err)
+	}
+	uuid, err := resolveRegistryUUID(server, token.IDToken, name)
+	if err != nil {
+		return err
+	}
+	perms, err := getRegistryPermissions(server, token.IDToken, uuid)
+	if err != nil {
+		return err
+	}
+	if len(perms) == 0 {
+		fmt.Println("No permissions set (registry is accessible to all users)")
+		return nil
+	}
+	fmt.Printf("%-30s %-8s %s\n", "User/Group", "Type", "Privilege")
+	fmt.Printf("%s\n", strings.Repeat("-", 52))
+	for _, p := range perms {
+		subject, kind := "", ""
+		if p.User != nil {
+			subject, kind = *p.User, "user"
+		} else if p.Group != nil {
+			subject, kind = *p.Group, "group"
+		}
+		fmt.Printf("%-30s %-8s %s\n", subject, kind, p.Privilege)
+	}
+	return nil
+}
+
+func setRegistryPermission(server, name, user, group, privilege string) error {
+	if privilege != "download" && privilege != "register" {
+		return fmt.Errorf("privilege must be 'download' or 'register'")
+	}
+	token, err := ensureValidToken()
+	if err != nil {
+		return fmt.Errorf("authentication required: %w", err)
+	}
+	uuid, err := resolveRegistryUUID(server, token.IDToken, name)
+	if err != nil {
+		return err
+	}
+	perms, err := getRegistryPermissions(server, token.IDToken, uuid)
+	if err != nil {
+		return err
+	}
+	found := false
+	for i, p := range perms {
+		if user != "" && p.User != nil && *p.User == user {
+			perms[i].Privilege = privilege
+			found = true
+			break
+		}
+		if group != "" && p.Group != nil && *p.Group == group {
+			perms[i].Privilege = privilege
+			found = true
+			break
+		}
+	}
+	if !found {
+		newPerm := RegistryPermission{Privilege: privilege}
+		if user != "" {
+			newPerm.User = &user
+		} else {
+			realm := "site"
+			newPerm.Group = &group
+			newPerm.Realm = &realm
+		}
+		perms = append(perms, newPerm)
+	}
+	if err := putRegistryPermissions(server, token.IDToken, uuid, perms); err != nil {
+		return err
+	}
+	subject := user
+	if group != "" {
+		subject = group
+	}
+	action := "updated"
+	if !found {
+		action = "added"
+	}
+	fmt.Printf("Permission %s: %s now has '%s' access\n", action, subject, privilege)
+	return nil
+}
+
+func removeRegistryPermission(server, name, user, group string) error {
+	token, err := ensureValidToken()
+	if err != nil {
+		return fmt.Errorf("authentication required: %w", err)
+	}
+	uuid, err := resolveRegistryUUID(server, token.IDToken, name)
+	if err != nil {
+		return err
+	}
+	perms, err := getRegistryPermissions(server, token.IDToken, uuid)
+	if err != nil {
+		return err
+	}
+	original := len(perms)
+	filtered := perms[:0]
+	for _, p := range perms {
+		keep := true
+		if user != "" && p.User != nil && *p.User == user {
+			keep = false
+		}
+		if group != "" && p.Group != nil && *p.Group == group {
+			keep = false
+		}
+		if keep {
+			filtered = append(filtered, p)
+		}
+	}
+	if len(filtered) == original {
+		subject := user
+		if group != "" {
+			subject = group
+		}
+		return fmt.Errorf("%q has no permission on this registry", subject)
+	}
+	if err := putRegistryPermissions(server, token.IDToken, uuid, filtered); err != nil {
+		return err
+	}
+	subject := user
+	if group != "" {
+		subject = group
+	}
+	fmt.Printf("Permission removed: %s\n", subject)
+	return nil
+}
+
+func getRegistrator(server, name string) error {
+	token, err := ensureValidToken()
+	if err != nil {
+		return fmt.Errorf("authentication required: %w", err)
+	}
+
+	body, err := apiGet(fmt.Sprintf("https://%s/api/v1/registry/config/registrator/%s", server, name), token.IDToken)
+	if err != nil {
+		return err
+	}
+
+	var pretty bytes.Buffer
+	if err := json.Indent(&pretty, body, "", "  "); err != nil {
+		fmt.Println(string(body))
+		return nil
+	}
+	fmt.Println(pretty.String())
+	return nil
+}
+
+func setRegistrator(server, name, filePath string) error {
+	token, err := ensureValidToken()
+	if err != nil {
+		return fmt.Errorf("authentication required: %w", err)
+	}
+
+	var data []byte
+	if filePath != "" {
+		data, err = os.ReadFile(filePath)
+		if err != nil {
+			return fmt.Errorf("failed to read file %q: %w", filePath, err)
+		}
+	} else {
+		stat, _ := os.Stdin.Stat()
+		if (stat.Mode() & os.ModeCharDevice) != 0 {
+			return fmt.Errorf("no JSON payload provided — pipe JSON via stdin or use --file")
+		}
+		data, err = io.ReadAll(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("failed to read stdin: %w", err)
+		}
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	if enabled, _ := payload["enabled"].(bool); enabled {
+		if email, _ := payload["email"].(string); email == "" {
+			return fmt.Errorf("\"email\" is required when registrator is enabled")
+		}
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	apiURL := fmt.Sprintf("https://%s/api/v1/registry/config/registrator/%s", server, name)
+	client := &http.Client{Timeout: 30 * time.Second}
+	req, err := http.NewRequest("POST", apiURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("API request failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	fmt.Println("Registrator updated successfully")
+	return nil
 }
 
 func pollRegistrySaveStatus(server, idToken, registryName, operation string) error {

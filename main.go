@@ -1029,6 +1029,105 @@ Use --verbose flag to display comprehensive information including:
 	},
 }
 
+var registryPermissionCmd = &cobra.Command{
+	Use:   "permission",
+	Short: "Manage registry permissions",
+	Long: `Manage access permissions for a Julia package registry.
+
+Permissions control which users and groups can access the registry.
+Supported privilege levels:
+  download          - read-only access to download packages
+  register          - download access plus ability to register packages
+
+The registry owner and admins can always manage permissions regardless of settings.`,
+}
+
+var registryPermissionListCmd = &cobra.Command{
+	Use:     "list <registry>",
+	Short:   "List permissions for a registry",
+	Example: "  jh registry permission list MyRegistry\n  jh registry permission list MyRegistry -s custom.juliahub.com",
+	Args:    cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		if err := listRegistryPermissions(server, args[0]); err != nil {
+			fmt.Printf("Failed to list permissions: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var registryPermissionSetCmd = &cobra.Command{
+	Use:   "set <registry>",
+	Short: "Add or update a permission for a user or group",
+	Long: `Add or update access permission for a user or group on a registry.
+
+Exactly one of --user or --group must be provided.
+Privilege must be 'download' or 'register'.`,
+	Example: "  jh registry permission set MyRegistry --user alice --privilege download\n  jh registry permission set MyRegistry --group devs --privilege register",
+	Args:    cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		user, _ := cmd.Flags().GetString("user")
+		group, _ := cmd.Flags().GetString("group")
+		privilege, _ := cmd.Flags().GetString("privilege")
+		if user == "" && group == "" {
+			fmt.Println("Error: one of --user or --group is required")
+			os.Exit(1)
+		}
+		if user != "" && group != "" {
+			fmt.Println("Error: only one of --user or --group may be specified")
+			os.Exit(1)
+		}
+		if privilege == "" {
+			fmt.Println("Error: --privilege is required (download or register)")
+			os.Exit(1)
+		}
+		if err := setRegistryPermission(server, args[0], user, group, privilege); err != nil {
+			fmt.Printf("Failed to set permission: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var registryPermissionRemoveCmd = &cobra.Command{
+	Use:   "remove <registry>",
+	Short: "Remove a permission for a user or group",
+	Long: `Remove access permission for a user or group from a registry.
+
+Exactly one of --user or --group must be provided.`,
+	Example: "  jh registry permission remove MyRegistry --user alice\n  jh registry permission remove MyRegistry --group devs",
+	Args:    cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		user, _ := cmd.Flags().GetString("user")
+		group, _ := cmd.Flags().GetString("group")
+		if user == "" && group == "" {
+			fmt.Println("Error: one of --user or --group is required")
+			os.Exit(1)
+		}
+		if user != "" && group != "" {
+			fmt.Println("Error: only one of --user or --group may be specified")
+			os.Exit(1)
+		}
+		if err := removeRegistryPermission(server, args[0], user, group); err != nil {
+			fmt.Printf("Failed to remove permission: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
 var projectCmd = &cobra.Command{
 	Use:   "project",
 	Short: "Project management commands",
@@ -1121,6 +1220,45 @@ Shows comprehensive user information including:
 Uses GraphQL API to fetch detailed user information.`,
 }
 
+var userListGQLCmd = &cobra.Command{
+	Use:     "list",
+	Short:   "List all users",
+	Example: "  jh user list\n  jh user list -s custom.juliahub.com",
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		if err := listUsersGQL(server); err != nil {
+			fmt.Printf("Failed to list users: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var groupCmd = &cobra.Command{
+	Use:   "group",
+	Short: "Group information commands",
+}
+
+var groupListGQLCmd = &cobra.Command{
+	Use:     "list",
+	Short:   "List all groups",
+	Example: "  jh group list\n  jh group list -s custom.juliahub.com",
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		if err := listGroupsGQL(server); err != nil {
+			fmt.Printf("Failed to list groups: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
 var userInfoCmd = &cobra.Command{
 	Use:   "info",
 	Short: "Show user information",
@@ -1160,8 +1298,7 @@ Use --verbose flag to display comprehensive information including:
 - JuliaHub groups and site groups
 - Feature flags
 
-This command uses the /app/config/features/manage endpoint which requires
-appropriate permissions to view all users.`,
+This command requires appropriate administrator permissions to view all users (including staged).`,
 	Example: "  jh admin user list\n  jh admin user list --verbose",
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
@@ -1583,6 +1720,31 @@ Provides commands to list and manage API tokens across the JuliaHub instance.
 Note: These commands require appropriate administrative permissions.`,
 }
 
+var adminGroupCmd = &cobra.Command{
+	Use:   "group",
+	Short: "Group management commands",
+	Long: `Administrative commands for managing groups on JuliaHub.
+
+Provides commands to list and manage groups across the JuliaHub instance.`,
+}
+
+var groupListCmd = &cobra.Command{
+	Use:     "list",
+	Short:   "List all groups",
+	Example: "  jh admin group list\n  jh admin group list -s custom.juliahub.com",
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		if err := listGroups(server); err != nil {
+			fmt.Printf("Failed to list groups: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
 var adminCredentialCmd = &cobra.Command{
 	Use:   "credential",
 	Short: "Credential management commands",
@@ -1942,8 +2104,7 @@ Use --verbose flag to display comprehensive information including:
 - Expiration date (with estimate indicator)
 - Expiration status
 
-This command uses the /app/token/activelist endpoint which requires
-appropriate permissions to view all tokens.`,
+This command requires appropriate permissions to view all tokens.`,
 	Example: "  jh admin token list\n  jh admin token list --verbose",
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
@@ -2030,9 +2191,23 @@ func init() {
 	registryConfigUpdateCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	registryConfigUpdateCmd.Flags().StringP("file", "f", "", "Path to JSON config file (reads from stdin if omitted)")
 	registryConfigCmd.AddCommand(registryConfigAddCmd, registryConfigUpdateCmd)
-	registryCmd.AddCommand(registryListCmd, registryConfigCmd)
+	registryPermissionListCmd.Flags().StringP("server", "s", "", "JuliaHub server")
+	registryPermissionSetCmd.Flags().StringP("server", "s", "", "JuliaHub server")
+	registryPermissionSetCmd.Flags().String("user", "", "Username to set permission for")
+	registryPermissionSetCmd.Flags().String("group", "", "Group name to set permission for")
+	registryPermissionSetCmd.Flags().String("privilege", "", "Privilege level: download or register")
+	registryPermissionRemoveCmd.Flags().StringP("server", "s", "", "JuliaHub server")
+	registryPermissionRemoveCmd.Flags().String("user", "", "Username to remove permission for")
+	registryPermissionRemoveCmd.Flags().String("group", "", "Group name to remove permission for")
+	registryPermissionCmd.AddCommand(registryPermissionListCmd, registryPermissionSetCmd, registryPermissionRemoveCmd)
+	registryCmd.AddCommand(registryListCmd, registryConfigCmd, registryPermissionCmd)
 	projectCmd.AddCommand(projectListCmd)
-	userCmd.AddCommand(userInfoCmd)
+	userListGQLCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	userCmd.AddCommand(userInfoCmd, userListGQLCmd)
+	groupListGQLCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	groupCmd.AddCommand(groupListGQLCmd)
+	groupListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	adminGroupCmd.AddCommand(groupListCmd)
 	adminUserCmd.AddCommand(userListCmd)
 	adminTokenCmd.AddCommand(tokenListCmd)
 	credentialAddCmd.AddCommand(credentialAddTokenCmd, credentialAddSSHCmd, credentialAddGitHubAppCmd)
@@ -2040,12 +2215,12 @@ func init() {
 	credentialDeleteCmd.AddCommand(credentialDeleteTokenCmd, credentialDeleteSSHCmd, credentialDeleteGitHubAppCmd)
 	adminCredentialCmd.AddCommand(credentialListCmd, credentialAddCmd, credentialUpdateCmd, credentialDeleteCmd)
 	adminLandingCmd.AddCommand(landingShowCmd, landingUpdateCmd, landingRemoveCmd)
-	adminCmd.AddCommand(adminUserCmd, adminTokenCmd, adminCredentialCmd, adminLandingCmd)
+	adminCmd.AddCommand(adminUserCmd, adminTokenCmd, adminGroupCmd, adminCredentialCmd, adminLandingCmd)
 	juliaCmd.AddCommand(juliaInstallCmd)
 	runCmd.AddCommand(runSetupCmd)
 	gitCredentialCmd.AddCommand(gitCredentialHelperCmd, gitCredentialGetCmd, gitCredentialStoreCmd, gitCredentialEraseCmd, gitCredentialSetupCmd)
 
-	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, projectCmd, packageCmd, registryCmd, userCmd, adminCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd)
+	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, projectCmd, packageCmd, registryCmd, userCmd, groupCmd, adminCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd)
 }
 
 func main() {

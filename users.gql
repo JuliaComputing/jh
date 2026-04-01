@@ -1,0 +1,12 @@
+query Users($name: String = "%", $limit: Int = 100) {
+  users: public_users(
+    limit: $limit
+    where: {
+      _or: [{ username: { _ilike: $name } }, { name: { _ilike: $name } }]
+    }
+  ) {
+    username
+    id
+    name
+  }
+}
