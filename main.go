@@ -621,26 +621,15 @@ PROVIDER TYPES
 
   cacheserver — sync from a JuliaHub package cache:
   {
-    "type":                   "cacheserver",
-    "host":                   "<hostname>",
-    "credential_key":         "<token-id>",
-    "server_type":            "",
-    "github_credential_type": "",
-    "api_host":               "",
-    "url":                    "",
-    "user_name":              ""
+    "type":           "cacheserver",
+    "host":           "<hostname>",
+    "credential_key": "<token-id>"
   }
 
   bundle — local bundle (sets license_detect: false automatically):
   {
-    "type":                   "bundle",
-    "credential_key":         "",
-    "server_type":            "",
-    "github_credential_type": "",
-    "api_host":               "",
-    "url":                    "",
-    "user_name":              "",
-    "host":                   ""
+    "type":           "bundle",
+    "credential_key": ""
   }
 
   genericserver — generic server with basic auth:
@@ -1360,7 +1349,8 @@ Use --verbose flag to display comprehensive information including:
 - JuliaHub groups and site groups
 - Feature flags
 
-This command requires appropriate administrator permissions to view all users (including staged).`,
+This command uses the /app/config/features/manage endpoint which requires
+appropriate permissions to view all users.`,
 	Example: "  jh admin user list\n  jh admin user list --verbose",
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
@@ -2166,7 +2156,8 @@ Use --verbose flag to display comprehensive information including:
 - Expiration date (with estimate indicator)
 - Expiration status
 
-This command requires appropriate permissions to view all tokens.`,
+This command uses the /app/token/activelist endpoint which requires
+appropriate permissions to view all tokens.`,
 	Example: "  jh admin token list\n  jh admin token list --verbose",
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
