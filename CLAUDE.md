@@ -36,7 +36,7 @@ The application follows a command-line interface pattern using the Cobra library
 2. **API Integration**:
    - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/registry/registries/descriptions`, `/api/v1/registry/config/registry/{name}`, `/api/v1/registry/config/registrator/{name}`), package search/info primary path (`/packages/info`), token management (`/app/token/activelist`), user management (`/app/config/features/manage`), admin group management (`/app/config/groups`), registry credential management (old API tried first, new API fallback), and landing page management (`/app/homepage` GET, `/app/config/homepage` POST/DELETE)
    - **GraphQL API**: Used for projects, user info, user list (`public_users`), group list, and package search/info fallback (`/v1/graphql`)
-   - **Headers**: All GraphQL requests require `Authorization: Bearer <id_token>`, `X-Hasura-Role: jhuser`, and `X-Juliahub-Ensure-JS: true`
+   - **Headers**: All GraphQL requests require `X-Hasura-Role: jhuser` header
    - **Authentication**: Uses ID tokens (`token.IDToken`) for API calls
 
 3. **Command Structure**:
@@ -138,8 +138,7 @@ echo '{
   "enabled": true, "display_apps": true, "owner": "", "sync_schedule": null,
   "download_providers": [{
     "type": "cacheserver", "host": "https://pkg.juliahub.com",
-    "credential_key": "JC Auth Token",
-    "server_type": "", "github_credential_type": "", "api_host": "", "url": "", "user_name": ""
+    "credential_key": "JC Auth Token"
   }]
 }' | go run . registry config add
 go run . registry config add --file registry.json
@@ -427,7 +426,7 @@ jh run setup
 ## Development Notes
 
 - All ID fields in GraphQL responses should be typed correctly (string for UUIDs, int64 for user IDs)
-- GraphQL queries are embedded at compile time using `go:embed` from `.gql` files (`userinfo.gql`, `users.gql`, `groups.gql`, `projects.gql`)
+- GraphQL queries are embedded as strings (consider external .gql files for complex queries)
 - Error handling includes both HTTP and GraphQL error responses
 - Token refresh is automatic via `ensureValidToken()`
 - File uploads use multipart form data with proper content types
@@ -447,7 +446,7 @@ jh run setup
 - `jh group list` uses GraphQL groups query (via `groups.gql`) and displays one group name per line
 - Admin user list command (`jh admin user list`) uses REST API endpoint `/app/config/features/manage` which requires appropriate permissions
 - Admin group list command (`jh admin group list`) uses REST API endpoint `/app/config/groups` which requires appropriate permissions
-- Admin user list output is compact by default (`<name> (<email>)`); use `--verbose` flag for detailed information (UUID, groups, features)
+- User list output is concise by default (Name and Email only); use `--verbose` flag for detailed information (UUID, groups, features)
 - Registry list output is concise by default (UUID and Name only); use `--verbose` flag for detailed information (owner, creation date, package count, description)
 - Registry config command (`jh registry config <name>`) uses REST API endpoint `/api/v1/registry/config/registry/{name}` (GET) and prints the full JSON response
 - Registry add/update commands (`jh registry config add` / `jh registry config update`) use REST API endpoint `/api/v1/registry/config/registry/{name}` (POST); the backend creates or updates based on whether the registry already exists

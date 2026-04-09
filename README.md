@@ -205,7 +205,7 @@ go build -o jh .
 
 ### User Information (`jh user`)
 
-- `jh user info` - Show detailed information about the logged-in user
+- `jh user info` - Show detailed user information
 - `jh user list` - List all users (`<name> (<username>)` format, via GraphQL)
 
 ### Group Information (`jh group`)
@@ -216,7 +216,7 @@ go build -o jh .
 
 #### User Management
 - `jh admin user list` - List all users (requires appropriate permissions)
-  - Default: Shows `<name> (<email>)` per line
+  - Default: Shows only Name and Email
   - `jh admin user list --verbose` - Show detailed user information including UUID, groups, and features
 
 #### Group Management
@@ -343,8 +343,7 @@ echo '{
   "enabled": true, "display_apps": true, "owner": "", "sync_schedule": null,
   "download_providers": [{
     "type": "cacheserver", "host": "https://pkg.juliahub.com",
-    "credential_key": "JC Auth Token",
-    "server_type": "", "github_credential_type": "", "api_host": "", "url": "", "user_name": ""
+    "credential_key": "JC Auth Token"
   }]
 }' | jh registry config add
 
