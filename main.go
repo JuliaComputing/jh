@@ -175,7 +175,7 @@ Available command categories:
   pull      - Pull changes with authentication
   julia     - Julia installation and management
   run       - Run Julia with JuliaHub configuration
-  scan      - Scan a package for known vulnerabilities
+  vuln      - Scan a package for known vulnerabilities
 
 Use 'jh <command> --help' for more information about a specific command.`,
 }
@@ -654,7 +654,7 @@ check a specific version. Only advisories that affect the queried version are sh
 by default; use --all to list all advisories regardless of affected status.
 
 Use --advisory to look up a specific advisory by ID.`,
-	Example: "  jh scan MbedTLS_jll\n  jh scan MbedTLS_jll --version 2.28.1010+0\n  jh scan MbedTLS_jll --all\n  jh scan MbedTLS_jll --advisory GHSA-xxx-yyy-zzz",
+	Example: "  jh vuln MbedTLS_jll\n  jh vuln MbedTLS_jll --version 2.28.1010+0\n  jh vuln MbedTLS_jll --all\n  jh vuln MbedTLS_jll --advisory JLSEC-2025-232",
 	Args:    cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
@@ -695,7 +695,7 @@ Use --advisory to look up a specific advisory by ID.`,
 		if advisory != "" {
 			for _, v := range vulns {
 				if strings.EqualFold(v.AdvisoryID, advisory) {
-					printAdvisory(&v, true, verbose)
+					printAdvisory(&v, verbose)
 					return
 				}
 			}
@@ -729,7 +729,7 @@ Use --advisory to look up a specific advisory by ID.`,
 			if i > 0 {
 				fmt.Println()
 			}
-			printAdvisory(&toShow[i], false, verbose)
+			printAdvisory(&toShow[i], verbose)
 		}
 	},
 }

@@ -101,7 +101,7 @@ func advisoryLink(v *PackageVulnerability) string {
 	return fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", url, v.AdvisoryID)
 }
 
-func printAdvisory(v *PackageVulnerability, showRanges bool, verbose bool) {
+func printAdvisory(v *PackageVulnerability, verbose bool) {
 	fmt.Printf("Advisory: %s\n", advisoryLink(v))
 	if v.IsAffected != nil {
 		if *v.IsAffected {
