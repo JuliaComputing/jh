@@ -1,0 +1,12 @@
+query Groups($name: String = "%", $limit: Int = 100) {
+  groups(where: { name: { _ilike: $name } }, limit: $limit) {
+    name
+    group_id
+  }
+  products {
+    name
+    display_name
+    id
+    compute_type_name
+  }
+}
