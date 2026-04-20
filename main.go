@@ -1179,7 +1179,6 @@ REGISTRATOR JSON SCHEMA
 	},
 }
 
-
 var projectCmd = &cobra.Command{
 	Use:   "project",
 	Short: "Project management commands",
