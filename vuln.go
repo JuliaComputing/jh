@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -79,12 +80,28 @@ func fetchLatestVersion(server, registry, packageName string) (string, error) {
 	return versions[0], nil
 }
 
-// topSeverity returns the highest CVSS_V3 score string, or the first available, or "N/A".
+// topSeverity returns the highest numeric CVSS_V3 score, or the first available, or "N/A".
 func topSeverity(scores []SeverityScore) string {
+	bestScore := ""
+	bestValue := -1.0
 	for _, s := range scores {
-		if strings.HasPrefix(s.Type, "CVSS_V3") && s.Score != "" {
-			return s.Score
+		if !strings.HasPrefix(s.Type, "CVSS_V3") || s.Score == "" {
+			continue
 		}
+		v, err := strconv.ParseFloat(s.Score, 64)
+		if err != nil {
+			if bestScore == "" {
+				bestScore = s.Score
+			}
+			continue
+		}
+		if v > bestValue {
+			bestValue = v
+			bestScore = s.Score
+		}
+	}
+	if bestScore != "" {
+		return bestScore
 	}
 	if len(scores) > 0 && scores[0].Score != "" {
 		return scores[0].Score
