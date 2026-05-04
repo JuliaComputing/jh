@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Go-based CLI tool for interacting with JuliaHub, a platform for Julia computing. The CLI provides commands for authentication, dataset management, registry management, package management, project management, user information, token management, registry credential management, landing page management, Git integration, and Julia integration.
+This is a Go-based CLI tool for interacting with JuliaHub, a platform for Julia computing. The CLI provides commands for authentication, dataset management, registry management, package management, project management, user information, token management, registry credential management, landing page management, vulnerability scanning, Git integration, and Julia integration.
 
 ## Architecture
 
@@ -20,6 +20,7 @@ The application follows a command-line interface pattern using the Cobra library
 - **tokens.go**: Token management operations (list) with REST API integration
 - **credentials.go**: Registry credential management (list, add, update, delete) with REST API integration
 - **landing.go**: Landing page management (show, update, remove) with REST API integration
+- **vuln.go**: Vulnerability scanning for Julia packages via REST API
 - **git.go**: Git integration (clone, push, fetch, pull) with JuliaHub authentication
 - **julia.go**: Julia installation and management
 - **run.go**: Julia execution with JuliaHub configuration
@@ -34,7 +35,7 @@ The application follows a command-line interface pattern using the Cobra library
    - Stores tokens securely in `~/.juliahub` with 0600 permissions
 
 2. **API Integration**:
-   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/registry/registries/descriptions`, `/api/v1/registry/config/registry/{name}`, `/api/v1/registry/config/registrator/{name}`), package search/info primary path (`/packages/info`), token management (`/app/token/activelist`), user management (`/app/config/features/manage`), admin group management (`/app/config/groups`), registry credential management (old API tried first, new API fallback), and landing page management (`/app/homepage` GET, `/app/config/homepage` POST/DELETE)
+   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/registry/registries/descriptions`, `/api/v1/registry/config/registry/{name}`, `/api/v1/registry/config/registrator/{name}`), package search/info primary path (`/packages/info`), token management (`/app/token/activelist`), user management (`/app/config/features/manage`), admin group management (`/app/config/groups`), registry credential management (old API tried first, new API fallback), landing page management (`/app/homepage` GET, `/app/config/homepage` POST/DELETE), and vulnerability scanning (`/api/v1/ui/vulnerabilities/packages/{name}`)
    - **GraphQL API**: Used for projects, user info, user list (`public_users`), group list, and package search/info fallback (`/v1/graphql`)
    - **Headers**: All GraphQL requests require `Authorization: Bearer <id_token>`, `X-Hasura-Role: jhuser`, and `X-Juliahub-Ensure-JS: true`
    - **Authentication**: Uses ID tokens (`token.IDToken`) for API calls
@@ -56,6 +57,7 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh admin credential update`: Update a credential — subcommands: `token`, `ssh`, `github-app`; accepts JSON argument or stdin
    - `jh admin credential delete`: Delete a credential — subcommands: `token`, `ssh`, `github-app`; takes positional identifier
    - `jh admin landing-page`: Landing page management (show/update/remove custom markdown landing page with REST API)
+   - `jh vuln`: Vulnerability scanning for Julia packages (REST API; defaults to latest stable version via `GET /docs/<registry>/<package>/versions.json`; supports `--version` for a specific version, `--registry` to specify the registry for version lookup (default: General), `--advisory` to filter to a specific advisory ID, `--all` to show all advisories regardless of affected status, and `--verbose` for additional details)
    - `jh clone`: Git clone with JuliaHub authentication and project name resolution
    - `jh push/fetch/pull`: Git operations with JuliaHub authentication
    - `jh git-credential`: Git credential helper for seamless authentication
@@ -191,6 +193,18 @@ go run . admin landing-page update '# Welcome to JuliaHub'
 go run . admin landing-page update --file landing.md
 cat landing.md | go run . admin landing-page update
 go run . admin landing-page remove
+```
+
+### Test vulnerability scan operations
+```bash
+go run . vuln MbedTLS_jll
+go run . vuln MbedTLS_jll --version 2.28.1010+0
+go run . vuln MbedTLS_jll --all
+go run . vuln MbedTLS_jll --advisory JLSEC-2025-232
+go run . vuln MbedTLS_jll --advisory JLSEC-2025-232 --verbose
+go run . vuln MbedTLS_jll --verbose
+go run . vuln MyPkg --registry MyRegistry
+go run . vuln SomePackage -s nightly.juliahub.dev
 ```
 
 ### Test Git operations
@@ -454,6 +468,14 @@ jh run setup
 - `executeGraphQL(server, token, req)` in `packages.go` is a shared helper for GraphQL POST requests (sets Authorization, Content-Type, Accept, X-Hasura-Role headers)
 - `getPackageInfo` in `packages.go` implements exact name-match lookup using REST-first (`getPackageInfoREST`), GraphQL fallback (`getPackageInfoGraphQL`); `packageInfoCmd` in `main.go` resolves registries via `fetchRegistries`
 - `getPackageDependencies` uses GraphQL (`fetchGraphQLPackages`) to locate the package, then fetches `/docs/{registry}/{package}/stable/pkg.json` for dependency data; no REST fallback (docs endpoint is authoritative)
+- `jh vuln` uses two REST endpoints: vulnerabilities at `/api/v1/ui/vulnerabilities/packages/{name}?version=<ver>` and latest version at `/docs/<registry>/<package>/versions.json` (first entry is latest); no GraphQL fallback
+- When no `--version` is given, `fetchLatestVersion` calls the versions.json endpoint (registry defaults to `General`, overridable with `--registry`)
+- By default only advisories where `is_affected == true` are shown; `--all` overrides this
+- Each advisory is printed as: Advisory ID (clickable OSC8 hyperlink to JuliaLang SecurityAdvisories), Affected (Yes/No), Severity scores (all, comma-separated), full Summary, Affected versions (one line), Version ranges (one line, with ranges type)
+- `--advisory <id>` filters to a single advisory (case-insensitive match); same output format
+- `--verbose` adds: Aliases, Published date, Modified date, References
+- `advisoryLink` in `vuln.go` builds the OSC8 terminal hyperlink to `https://github.com/JuliaLang/SecurityAdvisories.jl/blob/main/advisories/published/<year>/<id>.md`
+- `topSeverity` in `vuln.go` prefers CVSS_V3 scores; falls back to first available score; returns "N/A" if none
 
 ## Implementation Details
 
