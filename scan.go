@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -37,16 +41,148 @@ type ScanInputs struct {
 	ProjectBody  string
 }
 
+// manifestNameRe matches the manifest file names Julia/Pkg recognizes:
+// Manifest.toml and JuliaManifest.toml, plus the version-specific variants
+// Manifest-v1.11.toml / JuliaManifest-v1.11.toml.
+var manifestNameRe = regexp.MustCompile(`^(Julia)?Manifest(-v(\d+)\.(\d+))?\.toml$`)
+
+// projectNames are the project file names Pkg recognizes, in precedence order
+// (JuliaProject.toml is preferred over Project.toml).
+var projectNames = []string{"JuliaProject.toml", "Project.toml"}
+
+// manifestCandidate is a recognized manifest file found in a directory, with
+// the parsed pieces used to order candidates by Pkg's resolution precedence.
+type manifestCandidate struct {
+	path        string
+	name        string
+	juliaPrefix bool
+	versioned   bool
+	major       int
+	minor       int
+}
+
+// findManifestCandidates returns the manifest files in dir that Julia/Pkg
+// would recognize, ordered by resolution precedence (most-preferred first):
+// version-specific before unversioned, higher version before lower, and the
+// JuliaManifest* spelling before plain Manifest* at the same rank.
+func findManifestCandidates(dir string) ([]manifestCandidate, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read directory %q: %w", dir, err)
+	}
+	var cands []manifestCandidate
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		m := manifestNameRe.FindStringSubmatch(e.Name())
+		if m == nil {
+			continue
+		}
+		c := manifestCandidate{
+			path:        filepath.Join(dir, e.Name()),
+			name:        e.Name(),
+			juliaPrefix: m[1] != "",
+			versioned:   m[2] != "",
+		}
+		if c.versioned {
+			c.major, _ = strconv.Atoi(m[3])
+			c.minor, _ = strconv.Atoi(m[4])
+		}
+		cands = append(cands, c)
+	}
+	sort.SliceStable(cands, func(i, j int) bool {
+		a, b := cands[i], cands[j]
+		if a.versioned != b.versioned {
+			return a.versioned // versioned manifests take precedence
+		}
+		if a.versioned && b.versioned {
+			if a.major != b.major {
+				return a.major > b.major // newest version first
+			}
+			if a.minor != b.minor {
+				return a.minor > b.minor
+			}
+		}
+		if a.juliaPrefix != b.juliaPrefix {
+			return a.juliaPrefix // JuliaManifest* before Manifest*
+		}
+		return a.name < b.name
+	})
+	return cands, nil
+}
+
+// chooseManifest returns the single candidate when there is exactly one, or
+// prompts the user to pick when several are present. When stdin is not an
+// interactive terminal it returns an error listing the candidates so the
+// caller can re-run with an explicit manifest path.
+func chooseManifest(cands []manifestCandidate) (manifestCandidate, error) {
+	if len(cands) == 1 {
+		return cands[0], nil
+	}
+	if !stdinIsTerminal() {
+		names := make([]string, len(cands))
+		for i, c := range cands {
+			names[i] = c.name
+		}
+		return manifestCandidate{}, fmt.Errorf(
+			"multiple manifests found (%s); re-run with an explicit path, e.g. `jh scan %s`",
+			strings.Join(names, ", "), cands[0].path)
+	}
+	fmt.Fprintln(os.Stderr, "Multiple manifests found:")
+	for i, c := range cands {
+		fmt.Fprintf(os.Stderr, "  [%d] %s\n", i+1, c.name)
+	}
+	fmt.Fprintf(os.Stderr, "Select a manifest [1-%d] (default 1): ", len(cands))
+	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return cands[0], nil
+	}
+	idx, err := strconv.Atoi(line)
+	if err != nil || idx < 1 || idx > len(cands) {
+		return manifestCandidate{}, fmt.Errorf("invalid selection %q", line)
+	}
+	return cands[idx-1], nil
+}
+
+// stdinIsTerminal reports whether stdin is an interactive terminal, used to
+// decide whether prompting for a manifest selection is possible.
+func stdinIsTerminal() bool {
+	info, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
+}
+
+// findProjectFile returns the path to the project file in dir that Pkg would
+// pair with a manifest (JuliaProject.toml preferred over Project.toml), or ""
+// if neither exists.
+func findProjectFile(dir string) string {
+	for _, name := range projectNames {
+		candidate := filepath.Join(dir, name)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return ""
+}
+
 // resolveScanInputs takes a CLI positional argument and produces the manifest
-// (and optional sibling Project.toml) contents the scan request will carry.
+// (and optional sibling project file) contents the scan request will carry.
 //
 // path semantics:
-//   - "" or ".": current directory; look for Manifest.toml and Project.toml inside
-//   - a directory: same lookup inside that directory
-//   - a file: treated as the manifest; sibling Project.toml is picked up by default
+//   - "" or ".": current directory; discover manifest + project file inside
+//   - a directory: same discovery inside that directory
+//   - a file: treated as the manifest; a sibling project file is picked up by default
 //
-// projectOverride: explicit path to a Project.toml. "" means auto-detect.
-// noProject: skip Project.toml even if a sibling file exists.
+// Manifest discovery recognizes every name Julia/Pkg accepts — Manifest.toml,
+// JuliaManifest.toml, and version-specific variants like Manifest-v1.11.toml.
+// When a directory holds more than one, the user is prompted to select one.
+//
+// projectOverride: explicit path to a project file. "" means auto-detect.
+// noProject: skip the project file even if a sibling exists.
 func resolveScanInputs(path, projectOverride string, noProject bool) (ScanInputs, error) {
 	if path == "" {
 		path = "."
@@ -59,10 +195,19 @@ func resolveScanInputs(path, projectOverride string, noProject bool) (ScanInputs
 	var manifestPath, dir string
 	if info.IsDir() {
 		dir = path
-		manifestPath = filepath.Join(dir, "Manifest.toml")
-		if _, err := os.Stat(manifestPath); err != nil {
-			return ScanInputs{}, fmt.Errorf("no Manifest.toml found in %q", dir)
+		cands, err := findManifestCandidates(dir)
+		if err != nil {
+			return ScanInputs{}, err
 		}
+		if len(cands) == 0 {
+			return ScanInputs{}, fmt.Errorf(
+				"no manifest found in %q (looked for Manifest.toml, JuliaManifest.toml, and version-specific variants)", dir)
+		}
+		chosen, err := chooseManifest(cands)
+		if err != nil {
+			return ScanInputs{}, err
+		}
+		manifestPath = chosen.path
 	} else {
 		manifestPath = path
 		dir = filepath.Dir(path)
@@ -84,10 +229,7 @@ func resolveScanInputs(path, projectOverride string, noProject bool) (ScanInputs
 
 	projectPath := projectOverride
 	if projectPath == "" {
-		candidate := filepath.Join(dir, "Project.toml")
-		if _, err := os.Stat(candidate); err == nil {
-			projectPath = candidate
-		}
+		projectPath = findProjectFile(dir)
 	}
 	if projectPath != "" {
 		projectBytes, err := os.ReadFile(projectPath)

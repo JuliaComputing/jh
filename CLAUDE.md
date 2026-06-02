@@ -21,7 +21,7 @@ The application follows a command-line interface pattern using the Cobra library
 - **credentials.go**: Registry credential management (list, add, update, delete) with REST API integration
 - **landing.go**: Landing page management (show, update, remove) with REST API integration
 - **vuln.go**: Vulnerability scanning for Julia packages via REST API
-- **scan.go**: Trivy manifest scanning — upload `Manifest.toml` (+ optional `Project.toml`) and fetch results via the StaticAnalysis service
+- **scan.go**: Trivy manifest scanning — discover and upload a Julia manifest (+ optional project file) and fetch results via the StaticAnalysis service. Manifest discovery recognizes every name Julia/Pkg accepts (`Manifest.toml`, `JuliaManifest.toml`, and version-specific `Manifest-v1.11.toml` / `JuliaManifest-v1.11.toml`); when a directory holds more than one, the user is prompted to select (defaults to the highest-precedence candidate). Project file is `Project.toml` or `JuliaProject.toml`
 - **git.go**: Git integration (clone, push, fetch, pull) with JuliaHub authentication
 - **julia.go**: Julia installation and management
 - **run.go**: Julia execution with JuliaHub configuration

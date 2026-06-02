@@ -743,10 +743,13 @@ var scanCmd = &cobra.Command{
 	Long: `Upload a Julia Manifest.toml (and optionally Project.toml) to JuliaHub
 and run a Trivy vulnerability scan against the pinned dependencies.
 
-If [path] is a directory, Manifest.toml (and Project.toml if present) are
-read from inside it. If [path] is a file, it is treated as the manifest and
-a sibling Project.toml is included unless --no-project is set. Defaults to
-the current directory when [path] is omitted.
+If [path] is a directory, the manifest is discovered inside it. Every name
+Julia recognizes is detected — Manifest.toml, JuliaManifest.toml, and
+version-specific variants like Manifest-v1.11.toml — and if more than one is
+present you are prompted to pick one. A sibling project file (Project.toml or
+JuliaProject.toml) is included unless --no-project is set. If [path] is a file,
+it is treated as the manifest. Defaults to the current directory when [path]
+is omitted.
 
 By default the command submits the scan and polls until it finishes, then
 prints the results. The server-assigned run_uuid is printed up front, so
