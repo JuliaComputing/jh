@@ -13,6 +13,7 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 - **Julia Integration**: Install Julia and run with JuliaHub package server configuration
 - **User Management**: Display user information, list users and groups
 - **Vulnerability Scanning**: Scan Julia packages for known security vulnerabilities
+- **Manifest Scanning**: Upload a `Manifest.toml` for a server-side Trivy vulnerability scan of its pinned dependencies
 - **Administrative Commands**: Manage users, groups, tokens, credentials, and system resources (requires admin permissions)
 
 ## Installation
@@ -266,6 +267,24 @@ echo '{"name":"MyToken","url":"https://github.com","value":"ghp_xxxx"}' | jh adm
   - Advisory IDs are clickable links to the JuliaLang SecurityAdvisories repository
   - Each advisory shows: severity scores, affected status, full summary, affected versions, and version ranges
 
+### Manifest Scanning (`jh scan`)
+
+- `jh scan [path]` - Upload a `Manifest.toml` (and the sibling `Project.toml` when present), queue a Trivy vulnerability scan, and (by default) poll until it finishes
+  - `path` may be a directory (looks for `Manifest.toml` and `Project.toml` inside) or a manifest file; defaults to the current directory
+  - `--project <path>` - Use an explicit `Project.toml` instead of the auto-detected sibling
+  - `--no-project` - Skip the `Project.toml` even if a sibling exists
+  - `--tool <id>` - Static analysis tool id (default: `juliahub-trivy`)
+  - `--no-wait` - Submit and return immediately, printing only the `run_uuid`
+  - `--csv` - Request results as CSV (negotiated via the `Accept` header; ignored with `--no-wait`)
+  - `--output <file>` / `-o` - Write the results to a file instead of stdout
+  - `--poll-interval <sec>` - Poll cadence while waiting (default: 3)
+  - `--timeout <sec>` - Max seconds to wait for the scan (default: 600)
+  - The `run_uuid` is printed up front, so Ctrl+C during polling leaves the scan running on the server; resume with `jh scan status` / `jh scan results`
+- `jh scan status <run-uuid>` - Show lifecycle status (`staging`, `initiated`, `queued`, `completed`, `failed`) plus tool/timing info and any failure reason
+- `jh scan results <run-uuid>` - Fetch results for a finished scan
+  - `--csv` - CSV output instead of JSON
+  - `--output <file>` / `-o` - Write to a file instead of stdout
+
 ### Update (`jh update`)
 
 - `jh update` - Check for updates and automatically install the latest version
@@ -481,6 +500,32 @@ jh vuln MyPkg --registry MyRegistry
 
 # Scan against a custom server
 jh vuln SomePackage -s nightly.juliahub.dev
+```
+
+### Manifest Scanning
+
+```bash
+# Scan the Manifest.toml + Project.toml in the current directory; polls until done
+jh scan
+
+# Scan the manifest from a specific project directory
+jh scan ./my-project
+
+# Use an explicit manifest file and override the Project.toml path
+jh scan Manifest.toml --project=Project.toml
+
+# Write CSV results to a file instead of JSON on stdout
+jh scan --csv --output results.csv
+
+# Submit the scan and return immediately (prints just the run_uuid)
+jh scan --no-wait
+
+# Check the status of an earlier scan (e.g. after Ctrl+C or --no-wait)
+jh scan status <run-uuid>
+
+# Pull results for a finished scan
+jh scan results <run-uuid>
+jh scan results <run-uuid> --csv --output results.csv
 ```
 
 ### Git Workflow
