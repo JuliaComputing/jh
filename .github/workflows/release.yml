@@ -10,85 +10,44 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  goreleaser:
     name: Build and Release
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - os: linux
-            arch: amd64
-            goos: linux
-            goarch: amd64
-          - os: linux
-            arch: arm64
-            goos: linux
-            goarch: arm64
-          - os: darwin
-            arch: amd64
-            goos: darwin
-            goarch: amd64
-          - os: darwin
-            arch: arm64
-            goos: darwin
-            goarch: arm64
-          - os: windows
-            arch: amd64
-            goos: windows
-            goarch: amd64
-          - os: windows
-            arch: arm64
-            goos: windows
-            goarch: arm64
-
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        # Full history is required for GoReleaser changelog generation.
+        fetch-depth: 0
 
     - name: Set up Go
       uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
       with:
         go-version: '1.24'
 
-    - name: Build binary
-      env:
-        GOOS: ${{ matrix.goos }}
-        GOARCH: ${{ matrix.goarch }}
-        CGO_ENABLED: 0
+    - name: Determine GoReleaser args
+      id: args
       run: |
-        # Extract version from tag (remove 'v' prefix)
-        VERSION=${GITHUB_REF#refs/tags/v}
-        if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF" ]; then
-          VERSION="dev-$(git rev-parse --short HEAD)"
-        fi
-        
-        LDFLAGS="-s -w -X main.version=$VERSION -X main.commit=$(git rev-parse HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        
-        if [ "${{ matrix.goos }}" = "windows" ]; then
-          go build -ldflags="$LDFLAGS" -o jh-${{ matrix.os }}-${{ matrix.arch }}.exe .
+        if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+          # Real release: publish to GitHub Releases.
+          echo "value=release --clean" >> "$GITHUB_OUTPUT"
         else
-          go build -ldflags="$LDFLAGS" -o jh-${{ matrix.os }}-${{ matrix.arch }} .
+          # Manual run on a branch (workflow_dispatch): dry-run build only,
+          # no publishing. Mirrors the old "build but don't release" behavior.
+          echo "value=release --clean --snapshot" >> "$GITHUB_OUTPUT"
         fi
 
-    - name: Upload artifact
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+    - name: Run GoReleaser
+      uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
       with:
-        name: jh-${{ matrix.os }}-${{ matrix.arch }}
-        path: jh-*
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
-    
-    steps:
-    - name: Download all artifacts
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-      
-    - name: Create Release
-      uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
-      with:
-        files: |
-          **/jh-*
-        generate_release_notes: true
+        distribution: goreleaser
+        version: '~> v2'
+        args: ${{ steps.args.outputs.value }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Upload snapshot artifacts
+      if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: jh-snapshot
+        path: dist/jh-*

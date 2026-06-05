@@ -1,0 +1,61 @@
+# GoReleaser configuration for the JuliaHub CLI (jh).
+# Docs: https://goreleaser.com
+#
+# NOTE: archives use `format: binary`, and the name_template reproduces the
+# exact asset names the existing installers expect (jh-<os>-<arch>, with a
+# `.exe` suffix added automatically on Windows). This keeps install.sh /
+# install.ps1 / install.bat working unchanged.
+version: 2
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: jh
+    main: .
+    binary: jh
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .FullCommit }}
+      - -X main.date={{ .Date }}
+
+archives:
+  - id: jh
+    # Publish bare binaries (no tar.gz/zip) so the existing install scripts,
+    # which download the raw binary directly, continue to work.
+    formats: [binary]
+    # Reproduces the legacy asset names: jh-linux-amd64, jh-darwin-arm64,
+    # jh-windows-amd64.exe, ... (.exe appended automatically on Windows).
+    name_template: "jh-{{ .Os }}-{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+      - "Merge branch"
+
+release:
+  github:
+    owner: JuliaComputing
+    name: jh
+  # Keep the auto-generated GitHub release notes in addition to the changelog.
+  draft: false
+  prerelease: auto
