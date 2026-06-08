@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -730,6 +733,158 @@ Use --advisory to look up a specific advisory by ID.`,
 				fmt.Println()
 			}
 			printAdvisory(&toShow[i], verbose)
+		}
+	},
+}
+
+var scanCmd = &cobra.Command{
+	Use:   "scan [path]",
+	Short: "Scan a Julia Manifest.toml for vulnerable dependencies",
+	Long: `Upload a Julia Manifest.toml (and optionally Project.toml) to JuliaHub
+and run a Trivy vulnerability scan against the pinned dependencies.
+
+If [path] is a directory, the manifest is discovered inside it. Every name
+Julia recognizes is detected — Manifest.toml, JuliaManifest.toml, and
+version-specific variants like Manifest-v1.11.toml — and if more than one is
+present you are prompted to pick one. A sibling project file (Project.toml or
+JuliaProject.toml) is included unless --no-project is set. If [path] is a file,
+it is treated as the manifest. Defaults to the current directory when [path]
+is omitted.
+
+By default the command submits the scan and polls until it finishes, then
+prints the results. The server-assigned run_uuid is printed up front, so
+you can interrupt with Ctrl+C at any time and resume later with:
+
+  jh scan status <run-uuid>
+  jh scan results <run-uuid>
+
+Pass --no-wait to submit the scan and return immediately. Use --csv to
+fetch results as CSV instead of JSON.`,
+	Example: `  jh scan
+  jh scan ./my-project
+  jh scan Manifest.toml --project=Project.toml
+  jh scan --no-wait
+  jh scan --csv --output results.csv`,
+	Args: cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+
+		path := ""
+		if len(args) == 1 {
+			path = args[0]
+		}
+		projectOverride, _ := cmd.Flags().GetString("project")
+		noProject, _ := cmd.Flags().GetBool("no-project")
+		tool, _ := cmd.Flags().GetString("tool")
+		noWait, _ := cmd.Flags().GetBool("no-wait")
+		csv, _ := cmd.Flags().GetBool("csv")
+		output, _ := cmd.Flags().GetString("output")
+		pollSec, _ := cmd.Flags().GetInt("poll-interval")
+		timeoutSec, _ := cmd.Flags().GetInt("timeout")
+
+		inputs, err := resolveScanInputs(path, projectOverride, noProject)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "Uploading %s", inputs.ManifestPath)
+		if inputs.ProjectPath != "" {
+			fmt.Fprintf(os.Stderr, " (+ %s)", inputs.ProjectPath)
+		}
+		fmt.Fprintln(os.Stderr)
+
+		runUUID, err := submitManifestScan(server, tool, inputs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Fprintf(os.Stderr, "Submitted scan: %s\n", runUUID)
+
+		if noWait {
+			fmt.Println(runUUID)
+			return
+		}
+
+		// Trap Ctrl+C while polling so the user can leave the scan
+		// running on the server and reattach later via `jh scan status`
+		// / `jh scan results`.
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+		go func() {
+			<-sigChan
+			fmt.Fprintf(os.Stderr, "\nLeaving scan %s running on the server.\n", runUUID)
+			fmt.Fprintf(os.Stderr, "Check progress with:\n  jh scan status %s\n", runUUID)
+			fmt.Fprintf(os.Stderr, "Fetch results once complete with:\n  jh scan results %s\n", runUUID)
+			os.Exit(0)
+		}()
+
+		fmt.Fprintf(os.Stderr, "Polling for completion (Ctrl+C to detach)...\n")
+		_, err = pollManifestScanUntilDone(
+			server, runUUID,
+			time.Duration(pollSec)*time.Second,
+			time.Duration(timeoutSec)*time.Second,
+		)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+
+		body, err := fetchManifestScanResults(server, runUUID, csv)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+		if err := writeResultsOutput(body, output, csv); err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var scanStatusCmd = &cobra.Command{
+	Use:   "status <run-uuid>",
+	Short: "Show status of a manifest scan",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		status, err := fetchManifestScanStatus(server, args[0])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+		printManifestScanStatus(status)
+	},
+}
+
+var scanResultsCmd = &cobra.Command{
+	Use:   "results <run-uuid>",
+	Short: "Fetch results for a completed manifest scan",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Printf("Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		csv, _ := cmd.Flags().GetBool("csv")
+		output, _ := cmd.Flags().GetString("output")
+		body, err := fetchManifestScanResults(server, args[0], csv)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+		if err := writeResultsOutput(body, output, csv); err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
 		}
 	},
 }
@@ -2328,6 +2483,19 @@ func init() {
 	vulnCmd.Flags().StringP("registry", "r", "General", "Registry name for version lookup")
 	vulnCmd.Flags().Bool("all", false, "Show all advisories regardless of affected status")
 	vulnCmd.Flags().BoolP("verbose", "v", false, "Show full advisory details (aliases, dates, details, references)")
+	scanCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	scanCmd.Flags().String("project", "", "Path to Project.toml (defaults to sibling of the manifest if present)")
+	scanCmd.Flags().Bool("no-project", false, "Skip Project.toml even if a sibling file exists")
+	scanCmd.Flags().StringP("tool", "t", "juliahub-trivy", "Static analysis tool id")
+	scanCmd.Flags().Bool("no-wait", false, "Submit the scan and return immediately, printing the run_uuid")
+	scanCmd.Flags().Bool("csv", false, "Fetch results as CSV instead of JSON (ignored with --no-wait)")
+	scanCmd.Flags().StringP("output", "o", "", "Write results to this file instead of stdout")
+	scanCmd.Flags().Int("poll-interval", 3, "Poll interval in seconds while waiting")
+	scanCmd.Flags().Int("timeout", 600, "Max seconds to wait for the scan to finish")
+	scanStatusCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	scanResultsCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	scanResultsCmd.Flags().Bool("csv", false, "Fetch results as CSV")
+	scanResultsCmd.Flags().StringP("output", "o", "", "Write results to this file instead of stdout")
 
 	authCmd.AddCommand(authLoginCmd, authRefreshCmd, authStatusCmd, authEnvCmd)
 	jobCmd.AddCommand(jobListCmd, jobStartCmd)
@@ -2371,8 +2539,9 @@ func init() {
 	juliaCmd.AddCommand(juliaInstallCmd)
 	runCmd.AddCommand(runSetupCmd)
 	gitCredentialCmd.AddCommand(gitCredentialHelperCmd, gitCredentialGetCmd, gitCredentialStoreCmd, gitCredentialEraseCmd, gitCredentialSetupCmd)
+	scanCmd.AddCommand(scanStatusCmd, scanResultsCmd)
 
-	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, projectCmd, packageCmd, registryCmd, userCmd, groupCmd, adminCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd, vulnCmd)
+	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, projectCmd, packageCmd, registryCmd, userCmd, groupCmd, adminCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd, vulnCmd, scanCmd)
 }
 
 func main() {

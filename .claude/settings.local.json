@@ -5,7 +5,12 @@
       "Bash(go fmt:*)",
       "Bash(go vet:*)",
       "Bash(go build:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(grep -oE \"[^/]*Manifest[^/]*\\\\.toml$\")",
+      "Bash(rm -rf scantest)",
+      "Bash(mkdir -p scantest/multi scantest/single)",
+      "Bash(/home/ubuntu/jh/jh scan *)",
+      "Bash(gofmt -l scan.go main.go)"
     ],
     "deny": [],
     "ask": []
