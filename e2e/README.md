@@ -25,6 +25,7 @@ One file per command category, plus the shared harness:
 | [package_test.go](package_test.go) | `package search`/`info`/`dependency` + not-found |
 | [registry_test.go](registry_test.go) | `registry list` → `config`/`registrator`/`permission list` on a real registry |
 | [vuln_test.go](vuln_test.go) | `vuln <package>` |
+| [scan_test.go](scan_test.go) | `scan <manifest>` (--no-wait) → `scan status`/`results <uuid>` + input validation |
 | [job_test.go](job_test.go) | `job list` |
 | [admin_test.go](admin_test.go) | `admin user/token/group/credential list`, `landing-page show` |
 

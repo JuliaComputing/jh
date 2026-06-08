@@ -365,6 +365,22 @@ func firstLine(s string) string {
 	return ""
 }
 
+// errorLine returns the first line that looks like an error/status message,
+// falling back to firstLine — gives clearer skip/fail diagnostics than the first
+// (often progress) line of output.
+func errorLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		l := strings.TrimSpace(line)
+		ll := strings.ToLower(l)
+		if strings.Contains(ll, "fail") || strings.Contains(ll, "error") ||
+			strings.Contains(ll, "status ") || strings.Contains(ll, "not found") ||
+			strings.Contains(ll, "not allowed") {
+			return l
+		}
+	}
+	return firstLine(s)
+}
+
 var (
 	reIDLine       = regexp.MustCompile(`(?m)^ID:\s*([0-9a-fA-F-]{36})`)
 	reRegistryLine = regexp.MustCompile(`(?m)^(\S+)\s+\(([0-9a-fA-F-]{36})\)`)
