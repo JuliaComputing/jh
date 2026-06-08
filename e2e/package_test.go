@@ -15,21 +15,12 @@ import (
 
 const canaryPackage = "DataFrames"
 
-// packageBackendGap reports whether output indicates package queries are
-// unavailable on this instance (as opposed to a genuine "no results").
-func packageBackendGap(out string) bool {
-	low := strings.ToLower(out)
-	return strings.Contains(low, "not allowed") ||
-		strings.Contains(low, "graphql errors") ||
-		isServerError(out)
-}
-
 func TestPackageSearch(t *testing.T) {
 	requireCreds(t)
 	res := runJH(t, "package", "search", canaryPackage)
-	if res.exitCode != 0 || packageBackendGap(res.combined()) {
+	if res.exitCode != 0 || backendGap(res.combined()) {
 		skipIfUnsupported(t, res)
-		t.Skipf("package search unavailable on this instance: %s", firstLine(res.combined()))
+		t.Skipf("package search unavailable on this instance: %s", errorLine(res.combined()))
 	}
 	if strings.Contains(strings.ToLower(res.combined()), "no packages found") {
 		t.Skip("no packages indexed on this instance")
@@ -41,9 +32,9 @@ func TestPackageInfo(t *testing.T) {
 	requireCreds(t)
 	res := runJH(t, "package", "info", canaryPackage)
 	out := res.combined()
-	if res.exitCode != 0 || packageBackendGap(out) {
+	if res.exitCode != 0 || backendGap(out) {
 		skipIfUnsupported(t, res)
-		t.Skipf("package info unavailable on this instance: %s", firstLine(out))
+		t.Skipf("package info unavailable on this instance: %s", errorLine(out))
 	}
 	if strings.Contains(strings.ToLower(out), "not found") {
 		t.Skipf("%s not indexed on this instance", canaryPackage)
@@ -58,12 +49,12 @@ func TestPackageDependency(t *testing.T) {
 	requireCreds(t)
 	res := runJH(t, "package", "dependency", canaryPackage)
 	out := res.combined()
-	if res.exitCode != 0 || packageBackendGap(out) {
+	if res.exitCode != 0 || backendGap(out) {
 		skipIfUnsupported(t, res)
 		if strings.Contains(strings.ToLower(out), "not found") {
 			t.Skipf("%s not indexed on this instance", canaryPackage)
 		}
-		t.Skipf("package dependency unavailable on this instance: %s", firstLine(out))
+		t.Skipf("package dependency unavailable on this instance: %s", errorLine(out))
 	}
 	assertContains(t, out, "UUID") // dependency table header
 }
@@ -74,8 +65,8 @@ func TestPackageInfoNotFound(t *testing.T) {
 	requireCreds(t)
 	res := runJH(t, "package", "info", "Zz_jh_e2e_does_not_exist_0xDEADBEEF")
 	out := res.combined()
-	if packageBackendGap(out) {
-		t.Skipf("package backend unavailable on this instance: %s", firstLine(out))
+	if backendGap(out) {
+		t.Skipf("package backend unavailable on this instance: %s", errorLine(out))
 	}
 	assertContains(t, out, "not found")
 }

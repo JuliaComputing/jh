@@ -28,13 +28,6 @@ uuid = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 version = "0.21.4"
 `
 
-// scanBackendGap reports whether scan is unavailable on this instance (the
-// static-analysis service is not deployed) rather than a CLI defect.
-func scanBackendGap(out string) bool {
-	low := strings.ToLower(out)
-	return strings.Contains(low, "status 404") || isServerError(out) || strings.Contains(low, "not allowed")
-}
-
 // TestScanRejectsMissingManifest verifies input validation: a path that does not
 // exist is reported cleanly. This is local validation and needs no backend.
 func TestScanRejectsMissingManifest(t *testing.T) {
@@ -60,7 +53,7 @@ func TestScanManifestLifecycle(t *testing.T) {
 	// Submit without waiting for the (potentially long) Trivy run.
 	sub := runJH(t, "scan", manifest, "--no-wait")
 	if sub.exitCode != 0 {
-		if scanBackendGap(sub.combined()) {
+		if backendGap(sub.combined()) {
 			t.Skipf("manifest scan unavailable on this instance: %s", errorLine(sub.combined()))
 		}
 		skipIfUnsupported(t, sub)
