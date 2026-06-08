@@ -236,8 +236,15 @@ func resolveScanInputs(path, projectOverride string, noProject bool) (ScanInputs
 		if err != nil {
 			return ScanInputs{}, fmt.Errorf("failed to read project file %q: %w", projectPath, err)
 		}
-		out.ProjectPath = projectPath
-		out.ProjectBody = string(projectBytes)
+		// Only carry the project file when it has content; an empty file is
+		// not sent, so don't record its path either (keeps ProjectPath and
+		// ProjectBody consistent for the caller's logging and payload gating).
+		if len(bytes.TrimSpace(projectBytes)) == 0 {
+			fmt.Fprintf(os.Stderr, "Skipping empty project file %s\n", projectPath)
+		} else {
+			out.ProjectPath = projectPath
+			out.ProjectBody = string(projectBytes)
+		}
 	}
 
 	return out, nil
@@ -333,39 +340,57 @@ func fetchManifestScanResults(server, runUUID string, wantCSV bool) ([]byte, err
 
 	endpoint := fmt.Sprintf("https://%s%s/results/manifest/%s",
 		server, staticAnalysisPathPrefix, url.PathEscape(runUUID))
-	req, err := http.NewRequest("GET", endpoint, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
+	accept := "application/json"
 	if wantCSV {
-		req.Header.Set("Accept", "text/csv")
-	} else {
-		req.Header.Set("Accept", "application/json")
+		accept = "text/csv"
 	}
 
 	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(2 * time.Second)
+		}
+		req, err := http.NewRequest("GET", endpoint, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
+		req.Header.Set("Accept", accept)
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("request failed: %w", err)
+			continue
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			lastErr = fmt.Errorf("failed to read response: %w", readErr)
+			continue
+		}
+		if resp.StatusCode == http.StatusInternalServerError {
+			lastErr = fmt.Errorf("results fetch failed (status %d): %s",
+				resp.StatusCode, strings.TrimSpace(string(body)))
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("results fetch failed (status %d): %s",
+				resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+		return body, nil
 	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("results fetch failed (status %d): %s",
-			resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	return body, nil
+	return nil, lastErr
 }
 
 // pollManifestScanUntilDone polls status every pollInterval until the scan
 // reaches a terminal status ("completed" or "failed") or the deadline expires.
 // Progress is reported to stderr so stdout stays clean for piping.
 func pollManifestScanUntilDone(server, runUUID string, pollInterval, timeout time.Duration) (*ManifestScanStatus, error) {
+	// Guard against a hot loop from --poll-interval 0 (or negative).
+	if pollInterval < time.Second {
+		pollInterval = time.Second
+	}
 	deadline := time.Now().Add(timeout)
 	lastStatus := ""
 	for {
