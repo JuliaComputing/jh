@@ -21,6 +21,7 @@ The application follows a command-line interface pattern using the Cobra library
 - **credentials.go**: Registry credential management (list, add, update, delete) with REST API integration
 - **landing.go**: Landing page management (show, update, remove) with REST API integration
 - **vuln.go**: Vulnerability scanning for Julia packages via REST API
+- **scan.go**: Trivy manifest scanning — discover and upload a Julia manifest (+ optional project file) and fetch results via the StaticAnalysis service. Manifest discovery recognizes every name Julia/Pkg accepts (`Manifest.toml`, `JuliaManifest.toml`, and version-specific `Manifest-v1.11.toml` / `JuliaManifest-v1.11.toml`); when a directory holds more than one, the user is prompted to select (defaults to the highest-precedence candidate). Project file is `Project.toml` or `JuliaProject.toml`
 - **git.go**: Git integration (clone, push, fetch, pull) with JuliaHub authentication
 - **julia.go**: Julia installation and management
 - **run.go**: Julia execution with JuliaHub configuration
@@ -62,6 +63,7 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh admin credential delete`: Delete a credential — subcommands: `token`, `ssh`, `github-app`; takes positional identifier
    - `jh admin landing-page`: Landing page management (show/update/remove custom markdown landing page with REST API)
    - `jh vuln`: Vulnerability scanning for Julia packages (REST API; defaults to latest stable version via `GET /docs/<registry>/<package>/versions.json`; supports `--version` for a specific version, `--registry` to specify the registry for version lookup (default: General), `--advisory` to filter to a specific advisory ID, `--all` to show all advisories regardless of affected status, and `--verbose` for additional details)
+   - `jh scan`: Manifest vulnerability scanning via the StaticAnalysis service (REST API under `/api/v0/static_analysis/`); uploads a `Manifest.toml` (and sibling `Project.toml` unless `--no-project`) and POSTs to `/manifest/scan` to obtain a `run_uuid`; subcommands `status` and `results` hit `/manifest/scan/status/{run_uuid}` and `/results/manifest/{run_uuid}`; **polls by default** and prints results when the scan completes — Ctrl+C detaches and the `run_uuid` (printed up front) can be passed to `jh scan status` / `jh scan results` later. Pass `--no-wait` to submit-and-exit. `--csv` requests `text/csv` (content-negotiated via `Accept` header)
    - `jh clone`: Git clone with JuliaHub authentication and project name resolution
    - `jh push/fetch/pull`: Git operations with JuliaHub authentication
    - `jh git-credential`: Git credential helper for seamless authentication
@@ -227,6 +229,26 @@ go run . vuln MbedTLS_jll --advisory JLSEC-2025-232 --verbose
 go run . vuln MbedTLS_jll --verbose
 go run . vuln MyPkg --registry MyRegistry
 go run . vuln SomePackage -s nightly.juliahub.dev
+```
+
+### Test manifest scan operations
+```bash
+# Submit a scan for the current directory's Manifest.toml (+ sibling Project.toml);
+# polls until done by default. Ctrl+C detaches — the scan keeps running on the server.
+go run . scan
+
+# Scan a project directory (still polls until done)
+go run . scan ./my-project
+
+# Scan an explicit manifest, write CSV results to a file
+go run . scan Manifest.toml --project=Project.toml --csv --output results.csv
+
+# Submit and return immediately without polling
+go run . scan --no-wait
+
+# Check status / fetch results for an earlier run_uuid
+go run . scan status <run-uuid>
+go run . scan results <run-uuid> --csv
 ```
 
 ### Test Git operations
