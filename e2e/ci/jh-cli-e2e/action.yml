@@ -1,0 +1,110 @@
+name: jh CLI E2E Tests
+description: |
+  Runs the jh CLI end-to-end smoke test suite against the specified JuliaHub
+  instance, checking that there have been no changes that break the CLI's
+  command behaviour against a live platform.
+
+  This action is modelled on `.github/actions/juliahub-client-tests`: it performs
+  a headless login to obtain an auth.toml, extracts the id/access tokens, checks
+  out the jh CLI repo, and runs its `e2e`-tagged Go test suite.
+
+  Copy this directory into `JuliaHub/.github/actions/jh-cli-e2e/`.
+
+inputs:
+  host:
+    description: "Host under test (e.g. nightly.juliahub.dev)"
+    required: true
+  protocol:
+    description: "Web protocol to use"
+    required: false
+    default: "https"
+  username:
+    description: "Username for test user"
+    required: true
+  password:
+    description: "Password for test user"
+    required: true
+  jh-ref:
+    description: "jh CLI git reference (tag, branch, commit) to test"
+    required: false
+    default: "main"
+  go-version:
+    description: "Go toolchain version"
+    required: false
+    default: "1.24"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+      with:
+        go-version: ${{ inputs.go-version }}
+
+    - name: Set up Julia (for TOML parsing of auth.toml)
+      uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3.0.2
+      with:
+        version: "1.11"
+
+    - name: Pull down JuliaHub code
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+    - name: Wait for connectivity
+      uses: ./.github/actions/juliahub-ready
+      with:
+        host: ${{ inputs.host }}
+        protocol: ${{ inputs.protocol }}
+
+    - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      with:
+        node-version: 24
+    - run: npm install
+      shell: bash
+      working-directory: ./.github/actions/login-and-get-auth-toml
+
+    - name: Login and get auth token
+      id: login
+      uses: ./.github/actions/login-and-get-auth-toml
+      with:
+        host: ${{ inputs.host }}
+        username: ${{ inputs.username }}
+        password: ${{ inputs.password }}
+        protocol: ${{ inputs.protocol }}
+
+    - name: Extract tokens from auth.toml
+      id: extract-token
+      shell: bash
+      run: |
+        # jh sends the id_token as the bearer token for most API calls, and the
+        # access_token for a few dataset operations. Export both.
+        idtoken=$(julia -e '
+          import TOML
+          println(get(TOML.parsefile("${{ steps.login.outputs.auth-toml-path }}"), "id_token", ""))
+        ')
+        accesstoken=$(julia -e '
+          import TOML
+          println(TOML.parsefile("${{ steps.login.outputs.auth-toml-path }}")["access_token"])
+        ')
+        echo "::add-mask::$idtoken"
+        echo "::add-mask::$accesstoken"
+        echo "id-token=$idtoken" >> $GITHUB_OUTPUT
+        echo "access-token=$accesstoken" >> $GITHUB_OUTPUT
+
+    - name: Clone jh CLI repo
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      with:
+        repository: JuliaComputing/jh
+        ref: ${{ inputs.jh-ref }}
+        path: "jh-cli"
+
+    - name: Run jh CLI e2e tests
+      # The test harness writes a throwaway ~/.juliahub (in an isolated HOME)
+      # from these env vars and runs jh against it; the CLI authenticates from
+      # that file only and never reads the env vars itself.
+      shell: bash
+      working-directory: jh-cli
+      run: go test -tags e2e -v ./e2e/...
+      env:
+        JULIAHUB_SERVER: ${{ inputs.protocol }}://${{ inputs.host }}
+        JULIAHUB_ID_TOKEN: ${{ steps.extract-token.outputs.id-token }}
+        JULIAHUB_TOKEN: ${{ steps.extract-token.outputs.access-token }}

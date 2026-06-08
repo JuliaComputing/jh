@@ -23,6 +23,14 @@ jobs:
     - name: Run go vet
       run: go vet ./...
 
+    - name: Compile-check e2e tests
+      # The e2e suite (build tag `e2e`) runs against a live JuliaHub instance as
+      # part of the platform nightly CI, not here. Vet it under the build tag so
+      # it cannot bitrot. `-run '^$'` ensures nothing actually executes.
+      run: |
+        go vet -tags e2e ./e2e/...
+        go test -tags e2e -run '^$' ./e2e/...
+
     - name: Run go fmt
       run: |
         if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then

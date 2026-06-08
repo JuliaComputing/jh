@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"time"
 )
 
@@ -245,14 +246,25 @@ func listGroups(server string) error {
 		return fmt.Errorf("request failed (status %d): %s", resp.StatusCode, string(body))
 	}
 
-	var groups []AdminGroup
-	if err := json.Unmarshal(body, &groups); err != nil {
+	// The endpoint returns groups bucketed by category, e.g.
+	//   {"juliahub": {"groups": [{"name","id"}]}, "site": {"groups": [...]}}
+	var grouped map[string]struct {
+		Groups []AdminGroup `json:"groups"`
+	}
+	if err := json.Unmarshal(body, &grouped); err != nil {
 		return fmt.Errorf("failed to parse groups: %w", err)
+	}
+
+	var groups []AdminGroup
+	for _, category := range grouped {
+		groups = append(groups, category.Groups...)
 	}
 	if len(groups) == 0 {
 		fmt.Println("No groups found")
 		return nil
 	}
+	// Map iteration order is non-deterministic; sort by id for stable output.
+	sort.Slice(groups, func(i, j int) bool { return groups[i].ID < groups[j].ID })
 	for _, g := range groups {
 		fmt.Println(g.Name)
 	}
