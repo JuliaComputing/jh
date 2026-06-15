@@ -29,6 +29,8 @@ One file per command category, plus shared infrastructure:
 | [scan_test.go](scan_test.go) | `scan <manifest>` (--no-wait) → `scan status`/`results <uuid>` + input validation |
 | [job_test.go](job_test.go) | `job list` |
 | [admin_test.go](admin_test.go) | `admin user/token/group/credential list`, `landing-page show` |
+| [verbose_test.go](verbose_test.go) | `--verbose` / flag variants of the read commands (`registry list`, `user list`, `admin … list`, `package search`, `vuln --all/--verbose`) |
+| [cli_test.go](cli_test.go) | no-credential CLI surface: subcommand `--help` wiring and `ExactArgs` validation (runs even without a login) |
 
 ## How the tests assert (production-ready, not exit-code theatre)
 
@@ -65,6 +67,44 @@ One file per command category, plus shared infrastructure:
   permissions, disallowed query, timeout). Genuine CLI defects still fail.
 - **Skips without credentials.** If no credentials are available, the suite
   skips rather than fails.
+
+## Coverage scope: live e2e vs. unit tests
+
+Coverage of the CLI comes from two complementary layers:
+
+- **This live e2e suite** (build-tag `e2e`) covers **read/GET** commands against a
+  real instance, plus local input validation (e.g. `scan` on a missing manifest)
+  and the no-credential CLI surface in [cli_test.go](cli_test.go).
+- **Plain unit tests** in the repo root (package `main`, **no** build tag, run by
+  `go test ./...`) cover the pure/parsing helpers that need no backend:
+  manifest/project discovery and `resolveScanInputs` (`scan.go`), advisory link
+  and severity selection (`vuln.go`), credential data-URL encoding and the
+  add/update **validation** branches (`credentials.go`), the homepage-response
+  unmarshaller (`landing.go`), registry-payload validation (`registries.go`),
+  `git` URL detection and clone-path helpers (`git.go`), JWT decode/expiry
+  (`auth.go`), admin-group parsing (`user.go`), token-date formatting
+  (`tokens.go`), and the command-tree wiring (`main.go`).
+
+### Why write/destructive paths are not exercised live
+
+The following are **intentionally not** driven against the live instance, because
+doing so would mutate or destroy shared state on a nightly that other suites rely
+on, or has no safe disposable target:
+
+| Area | Functions | Why skipped live |
+|------|-----------|------------------|
+| Registry create/update | `submitRegistry`, `pollRegistrySaveStatus`, `setRegistrator`, permission `set`/`remove` | Persistently mutate registry config |
+| Credentials | add/update/delete `token`/`ssh`/`github-app` | Mutate instance-wide credential store |
+| Datasets | `uploadDataset`, `createNewDataset`, `uploadToExistingDataset` | Create/overwrite datasets |
+| Landing page | `setLandingPage`, `removeLandingPage` | Overwrites the instance landing page |
+| Git / Julia / self-update | `cloneProject`, `pushProject`, `runJulia`, `julia install`, self-update | Spawn `git`/`julia`/installer subprocesses; not hermetic |
+
+Where these have backend-independent logic — request-body construction, input
+validation, encoding — that logic **is** unit-tested (see the credential
+validation and registry-payload tests). Exercising the network mutations
+themselves is deferred to a future change that uses an `httptest` server or a
+disposable backend; see the PR discussion. The command **wiring** for all of
+them is still covered by `TestCommandTreeWiring`.
 
 ## Authentication
 

@@ -246,29 +246,41 @@ func listGroups(server string) error {
 		return fmt.Errorf("request failed (status %d): %s", resp.StatusCode, string(body))
 	}
 
-	// The endpoint returns groups bucketed by category, e.g.
-	//   {"juliahub": {"groups": [{"name","id"}]}, "site": {"groups": [...]}}
+	groups, err := parseAdminGroups(body)
+	if err != nil {
+		return err
+	}
+	if len(groups) == 0 {
+		fmt.Println("No groups found")
+		return nil
+	}
+	for _, g := range groups {
+		fmt.Println(g.Name)
+	}
+	return nil
+}
+
+// parseAdminGroups parses the /app/config/groups response, which buckets groups
+// by category, e.g.
+//
+//	{"juliahub": {"groups": [{"name","id"}]}, "site": {"groups": [...]}}
+//
+// flattens them into a single slice, and sorts by id so the output is stable
+// (map iteration order is non-deterministic).
+func parseAdminGroups(body []byte) ([]AdminGroup, error) {
 	var grouped map[string]struct {
 		Groups []AdminGroup `json:"groups"`
 	}
 	if err := json.Unmarshal(body, &grouped); err != nil {
-		return fmt.Errorf("failed to parse groups: %w", err)
+		return nil, fmt.Errorf("failed to parse groups: %w", err)
 	}
 
 	var groups []AdminGroup
 	for _, category := range grouped {
 		groups = append(groups, category.Groups...)
 	}
-	if len(groups) == 0 {
-		fmt.Println("No groups found")
-		return nil
-	}
-	// Map iteration order is non-deterministic; sort by id for stable output.
 	sort.Slice(groups, func(i, j int) bool { return groups[i].ID < groups[j].ID })
-	for _, g := range groups {
-		fmt.Println(g.Name)
-	}
-	return nil
+	return groups, nil
 }
 
 func listGroupsGQL(server string) error {
