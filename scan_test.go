@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -178,6 +179,50 @@ func TestResolveScanInputs(t *testing.T) {
 		_, err := resolveScanInputs(dir, "", false)
 		if err == nil {
 			t.Fatal("expected error for empty manifest")
+		}
+	})
+}
+
+func TestWriteResultsOutput(t *testing.T) {
+	t.Run("JSON is pretty-printed to a file", func(t *testing.T) {
+		out := filepath.Join(t.TempDir(), "results.json")
+		if err := writeResultsOutput([]byte(`{"a":1,"b":2}`), out, false); err != nil {
+			t.Fatalf("writeResultsOutput: %v", err)
+		}
+		data, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatalf("read output: %v", err)
+		}
+		// Indented output spans multiple lines and ends with a newline.
+		if !strings.Contains(string(data), "\n  \"a\": 1") {
+			t.Errorf("expected indented JSON, got:\n%s", data)
+		}
+		if !strings.HasSuffix(string(data), "\n") {
+			t.Error("expected trailing newline on JSON output")
+		}
+	})
+
+	t.Run("CSV is written verbatim", func(t *testing.T) {
+		out := filepath.Join(t.TempDir(), "results.csv")
+		csv := "pkg,severity\nFoo,HIGH\n"
+		if err := writeResultsOutput([]byte(csv), out, true); err != nil {
+			t.Fatalf("writeResultsOutput: %v", err)
+		}
+		data, _ := os.ReadFile(out)
+		if string(data) != csv {
+			t.Errorf("CSV not written verbatim: got %q, want %q", data, csv)
+		}
+	})
+
+	t.Run("invalid JSON falls back to raw bytes", func(t *testing.T) {
+		out := filepath.Join(t.TempDir(), "raw.json")
+		raw := "not json at all"
+		if err := writeResultsOutput([]byte(raw), out, false); err != nil {
+			t.Fatalf("writeResultsOutput: %v", err)
+		}
+		data, _ := os.ReadFile(out)
+		if string(data) != raw {
+			t.Errorf("expected raw passthrough on unindentable JSON, got %q", data)
 		}
 	})
 }

@@ -61,3 +61,14 @@ func TestReadRegistryPayload(t *testing.T) {
 		}
 	})
 }
+
+func TestPluralize(t *testing.T) {
+	if got := pluralize(1, "registry", "registries"); got != "registry" {
+		t.Errorf("pluralize(1) = %q, want registry", got)
+	}
+	for _, n := range []int{0, 2, 5} {
+		if got := pluralize(n, "registry", "registries"); got != "registries" {
+			t.Errorf("pluralize(%d) = %q, want registries", n, got)
+		}
+	}
+}

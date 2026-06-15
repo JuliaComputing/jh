@@ -21,7 +21,22 @@
       "Bash(GOCOVERDIR=/tmp/covdata JH_BIN=/tmp/jh-cov go test -tags e2e -run 'TestArgValidation|TestSubcommandHelp|TestScanRejectsMissingManifest' ./e2e/...)",
       "Bash(GOCOVERDIR=/tmp/covdata2 /tmp/jh-cov vuln)",
       "Bash(GOCOVERDIR=/tmp/covdata JH_BIN=/tmp/jh-cov /tmp/e2e.test -test.run 'TestArgValidation|TestSubcommandHelp|TestScanRejectsMissingManifest')",
-      "Bash(grep -vE '\\\\t0.0%$')"
+      "Bash(grep -vE '\\\\t0.0%$')",
+      "Bash(awk '{n=split\\($1,a,\"/\"\\);f=a[n];sub\\(/:.*/,\"\",f\\);p=$NF;gsub\\(/%/,\"\",p\\);s[f]+=p;c[f]++} END{for\\(f in s\\)printf \"  %-16s %5.1f%%\\\\n\",f,s[f]/c[f]}')",
+      "Bash(/tmp/jh-cov auth *)",
+      "Bash(/tmp/jh-cov user *)",
+      "Bash(GOCOVERDIR=/tmp/cov-unit go test -cover ./... -args -test.gocoverdir=/tmp/cov-unit)",
+      "Bash(GOCOVERDIR=/tmp/cov-e2e JH_BIN=/tmp/jh-cov /tmp/e2e.test -test.v -test.timeout=480s)",
+      "Bash(GOCOVERDIR=/tmp/cov-e2e JH_BIN=/tmp/jh-cov /tmp/e2e.test -test.timeout=480s)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(gofmt -w e2e/verbose_test.go)",
+      "Bash(make help *)",
+      "Bash(make coverage *)",
+      "Bash(make coverage-e2e *)",
+      "Bash(make coverage-all *)",
+      "Bash(grep -E '_test.go$|cli_test|verbose_test')",
+      "Bash(awk '{print}')",
+      "Bash(gofmt -w .)"
     ],
     "deny": [],
     "ask": []

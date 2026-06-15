@@ -27,8 +27,9 @@ func runVerbose(t *testing.T, args ...string) {
 	}
 }
 
+// Note: only the *admin* `user list` has a --verbose flag; the GraphQL
+// `user list` does not, so it is intentionally not covered here.
 func TestRegistryListVerbose(t *testing.T)   { runVerbose(t, "registry", "list", "--verbose") }
-func TestUserListVerbose(t *testing.T)       { runVerbose(t, "user", "list", "--verbose") }
 func TestAdminUserListVerbose(t *testing.T)  { runVerbose(t, "admin", "user", "list", "--verbose") }
 func TestAdminTokenListVerbose(t *testing.T) { runVerbose(t, "admin", "token", "list", "--verbose") }
 func TestAdminCredListVerbose(t *testing.T) {

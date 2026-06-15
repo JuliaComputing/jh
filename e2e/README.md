@@ -29,7 +29,7 @@ One file per command category, plus shared infrastructure:
 | [scan_test.go](scan_test.go) | `scan <manifest>` (--no-wait) → `scan status`/`results <uuid>` + input validation |
 | [job_test.go](job_test.go) | `job list` |
 | [admin_test.go](admin_test.go) | `admin user/token/group/credential list`, `landing-page show` |
-| [verbose_test.go](verbose_test.go) | `--verbose` / flag variants of the read commands (`registry list`, `user list`, `admin … list`, `package search`, `vuln --all/--verbose`) |
+| [verbose_test.go](verbose_test.go) | `--verbose` / flag variants of the read commands (`registry list`, `admin … list`, `package search`, `vuln --all/--verbose`) |
 | [cli_test.go](cli_test.go) | no-credential CLI surface: subcommand `--help` wiring and `ExactArgs` validation (runs even without a login) |
 
 ## How the tests assert (production-ready, not exit-code theatre)

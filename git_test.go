@@ -83,3 +83,10 @@ func TestGitCredentialHelperActions(t *testing.T) {
 		t.Error("gitCredentialHelper(bogus) = nil, want error")
 	}
 }
+
+func TestCheckGitInstalled(t *testing.T) {
+	// git is available in the dev/CI environment, so this should succeed.
+	if err := checkGitInstalled(); err != nil {
+		t.Skipf("git not installed in this environment: %v", err)
+	}
+}
