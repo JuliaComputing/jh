@@ -64,6 +64,7 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/JuliaComputing/jh/main
 
 # Clean up
 Remove-Item install.ps1
+```
 
 **Option 2: Command Prompt (CMD)**
 

@@ -1,2 +1,7 @@
 jh
 dist/
+
+# coverage artifacts (make coverage)
+e2e.test
+cover.out
+cover.html

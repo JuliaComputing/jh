@@ -5,7 +5,66 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
+
+// findSub returns the immediate subcommand of parent named name, or nil.
+func findSub(parent *cobra.Command, name string) *cobra.Command {
+	for _, c := range parent.Commands() {
+		if c.Name() == name {
+			return c
+		}
+	}
+	return nil
+}
+
+// requirePath walks the command tree along names and fails if any link is missing.
+func requirePath(t *testing.T, names ...string) *cobra.Command {
+	t.Helper()
+	cur := rootCmd
+	for _, n := range names {
+		next := findSub(cur, n)
+		if next == nil {
+			t.Fatalf("command %q has no subcommand %q (wiring missing)", cur.Name(), n)
+		}
+		cur = next
+	}
+	return cur
+}
+
+// TestCommandTreeWiring exercises the init() wiring by asserting the command tree
+// is connected as documented, including the write subcommands the runtime never
+// drives in the read-only e2e suite.
+func TestCommandTreeWiring(t *testing.T) {
+	for _, top := range []string{
+		"auth", "dataset", "vuln", "scan", "package", "registry",
+		"user", "group", "clone", "git-credential", "admin",
+	} {
+		if findSub(rootCmd, top) == nil {
+			t.Errorf("rootCmd missing top-level command %q", top)
+		}
+	}
+
+	// registry config / permission / registrator subtrees.
+	requirePath(t, "registry", "config", "add")
+	requirePath(t, "registry", "config", "update")
+	requirePath(t, "registry", "permission", "list")
+	requirePath(t, "registry", "permission", "set")
+	requirePath(t, "registry", "permission", "remove")
+	requirePath(t, "registry", "registrator", "update")
+
+	// admin credential add/update/delete for all three credential kinds.
+	for _, verb := range []string{"add", "update", "delete"} {
+		for _, kind := range []string{"token", "ssh", "github-app"} {
+			requirePath(t, "admin", "credential", verb, kind)
+		}
+	}
+
+	// admin landing-page update/remove.
+	requirePath(t, "admin", "landing-page", "update")
+	requirePath(t, "admin", "landing-page", "remove")
+}
 
 func TestNormalizeServer(t *testing.T) {
 	tests := []struct {
