@@ -336,6 +336,26 @@ func ensureValidToken() (*StoredToken, error) {
 	return updatedToken, nil
 }
 
+// allowsAnonymousReads reports whether a server exposes package data publicly.
+// Only juliahub.com does; private deployments always require authentication.
+func allowsAnonymousReads(server string) bool {
+	return strings.EqualFold(server, "juliahub.com")
+}
+
+// optionalToken returns a valid token when the user is logged in. When there is
+// no usable token it returns (nil, nil) for servers that allow anonymous reads,
+// so callers can fall back to public endpoints, and an error otherwise.
+func optionalToken(server string) (*StoredToken, error) {
+	token, err := ensureValidToken()
+	if err == nil {
+		return token, nil
+	}
+	if allowsAnonymousReads(server) {
+		return nil, nil
+	}
+	return nil, fmt.Errorf("authentication required: %w", err)
+}
+
 // updateJuliaCredentialsIfNeeded updates Julia credentials if the auth file exists
 // This is called after token refresh to keep credentials in sync
 func updateJuliaCredentialsIfNeeded(server string, token *StoredToken) error {

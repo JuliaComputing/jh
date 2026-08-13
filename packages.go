@@ -332,9 +332,9 @@ func buildGraphQLPackageVariables(search string, limit, offset int, registryIDs 
 }
 
 func fetchGraphQLPackages(server, search string, limit, offset int, registryIDs []int) ([]Package, error) {
-	token, err := ensureValidToken()
+	token, err := optionalToken(server)
 	if err != nil {
-		return nil, fmt.Errorf("authentication required: %w", err)
+		return nil, err
 	}
 
 	queryBytes, err := packageSearchFS.ReadFile("package_search.gql")
@@ -370,9 +370,9 @@ func fetchGraphQLPackages(server, search string, limit, offset int, registryIDs 
 }
 
 func fetchGraphQLPackageCount(server, search string, registryIDs []int) (int, error) {
-	token, err := ensureValidToken()
+	token, err := optionalToken(server)
 	if err != nil {
-		return 0, fmt.Errorf("authentication required: %w", err)
+		return 0, err
 	}
 
 	queryBytes, err := packageSearchFS.ReadFile("package_search_count.gql")
@@ -460,6 +460,15 @@ func searchPackagesGraphQL(params PackageSearchParams) error {
 }
 
 func searchPackages(params PackageSearchParams) error {
+	token, err := optionalToken(params.Server)
+	if err != nil {
+		return err
+	}
+	// /packages/info always requires authentication, so anonymous searches go
+	// straight to GraphQL, which serves public registries under the anonymous role.
+	if token == nil {
+		return searchPackagesGraphQL(params)
+	}
 	if err := searchPackagesREST(params); err != nil {
 		return searchPackagesGraphQL(params)
 	}
@@ -478,10 +487,16 @@ func executeGraphQL(server string, token *StoredToken, gqlReq GraphQLRequest) ([
 		return nil, fmt.Errorf("failed to create GraphQL request: %w", err)
 	}
 
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
+	// A nil token means an anonymous query: Hasura's anonymous role serves the
+	// publicly readable registries without an Authorization header.
+	if token != nil {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
+		req.Header.Set("X-Hasura-Role", "jhuser")
+	} else {
+		req.Header.Set("X-Hasura-Role", "anonymous")
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("X-Hasura-Role", "jhuser")
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
