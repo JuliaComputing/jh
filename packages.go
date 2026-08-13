@@ -127,8 +127,6 @@ type packageInfo struct {
 	DocsURL     string
 	License     string
 	IsApp       bool
-	Score       float64
-	Status      string
 }
 
 func printPackages(pkgs []packageInfo, total int, verbose bool) {
@@ -179,14 +177,8 @@ func printPackages(pkgs []packageInfo, total int, verbose bool) {
 			if pkg.Version != "" {
 				fmt.Printf("Latest Version: %s\n", pkg.Version)
 			}
-			if pkg.Status != "" {
-				fmt.Printf("Status: %s\n", pkg.Status)
-			}
 			if pkg.IsApp {
 				fmt.Printf("Type: Application\n")
-			}
-			if pkg.Score != 0 {
-				fmt.Printf("Score: %.2f\n", pkg.Score)
 			}
 		} else {
 			fmt.Printf("%-30s %-20s %-20s", pkg.Name, pkg.Registry, pkg.Owner)
@@ -232,7 +224,6 @@ func gqlToInfo(p Package, registryIDToName map[int]string) packageInfo {
 		Owner:   p.Owner,
 		License: p.License,
 		IsApp:   p.IsApp,
-		Score:   p.Score,
 	}
 	if p.Metadata != nil {
 		info.Description = p.Metadata.Description
@@ -244,11 +235,6 @@ func gqlToInfo(p Package, registryIDToName map[int]string) packageInfo {
 	if p.RegistryMap != nil {
 		info.Registry = registryIDToName[p.RegistryMap.RegistryID]
 		info.Version = p.RegistryMap.Version
-		if p.RegistryMap.Status {
-			info.Status = "Active"
-		} else {
-			info.Status = "Inactive"
-		}
 	}
 	return info
 }
