@@ -509,7 +509,14 @@ jh run setup
 - Landing page response uses custom JSON unmarshaling (`homepageResponse`) to handle `message` being either an object or a string
 - Package search (`jh package search`) and info (`jh package info`) both try REST API (`/packages/info`) first, then fall back to GraphQL (`FilteredPackages` / `FilteredPackagesCount` via `/v1/graphql`) on failure; a warning is printed to stderr when the fallback is used
 - REST API passes `--registries` as comma-separated registry names to the `registries` query param; GraphQL fallback passes registry IDs to the `registries` variable
-- `fetchRegistries` in `registries.go` is used by `listRegistries`, `packageSearchCmd`, `packageInfoCmd`, and `packageDependencyCmd` to resolve registry names to IDs (for GraphQL) and names (for REST)
+- `fetchRegistries` in `registries.go` is used by `listRegistries`, `packageInfoCmd`, and `packageDependencyCmd` to resolve registry names to IDs (for GraphQL) and names (for REST); `packageSearchCmd` uses `fetchPackageRegistries`, which adds the anonymous fallback
+- `jh package search` works without logging in, but **only against juliahub.com** — every other server still requires authentication
+  - `optionalToken(server)` in `auth.go` returns the stored token when available; when there is none it returns `(nil, nil)` for juliahub.com (via `allowsAnonymousReads`) and an error for any other server
+  - Anonymous searches skip REST entirely (`/packages/info` is always authenticated) and go straight to GraphQL; `executeGraphQL` omits the `Authorization` header and sends `X-Hasura-Role: anonymous` when the token is nil
+  - The anonymous Hasura role only returns rows when the `registries` variable is non-empty, so registry IDs must always be resolved first
+  - `fetchPackageRegistries` resolves those IDs: authenticated users hit `/api/v1/registry/registries/descriptions`; anonymous users hit the public `/app/packages/registries` (`fetchPublicRegistries`), which only carries name, UUID, and ID
+  - Row-level permissions restrict anonymous results to public registries (General on juliahub.com), so `--registries` naming a private registry returns "No packages found" rather than an error
+  - `apiGet` skips the `Authorization` header when passed an empty token, which is how the public registry listing is fetched
 - Both REST and GraphQL package search/info paths produce identical output columns (Registry and Owner); GraphQL resolves registry names from the `registryIDs`/`registryNames` already in `PackageSearchParams` — no extra API call needed
 - A package in multiple registries appears as multiple rows (one per registry) in both REST and GraphQL paths, since the GraphQL view (`package_rank_vw`) is already flattened per package-registry combination
 - GraphQL fallback uses `package_search.gql` (`FilteredPackages`) for the package list and `package_search_count.gql` (`FilteredPackagesCount`) for the aggregate count as separate requests
