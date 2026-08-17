@@ -10,7 +10,9 @@ import (
 )
 
 // `jh dataset` — list, and the entity-specific status/download driven off the
-// first dataset returned by list.
+// first dataset of the relevant type returned by list. Blob and BlobTree
+// datasets behave differently (whole-blob download URL vs per-file), so each
+// gets its own tests instead of taking whichever type happens to sort first.
 
 // TestDatasetList verifies the listing renders (whether empty or not).
 func TestDatasetList(t *testing.T) {
@@ -25,14 +27,14 @@ func TestDatasetList(t *testing.T) {
 	}
 }
 
-// TestDatasetStatusFirst lists datasets, takes the first, and checks its status
-// resolves a version and a download URL.
+// TestDatasetStatusFirst lists datasets, takes the first Blob-type one, and
+// checks its status resolves a version and a download URL.
 func TestDatasetStatusFirst(t *testing.T) {
 	requireCreds(t)
 	list := runOK(t, "dataset", "list").combined()
-	id := firstID(list)
+	id := firstIDOfType(list, "Blob")
 	if id == "" {
-		t.Skip("no datasets on this instance to inspect")
+		t.Skip("no Blob-type datasets on this instance to inspect")
 	}
 
 	res := runJH(t, "dataset", "status", id)
@@ -48,14 +50,15 @@ func TestDatasetStatusFirst(t *testing.T) {
 	}
 }
 
-// TestDatasetDownloadFirst lists datasets, takes the first, downloads it to a
-// temp path, and asserts the file was written and is non-empty.
+// TestDatasetDownloadFirst lists datasets, takes the first Blob-type one,
+// downloads it to a temp path, and asserts the file was written and is
+// non-empty.
 func TestDatasetDownloadFirst(t *testing.T) {
 	requireCreds(t)
 	list := runOK(t, "dataset", "list").combined()
-	id := firstID(list)
+	id := firstIDOfType(list, "Blob")
 	if id == "" {
-		t.Skip("no datasets on this instance to download")
+		t.Skip("no Blob-type datasets on this instance to download")
 	}
 
 	dest := filepath.Join(t.TempDir(), "dataset.bin")
@@ -71,5 +74,52 @@ func TestDatasetDownloadFirst(t *testing.T) {
 	}
 	if info.Size() == 0 {
 		t.Errorf("downloaded dataset file is empty: %s", dest)
+	}
+}
+
+// TestDatasetStatusFirstBlobTree checks status of a BlobTree dataset succeeds
+// without a download URL (BlobTree download URLs are per-file; the server has
+// no whole-tree URL to report).
+func TestDatasetStatusFirstBlobTree(t *testing.T) {
+	requireCreds(t)
+	list := runOK(t, "dataset", "list").combined()
+	id := firstIDOfType(list, "BlobTree")
+	if id == "" {
+		t.Skip("no BlobTree-type datasets on this instance to inspect")
+	}
+
+	res := runJH(t, "dataset", "status", id)
+	if res.exitCode != 0 {
+		skipIfUnsupported(t, res)
+		t.Fatalf("dataset status %s exited %d\nstderr: %s", id, res.exitCode, res.stderr)
+	}
+	out := res.combined()
+	assertContains(t, out, "Dataset:")
+	assertContains(t, out, "Version:")
+	assertContains(t, out, "BlobTree")
+}
+
+// TestDatasetDownloadFirstBlobTree checks a whole-tree download attempt fails
+// fast with a clear explanation, not a raw server 400 ("File path missing for
+// BlobTree").
+func TestDatasetDownloadFirstBlobTree(t *testing.T) {
+	requireCreds(t)
+	list := runOK(t, "dataset", "list").combined()
+	id := firstIDOfType(list, "BlobTree")
+	if id == "" {
+		t.Skip("no BlobTree-type datasets on this instance to download")
+	}
+
+	dest := filepath.Join(t.TempDir(), "dataset.bin")
+	res := runJH(t, "dataset", "download", id, dest)
+	if res.exitCode == 0 {
+		t.Fatalf("dataset download %s unexpectedly succeeded for a BlobTree dataset:\n%s",
+			id, truncate(res.combined()))
+	}
+	out := res.combined()
+	assertContains(t, out, "BlobTree")
+	assertContains(t, out, "not supported")
+	if _, err := os.Stat(dest); err == nil {
+		t.Errorf("no file should have been written for a refused BlobTree download: %s", dest)
 	}
 }

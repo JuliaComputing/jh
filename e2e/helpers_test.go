@@ -75,6 +75,62 @@ func firstID(out string) string {
 	return ""
 }
 
+// firstIDOfType returns the ID of the first `dataset list` entry whose "Type:"
+// field equals dtype exactly (e.g. "Blob" does not match "BlobTree"). Blob and
+// BlobTree datasets have different download semantics (whole-blob URL vs
+// per-file), so type-specific tests must not depend on which type happens to
+// sort first on the instance.
+func firstIDOfType(out, dtype string) string {
+	typeRe := regexp.MustCompile(`(?m)^Type:\s*` + regexp.QuoteMeta(dtype) + `\s*$`)
+	ids := reIDLine.FindAllStringSubmatchIndex(out, -1)
+	for i, loc := range ids {
+		end := len(out)
+		if i+1 < len(ids) {
+			end = ids[i+1][0]
+		}
+		if typeRe.MatchString(out[loc[0]:end]) {
+			return out[loc[2]:loc[3]]
+		}
+	}
+	return ""
+}
+
+// TestFirstIDOfType pins the listing-parse behaviour firstIDOfType relies on,
+// in particular that "Blob" does not match a "BlobTree" entry. Needs no
+// credentials — pure output parsing.
+func TestFirstIDOfType(t *testing.T) {
+	listing := "Found 3 dataset(s):\n" +
+		"\n" +
+		"ID: 0ba40730-c30d-460a-b5a4-bc1c2d3b6cbc\n" +
+		"Name: tree_first\n" +
+		"Owner: admin (User)\n" +
+		"Size: 51 bytes\n" +
+		"Visibility: private\n" +
+		"Type: BlobTree\n" +
+		"Version: v1\n" +
+		"\n" +
+		"ID: 1a678f8f-a352-4554-a37c-1eee605e8aeb\n" +
+		"Name: blob_second\n" +
+		"Type: Blob\n" +
+		"\n" +
+		"ID: 2ae31596-ef0c-4998-9362-7eb6b28688d4\n" +
+		"Name: blob_third\n" +
+		"Type: Blob\n"
+
+	if got := firstIDOfType(listing, "Blob"); got != "1a678f8f-a352-4554-a37c-1eee605e8aeb" {
+		t.Errorf("firstIDOfType(Blob) = %q, want the second entry (must not match BlobTree)", got)
+	}
+	if got := firstIDOfType(listing, "BlobTree"); got != "0ba40730-c30d-460a-b5a4-bc1c2d3b6cbc" {
+		t.Errorf("firstIDOfType(BlobTree) = %q, want the first entry", got)
+	}
+	if got := firstIDOfType(listing, "Nope"); got != "" {
+		t.Errorf("firstIDOfType(Nope) = %q, want empty", got)
+	}
+	if got := firstIDOfType("No datasets found", "Blob"); got != "" {
+		t.Errorf("firstIDOfType on empty listing = %q, want empty", got)
+	}
+}
+
 // firstField returns the value of the first "<field>: <value>" line (case-insensitive).
 func firstField(out, field string) string {
 	re := regexp.MustCompile(`(?mi)^` + regexp.QuoteMeta(field) + `:\s*(.+)$`)
