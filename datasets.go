@@ -208,34 +208,37 @@ func getDatasetDownloadURL(server, datasetID, version string, token *StoredToken
 	return &downloadURL, nil
 }
 
-func getDatasetVersions(server, datasetID string, token *StoredToken) ([]Version, error) {
-	// Get all datasets
+// getDatasetByID fetches the dataset record for the given UUID from the full
+// listing (the datasets API has no single-dataset GET).
+func getDatasetByID(server, datasetID string, token *StoredToken) (*Dataset, error) {
 	datasets, err := getDatasets(server, token)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get datasets: %w", err)
 	}
 
-	// Find the dataset with the matching ID
-	var targetDataset *Dataset
 	for i := range datasets {
 		if datasets[i].ID == datasetID {
-			targetDataset = &datasets[i]
-			break
+			return &datasets[i], nil
 		}
 	}
 
-	if targetDataset == nil {
-		return nil, fmt.Errorf("dataset with ID %s not found", datasetID)
+	return nil, fmt.Errorf("dataset with ID %s not found", datasetID)
+}
+
+func getDatasetVersions(server, datasetID string, token *StoredToken) ([]Version, error) {
+	dataset, err := getDatasetByID(server, datasetID, token)
+	if err != nil {
+		return nil, err
 	}
 
-	fmt.Printf("DEBUG: Found dataset: %s\n", targetDataset.Name)
+	fmt.Printf("DEBUG: Found dataset: %s\n", dataset.Name)
 	fmt.Printf("DEBUG: Dataset versions:\n")
-	for i, version := range targetDataset.Versions {
+	for i, version := range dataset.Versions {
 		fmt.Printf("  [%d] Version %d, Size: %d, Date: %s, BlobstorePath: %s\n",
 			i, version.Version, version.Size, version.Date.Time.Format(time.RFC3339), version.BlobstorePath)
 	}
 
-	return targetDataset.Versions, nil
+	return dataset.Versions, nil
 }
 
 func getDatasets(server string, token *StoredToken) ([]Dataset, error) {
@@ -342,6 +345,16 @@ func downloadDataset(server, datasetIdentifier, version, localPath string) error
 		return err
 	}
 
+	// Download URLs are per-file for BlobTree datasets (the server rejects a
+	// whole-tree URL request with "File path missing for BlobTree").
+	dataset, err := getDatasetByID(server, datasetID, token)
+	if err != nil {
+		return err
+	}
+	if dataset.Type == "BlobTree" {
+		return fmt.Errorf("dataset '%s' is a BlobTree (a file tree): whole-tree download is not supported yet, and download URLs are per-file", dataset.Name)
+	}
+
 	var versionNumber string
 	var datasetName string
 
@@ -446,6 +459,11 @@ func statusDataset(server, datasetIdentifier, version string) error {
 		return err
 	}
 
+	dataset, err := getDatasetByID(server, datasetID, token)
+	if err != nil {
+		return err
+	}
+
 	var versionNumber string
 
 	if version != "" {
@@ -483,6 +501,17 @@ func statusDataset(server, datasetIdentifier, version string) error {
 
 		fmt.Printf("DEBUG: Latest version found: %d\n", latestVersion.Version)
 		versionNumber = fmt.Sprintf("%d", latestVersion.Version)
+	}
+
+	// Download URLs are per-file for BlobTree datasets (the server rejects a
+	// whole-tree URL request with "File path missing for BlobTree"), so status
+	// for those is reported without one.
+	if dataset.Type == "BlobTree" {
+		fmt.Printf("Dataset: %s\n", dataset.Name)
+		fmt.Printf("Version: v%s\n", versionNumber)
+		fmt.Printf("Type: BlobTree (a file tree; download URLs are per-file)\n")
+		fmt.Printf("Status: Ready\n")
+		return nil
 	}
 
 	// Get download URL (but don't download)
