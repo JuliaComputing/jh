@@ -27,14 +27,14 @@ func TestDatasetList(t *testing.T) {
 	}
 }
 
-// TestDatasetStatusFirst lists datasets, takes the first Blob-type one, and
-// checks its status resolves a version and a download URL.
+// TestDatasetStatusFirst lists datasets, takes the first Blob-type one with
+// an uploaded version, and checks its status resolves a version and a download URL.
 func TestDatasetStatusFirst(t *testing.T) {
 	requireCreds(t)
 	list := runOK(t, "dataset", "list").combined()
 	id := firstIDOfType(list, "Blob")
 	if id == "" {
-		t.Skip("no Blob-type datasets on this instance to inspect")
+		t.Skip("no Blob-type datasets with an uploaded version on this instance to inspect")
 	}
 
 	res := runJH(t, "dataset", "status", id)
@@ -50,15 +50,15 @@ func TestDatasetStatusFirst(t *testing.T) {
 	}
 }
 
-// TestDatasetDownloadFirst lists datasets, takes the first Blob-type one,
-// downloads it to a temp path, and asserts the file was written and is
+// TestDatasetDownloadFirst lists datasets, takes the first Blob-type one
+// with an uploaded version, downloads it to a temp path, and asserts the file was written and is
 // non-empty.
 func TestDatasetDownloadFirst(t *testing.T) {
 	requireCreds(t)
 	list := runOK(t, "dataset", "list").combined()
 	id := firstIDOfType(list, "Blob")
 	if id == "" {
-		t.Skip("no Blob-type datasets on this instance to download")
+		t.Skip("no Blob-type datasets with an uploaded version on this instance to download")
 	}
 
 	dest := filepath.Join(t.TempDir(), "dataset.bin")
@@ -85,7 +85,7 @@ func TestDatasetStatusFirstBlobTree(t *testing.T) {
 	list := runOK(t, "dataset", "list").combined()
 	id := firstIDOfType(list, "BlobTree")
 	if id == "" {
-		t.Skip("no BlobTree-type datasets on this instance to inspect")
+		t.Skip("no BlobTree-type datasets with an uploaded version on this instance to inspect")
 	}
 
 	res := runJH(t, "dataset", "status", id)
@@ -107,7 +107,7 @@ func TestDatasetDownloadFirstBlobTree(t *testing.T) {
 	list := runOK(t, "dataset", "list").combined()
 	id := firstIDOfType(list, "BlobTree")
 	if id == "" {
-		t.Skip("no BlobTree-type datasets on this instance to download")
+		t.Skip("no BlobTree-type datasets with an uploaded version on this instance to download")
 	}
 
 	dest := filepath.Join(t.TempDir(), "dataset.bin")
