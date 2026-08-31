@@ -934,8 +934,8 @@ Use --verbose flag for comprehensive output, or get a concise summary by default
 		verbose, _ := cmd.Flags().GetBool("verbose")
 		registryNamesStr, _ := cmd.Flags().GetString("registries")
 
-		// Fetch all registries from the API
-		allRegistries, err := fetchRegistries(server)
+		// Fetch all registries from the API (works logged out on juliahub.com)
+		allRegistries, err := fetchPackageRegistries(server)
 		if err != nil {
 			fmt.Printf("Failed to fetch registries: %v\n", err)
 			os.Exit(1)

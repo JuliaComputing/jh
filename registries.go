@@ -49,6 +49,46 @@ func fetchRegistries(server string) ([]Registry, error) {
 	return registries, nil
 }
 
+// fetchPackageRegistries resolves the registries used to scope package queries.
+// Logged-in users get the full descriptions; anonymous users on juliahub.com get
+// the public listing, which only carries name, UUID and ID.
+func fetchPackageRegistries(server string) ([]Registry, error) {
+	token, err := optionalToken(server)
+	if err != nil {
+		return nil, err
+	}
+	if token != nil {
+		return fetchRegistries(server)
+	}
+	return fetchPublicRegistries(server)
+}
+
+// fetchPublicRegistries lists registries via the unauthenticated endpoint used by
+// the logged-out web UI.
+func fetchPublicRegistries(server string) ([]Registry, error) {
+	body, err := apiGet(fmt.Sprintf("https://%s/app/packages/registries", server), "")
+	if err != nil {
+		return nil, err
+	}
+
+	var response struct {
+		Registries []struct {
+			Name string `json:"name"`
+			UUID string `json:"uuid"`
+			ID   int    `json:"id"`
+		} `json:"registries"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	registries := make([]Registry, len(response.Registries))
+	for i, r := range response.Registries {
+		registries[i] = Registry{Name: r.Name, UUID: r.UUID, RegistryID: r.ID}
+	}
+	return registries, nil
+}
+
 // apiGet performs a GET request with up to 3 attempts, retrying on transient errors.
 func apiGet(url, idToken string) ([]byte, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -61,7 +101,10 @@ func apiGet(url, idToken string) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", idToken))
+		// An empty token means an anonymous request against a public endpoint.
+		if idToken != "" {
+			req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", idToken))
+		}
 		req.Header.Set("Accept", "application/json")
 
 		resp, err := client.Do(req)
