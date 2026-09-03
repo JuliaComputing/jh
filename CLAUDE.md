@@ -15,7 +15,7 @@ The application follows a command-line interface pattern using the Cobra library
 - **datasets.go**: Dataset operations (list, download, upload, status) with REST API integration
 - **registries.go**: Registry operations (list, config, add, update, registrator) with REST API integration
 - **packages.go**: Package operations (search, dependency) with REST API primary path (`/packages/info`), GraphQL fallback, and documentation API (`/docs/{registry}/{package}/stable/pkg.json`)
-- **projects.go**: Project management using GraphQL API with user filtering
+- **projects.go**: Project management using GraphQL API. `jh project list` is paginated (`projectsPageSize` = 100 per request, `--limit` caps the total, 0 = all) and filters by owner **server-side** (`buildProjectsFilter`). Never request the whole projects table: the Projects query costs the server several aggregates and permission checks per row, and an unpaginated request against a large install ran for hours after the 30 s client timeout fired
 - **user.go**: User information retrieval using GraphQL API and REST API for listing users
 - **tokens.go**: Token management operations (list) with REST API integration
 - **credentials.go**: Registry credential management (list, add, update, delete) with REST API integration
@@ -49,7 +49,7 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh registry permission`: Registry permission management (list, set, remove)
    - `jh registry registrator`: Show registrator config by name; subcommand update accepts JSON via stdin or `--file`
    - `jh package`: Package search and dependency (REST primary via `/packages/info`, GraphQL fallback; dependency data from `/docs/{registry}/{package}/stable/pkg.json`)
-   - `jh project`: Project management (list with GraphQL, supports user filtering)
+   - `jh project`: Project management (list with GraphQL, paginated, supports user filtering via `--user` and `--limit`)
    - `jh user`: User information (info, list via GraphQL `public_users`)
    - `jh group`: Group information (list via GraphQL)
    - `jh admin`: Administrative commands (user management, token management, group management, credential management, landing page)

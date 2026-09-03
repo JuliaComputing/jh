@@ -49,14 +49,6 @@ query Projects(
                     count
                   }
                 }
-                resources(order_by: [{ sorting_order: asc_nulls_last }]) {
-                  sorting_order
-                  instance_default_role
-                  giturl
-                  name
-                  resource_id
-                  resource_type
-                }
                 product {
                   id
                   displayName: display_name
@@ -64,23 +56,6 @@ query Projects(
                 }
                 visibility
                 description
-                users: groups(where: { group_id: { _is_null: true } }) {
-                  user {
-                    name
-                  }
-                  id
-                  assigned_role
-                }
-                groups(where: { group_id: { _is_null: false } }) {
-                  group {
-                    name
-                    group_id
-                  }
-                  id: group_id
-                  group_id
-                  project_id
-                  assigned_role
-                }
                 tags
                 userRole: access_control_users_aggregate(
                   where: { user_id: { _eq: $ownerId } }
