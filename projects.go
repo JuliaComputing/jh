@@ -1,14 +1,10 @@
 package main
 
 import (
-	"bytes"
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
-	"time"
 )
 
 //go:embed projects.gql
@@ -40,13 +36,10 @@ type Project struct {
 			Count int `json:"count"`
 		} `json:"aggregate"`
 	} `json:"pending_deployments"`
-	Resources   []Resource `json:"resources"`
-	Product     Product    `json:"product"`
-	Visibility  string     `json:"visibility"`
-	Description string     `json:"description"`
-	Users       []User     `json:"users"`
-	Groups      []Group    `json:"groups"`
-	Tags        []string   `json:"tags"`
+	Product     Product  `json:"product"`
+	Visibility  string   `json:"visibility"`
+	Description string   `json:"description"`
+	Tags        []string `json:"tags"`
 	UserRole    struct {
 		Aggregate struct {
 			Max struct {
@@ -66,38 +59,10 @@ type ProjectOwner struct {
 	Name     string `json:"name"`
 }
 
-type Resource struct {
-	SortingOrder        *int   `json:"sorting_order"`
-	InstanceDefaultRole string `json:"instance_default_role"`
-	GitURL              string `json:"giturl"`
-	Name                string `json:"name"`
-	ResourceID          string `json:"resource_id"`
-	ResourceType        string `json:"resource_type"`
-}
-
 type Product struct {
 	ID          int64  `json:"id"`
 	DisplayName string `json:"displayName"`
 	Name        string `json:"name"`
-}
-
-type User struct {
-	User struct {
-		Name string `json:"name"`
-	} `json:"user"`
-	ID           int64  `json:"id"`
-	AssignedRole string `json:"assigned_role"`
-}
-
-type Group struct {
-	Group struct {
-		Name    string `json:"name"`
-		GroupID int64  `json:"group_id"`
-	} `json:"group"`
-	ID           int64  `json:"id"`
-	GroupID      int64  `json:"group_id"`
-	ProjectID    string `json:"project_id"`
-	AssignedRole string `json:"assigned_role"`
 }
 
 type GraphQLRequest struct {
@@ -120,7 +85,82 @@ type ProjectsResponse struct {
 	} `json:"errors"`
 }
 
-func listProjects(server string, userFilter string, userFilterProvided bool) error {
+// projectsPageSize is how many projects are fetched per GraphQL request.
+// The Projects query is expensive per row on the server (several aggregates
+// and permission checks per project), so it is always paginated and filtered
+// server-side; never ask Hasura for the whole projects table.
+const projectsPageSize = 100
+
+// escapeLikePattern escapes the LIKE/ILIKE metacharacters in s so that it
+// matches literally when used as an _ilike pattern.
+func escapeLikePattern(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
+
+// buildProjectsFilter returns the projects_bool_exp to send to Hasura.
+// Filtering happens server-side so the caller only receives (and the server
+// only computes) the projects that will actually be shown.
+func buildProjectsFilter(userFilter string, userFilterProvided bool, currentUserID int64) map[string]interface{} {
+	if !userFilterProvided {
+		return map[string]interface{}{}
+	}
+	if userFilter == "" {
+		return map[string]interface{}{
+			"owner_id": map[string]interface{}{"_eq": currentUserID},
+		}
+	}
+	// Case-insensitive exact match on the owner's username (was EqualFold client-side).
+	return map[string]interface{}{
+		"owner": map[string]interface{}{
+			"username": map[string]interface{}{"_ilike": escapeLikePattern(userFilter)},
+		},
+	}
+}
+
+// fetchProjectsPage requests one page of projects matching filter. It returns
+// the page's projects and the total number of matching projects on the server.
+func fetchProjectsPage(server string, token *StoredToken, ownerID int64, filter map[string]interface{}, page int) ([]Project, int, error) {
+	body, err := executeGraphQL(server, token, GraphQLRequest{
+		OperationName: "Projects",
+		Query:         projectsQuery,
+		Variables: map[string]interface{}{
+			"ownerId": ownerID,
+			"filter":  filter,
+			"limit":   projectsPageSize,
+			"offset":  (page - 1) * projectsPageSize,
+			"orderBy": map[string]interface{}{"created_at": "desc_nulls_last"},
+		},
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var response ProjectsResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, 0, fmt.Errorf("failed to parse response: %w", err)
+	}
+	if len(response.Errors) > 0 {
+		return nil, 0, fmt.Errorf("GraphQL errors: %v", response.Errors)
+	}
+	return response.Data.Projects, response.Data.Aggregate.Aggregate.Count, nil
+}
+
+// totalPages is how many pages of projectsPageSize the given total spans.
+func totalPages(total int) int {
+	if total <= 0 {
+		return 0
+	}
+	return (total + projectsPageSize - 1) / projectsPageSize
+}
+
+func listProjects(server string, userFilter string, userFilterProvided bool, page int) error {
+	if page < 1 {
+		return fmt.Errorf("--page must be 1 or greater, got %d", page)
+	}
+
 	token, err := ensureValidToken()
 	if err != nil {
 		return fmt.Errorf("authentication required: %w", err)
@@ -132,86 +172,13 @@ func listProjects(server string, userFilter string, userFilterProvided bool) err
 		return fmt.Errorf("failed to get user info: %w", err)
 	}
 
-	query := projectsQuery
-
-	// Create GraphQL request
-	graphqlReq := GraphQLRequest{
-		OperationName: "Projects",
-		Query:         query,
-		Variables: map[string]interface{}{
-			"ownerId": userInfo.ID,
-		},
-	}
-
-	jsonData, err := json.Marshal(graphqlReq)
+	filter := buildProjectsFilter(userFilter, userFilterProvided, userInfo.ID)
+	projects, total, err := fetchProjectsPage(server, token, userInfo.ID, filter, page)
 	if err != nil {
-		return fmt.Errorf("failed to marshal GraphQL request: %w", err)
+		return err
 	}
 
-	url := fmt.Sprintf("https://%s/v1/graphql", server)
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("X-Hasura-Role", "jhuser")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("GraphQL request failed (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read response: %w", err)
-	}
-
-	var response ProjectsResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	// Check for GraphQL errors
-	if len(response.Errors) > 0 {
-		return fmt.Errorf("GraphQL errors: %v", response.Errors)
-	}
-
-	projects := response.Data.Projects
-
-	// Apply user filtering if requested
-	if userFilterProvided {
-		var filteredProjects []Project
-
-		if userFilter == "" {
-			// Show only current user's projects
-			for _, project := range projects {
-				if project.Owner.Username == userInfo.Username {
-					filteredProjects = append(filteredProjects, project)
-				}
-			}
-		} else {
-			// Show projects from specified user
-			for _, project := range projects {
-				if strings.EqualFold(project.Owner.Username, userFilter) {
-					filteredProjects = append(filteredProjects, project)
-				}
-			}
-		}
-
-		projects = filteredProjects
-	}
-
-	if len(projects) == 0 {
+	if total == 0 {
 		if userFilterProvided {
 			if userFilter == "" {
 				fmt.Println("No projects found for your user")
@@ -224,14 +191,23 @@ func listProjects(server string, userFilter string, userFilterProvided bool) err
 		return nil
 	}
 
+	pages := totalPages(total)
+	if len(projects) == 0 {
+		fmt.Printf("Page %d is empty: %d project(s) found, %d page(s) of %d\n", page, total, pages, projectsPageSize)
+		return nil
+	}
+
 	if userFilterProvided {
 		if userFilter == "" {
-			fmt.Printf("Found %d project(s) for your user:\n\n", len(projects))
+			fmt.Printf("Found %d project(s) for your user:\n\n", total)
 		} else {
-			fmt.Printf("Found %d project(s) for user '%s':\n\n", len(projects), userFilter)
+			fmt.Printf("Found %d project(s) for user '%s':\n\n", total, userFilter)
 		}
 	} else {
-		fmt.Printf("Found %d project(s):\n\n", len(projects))
+		fmt.Printf("Found %d project(s):\n\n", total)
+	}
+	if pages > 1 {
+		fmt.Printf("Showing page %d of %d (%d per page, most recently created first; use --page to see more)\n\n", page, pages, projectsPageSize)
 	}
 
 	for _, project := range projects {
@@ -254,17 +230,6 @@ func listProjects(server string, userFilter string, userFilterProvided bool) err
 		pendingDeployments := project.PendingDeployments.Aggregate.Count
 		fmt.Printf("Deployments: %d total, %d running, %d pending\n",
 			totalDeployments, runningDeployments, pendingDeployments)
-
-		// Show resources
-		if len(project.Resources) > 0 {
-			fmt.Printf("Resources:\n")
-			for _, resource := range project.Resources {
-				fmt.Printf("  - %s (%s)\n", resource.Name, resource.ResourceType)
-				if resource.GitURL != "" {
-					fmt.Printf("    Git URL: %s\n", resource.GitURL)
-				}
-			}
-		}
 
 		// Show tags
 		if len(project.Tags) > 0 {

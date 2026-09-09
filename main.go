@@ -1449,12 +1449,13 @@ Displays comprehensive information about your projects including:
 - Description and visibility
 - Product type and creation date
 - Deployment status (total, running, pending)
-- Associated resources and Git repositories
 - Tags and user roles
 - Archive and deployment status
 
-Uses GraphQL API to fetch detailed project information.`,
-	Example: "  jh project list\n  jh project list --user\n  jh project list --user john",
+Uses GraphQL API to fetch detailed project information. Results are
+paginated and filtered on the server: one page of 100 projects, most
+recently created first, is fetched per invocation (see --page).`,
+	Example: "  jh project list\n  jh project list --page 2\n  jh project list --user\n  jh project list --user john",
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
 		if err != nil {
@@ -1464,8 +1465,9 @@ Uses GraphQL API to fetch detailed project information.`,
 
 		userFilter, _ := cmd.Flags().GetString("user")
 		userFilterProvided := cmd.Flags().Changed("user")
+		page, _ := cmd.Flags().GetInt("page")
 
-		if err := listProjects(server, userFilter, userFilterProvided); err != nil {
+		if err := listProjects(server, userFilter, userFilterProvided, page); err != nil {
 			fmt.Printf("Failed to list projects: %v\n", err)
 			os.Exit(1)
 		}
@@ -2462,6 +2464,7 @@ func init() {
 	registryListCmd.Flags().Bool("verbose", false, "Show detailed registry information")
 	projectListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	projectListCmd.Flags().String("user", "", "Filter projects by user (leave empty to show only your own projects)")
+	projectListCmd.Flags().Int("page", 1, "Page of projects to list (100 per page, most recently created first)")
 	userInfoCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	userListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	userListCmd.Flags().Bool("verbose", false, "Show detailed user information")
