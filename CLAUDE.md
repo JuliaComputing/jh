@@ -15,7 +15,7 @@ The application follows a command-line interface pattern using the Cobra library
 - **datasets.go**: Dataset operations (list, download, upload, status) with REST API integration
 - **registries.go**: Registry operations (list, config, add, update, registrator) with REST API integration
 - **packages.go**: Package operations (search, dependency) with REST API primary path (`/packages/info`), GraphQL fallback, and documentation API (`/docs/{registry}/{package}/stable/pkg.json`)
-- **projects.go**: Project management using GraphQL API. `jh project list` is paginated (`projectsPageSize` = 100 per request, `--limit` caps the total, 0 = all) and filters by owner **server-side** (`buildProjectsFilter`). Never request the whole projects table: the Projects query costs the server several aggregates and permission checks per row, and an unpaginated request against a large install ran for hours after the 30 s client timeout fired
+- **projects.go**: Project management using GraphQL API. `jh project list` is paginated (`projectsPageSize` = 100 per page, one page per invocation, selected with `--page=N`, default 1) and filters by owner **server-side** (`buildProjectsFilter`). Never request the whole projects table: the Projects query costs the server several aggregates and permission checks per row, and an unpaginated request against a large install ran for hours after the 30 s client timeout fired
 - **user.go**: User information retrieval using GraphQL API and REST API for listing users
 - **tokens.go**: Token management operations (list) with REST API integration
 - **credentials.go**: Registry credential management (list, add, update, delete) with REST API integration
@@ -49,7 +49,7 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh registry permission`: Registry permission management (list, set, remove)
    - `jh registry registrator`: Show registrator config by name; subcommand update accepts JSON via stdin or `--file`
    - `jh package`: Package search and dependency (REST primary via `/packages/info`, GraphQL fallback; dependency data from `/docs/{registry}/{package}/stable/pkg.json`)
-   - `jh project`: Project management (list with GraphQL, paginated, supports user filtering via `--user` and `--limit`)
+   - `jh project`: Project management (list with GraphQL, paginated, supports user filtering via `--user` and page selection via `--page`)
    - `jh user`: User information (info, list via GraphQL `public_users`)
    - `jh group`: Group information (list via GraphQL)
    - `jh admin`: Administrative commands (user management, token management, group management, credential management, landing page)
@@ -172,6 +172,7 @@ go run . registry registrator update MyRegistry --file registrator.json
 ### Test project and user operations
 ```bash
 go run . project list
+go run . project list --page 2
 go run . project list --user
 go run . project list --user john
 go run . user info
@@ -473,7 +474,7 @@ jh run setup
 - Git commands use `http.extraHeader` for authentication and pass through all arguments
 - Git credential helper provides seamless authentication for standard Git commands
 - Multi-server authentication handled automatically via credential helper
-- Project filtering supports `--user` parameter for showing specific user's projects or own projects
+- Project filtering supports `--user` parameter for showing specific user's projects or own projects; `jh project list --page N` fetches the Nth page of 100 (a single GraphQL request per invocation)
 - Clone command automatically resolves `username/project` format to project UUIDs
 - Clone command supports `project` (without username) and defaults to the logged-in user's username
 - Folder naming conflicts are resolved with automatic numbering (project-1, project-2, etc.)

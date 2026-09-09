@@ -120,63 +120,47 @@ func buildProjectsFilter(userFilter string, userFilterProvided bool, currentUser
 	}
 }
 
-// fetchProjectsPage requests one page of projects matching filter.
-func fetchProjectsPage(server string, token *StoredToken, ownerID int64, filter map[string]interface{}, limit, offset int) (*ProjectsResponse, error) {
+// fetchProjectsPage requests one page of projects matching filter. It returns
+// the page's projects and the total number of matching projects on the server.
+func fetchProjectsPage(server string, token *StoredToken, ownerID int64, filter map[string]interface{}, page int) ([]Project, int, error) {
 	body, err := executeGraphQL(server, token, GraphQLRequest{
 		OperationName: "Projects",
 		Query:         projectsQuery,
 		Variables: map[string]interface{}{
 			"ownerId": ownerID,
 			"filter":  filter,
-			"limit":   limit,
-			"offset":  offset,
+			"limit":   projectsPageSize,
+			"offset":  (page - 1) * projectsPageSize,
 			"orderBy": map[string]interface{}{"created_at": "desc_nulls_last"},
 		},
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	var response ProjectsResponse
 	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, 0, fmt.Errorf("failed to parse response: %w", err)
 	}
 	if len(response.Errors) > 0 {
-		return nil, fmt.Errorf("GraphQL errors: %v", response.Errors)
+		return nil, 0, fmt.Errorf("GraphQL errors: %v", response.Errors)
 	}
-	return &response, nil
+	return response.Data.Projects, response.Data.Aggregate.Aggregate.Count, nil
 }
 
-// fetchProjects pages through the matching projects until maxProjects have
-// been collected (maxProjects <= 0 means all of them). It returns the
-// projects and the total number of matching projects on the server.
-func fetchProjects(server string, token *StoredToken, ownerID int64, filter map[string]interface{}, maxProjects int) ([]Project, int, error) {
-	var projects []Project
-	total := 0
-	for offset := 0; ; offset += projectsPageSize {
-		pageSize := projectsPageSize
-		if maxProjects > 0 && maxProjects-len(projects) < pageSize {
-			pageSize = maxProjects - len(projects)
-		}
-		if pageSize <= 0 {
-			break
-		}
-
-		page, err := fetchProjectsPage(server, token, ownerID, filter, pageSize, offset)
-		if err != nil {
-			return nil, 0, err
-		}
-		total = page.Data.Aggregate.Aggregate.Count
-		projects = append(projects, page.Data.Projects...)
-
-		if len(page.Data.Projects) < pageSize || len(projects) >= total {
-			break
-		}
+// totalPages is how many pages of projectsPageSize the given total spans.
+func totalPages(total int) int {
+	if total <= 0 {
+		return 0
 	}
-	return projects, total, nil
+	return (total + projectsPageSize - 1) / projectsPageSize
 }
 
-func listProjects(server string, userFilter string, userFilterProvided bool, maxProjects int) error {
+func listProjects(server string, userFilter string, userFilterProvided bool, page int) error {
+	if page < 1 {
+		return fmt.Errorf("--page must be 1 or greater, got %d", page)
+	}
+
 	token, err := ensureValidToken()
 	if err != nil {
 		return fmt.Errorf("authentication required: %w", err)
@@ -189,12 +173,12 @@ func listProjects(server string, userFilter string, userFilterProvided bool, max
 	}
 
 	filter := buildProjectsFilter(userFilter, userFilterProvided, userInfo.ID)
-	projects, total, err := fetchProjects(server, token, userInfo.ID, filter, maxProjects)
+	projects, total, err := fetchProjectsPage(server, token, userInfo.ID, filter, page)
 	if err != nil {
 		return err
 	}
 
-	if total == 0 || len(projects) == 0 {
+	if total == 0 {
 		if userFilterProvided {
 			if userFilter == "" {
 				fmt.Println("No projects found for your user")
@@ -207,6 +191,12 @@ func listProjects(server string, userFilter string, userFilterProvided bool, max
 		return nil
 	}
 
+	pages := totalPages(total)
+	if len(projects) == 0 {
+		fmt.Printf("Page %d is empty: %d project(s) found, %d page(s) of %d\n", page, total, pages, projectsPageSize)
+		return nil
+	}
+
 	if userFilterProvided {
 		if userFilter == "" {
 			fmt.Printf("Found %d project(s) for your user:\n\n", total)
@@ -216,8 +206,8 @@ func listProjects(server string, userFilter string, userFilterProvided bool, max
 	} else {
 		fmt.Printf("Found %d project(s):\n\n", total)
 	}
-	if len(projects) < total {
-		fmt.Printf("Showing the %d most recently created (use --limit 0 to list all)\n\n", len(projects))
+	if pages > 1 {
+		fmt.Printf("Showing page %d of %d (%d per page, most recently created first; use --page to see more)\n\n", page, pages, projectsPageSize)
 	}
 
 	for _, project := range projects {

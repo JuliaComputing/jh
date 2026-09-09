@@ -50,3 +50,19 @@ func TestBuildProjectsFilter(t *testing.T) {
 		}
 	})
 }
+
+func TestTotalPages(t *testing.T) {
+	cases := map[int]int{
+		0:                    0,
+		1:                    1,
+		projectsPageSize:     1,
+		projectsPageSize + 1: 2,
+		2 * projectsPageSize: 2,
+		57508:                576,
+	}
+	for total, want := range cases {
+		if got := totalPages(total); got != want {
+			t.Errorf("totalPages(%d) = %d, want %d", total, got, want)
+		}
+	}
+}
