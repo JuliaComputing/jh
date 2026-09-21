@@ -1925,8 +1925,10 @@ var adminLandingCmd = &cobra.Command{
 	Short: "Landing page management commands",
 	Long: `Administrative commands for managing the custom landing page on JuliaHub.
 
-Provides commands to get, set, or remove the custom markdown landing page
-shown to users on the JuliaHub home screen.
+The landing page is the markdown "Welcome" (greeter) card of the home page
+layout (the same layout edited under Administrator > Settings > Custom Landing
+Page). These commands read and write that card through the homepage layout
+API; the rest of the layout is left untouched.
 
 Note: These commands require appropriate administrative permissions.`,
 }
@@ -1936,8 +1938,9 @@ var landingShowCmd = &cobra.Command{
 	Short: "Show the current landing page content",
 	Long: `Fetch the current custom landing page content from JuliaHub.
 
-Displays the markdown content and last-modified date of the custom landing
-page. If no custom landing page is set, reports that the default is in use.`,
+Prints the markdown content of the home page's Welcome (greeter) card. If the
+home page has no saved layout, or the layout has no Welcome card, reports that
+no custom content is set.`,
 	Example: "  jh admin landing-page show",
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
@@ -1959,7 +1962,11 @@ var landingUpdateCmd = &cobra.Command{
 
 Provide the markdown content directly as an argument or use --file to read
 it from a file. If neither is provided, content is read from stdin.
-The content must be valid markdown.`,
+The content must be valid markdown.
+
+The content replaces the text of the home page's Welcome (greeter) card. If
+the saved layout has no such card, one is added as the first, full-width row
+and the other cards move down one row.`,
 	Example: "  jh admin landing-page update '# Welcome'\n  jh admin landing-page update --file landing.md\n  cat landing.md | jh admin landing-page update",
 	Args:    cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
@@ -1993,8 +2000,9 @@ var landingRemoveCmd = &cobra.Command{
 	Short: "Remove the custom landing page",
 	Long: `Remove the custom landing page on JuliaHub.
 
-Removes the custom landing page content, reverting to the default landing
-screen. This action can be undone by setting a new landing page with 'update'.`,
+Removes the Welcome (greeter) card from the home page layout; the other cards
+stay as they are. This action can be undone by setting a new landing page with
+'update', which adds the card back.`,
 	Example: "  jh admin landing-page remove",
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
