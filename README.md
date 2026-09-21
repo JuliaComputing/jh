@@ -250,11 +250,13 @@ echo '{"name":"MyToken","url":"https://github.com","value":"ghp_xxxx"}' | jh adm
 ```
 
 #### Landing Page Management
-- `jh admin landing-page show` - Show the current custom landing page content (markdown and last-modified date)
-- `jh admin landing-page update <markdown-content>` - Set a custom markdown landing page
+The landing page is the markdown "Welcome" (greeter) card of the home page layout, the one edited under Administrator → Settings → Custom Landing Page. These commands edit only that card via the homepage layout API (`/api/v1/ui/layout/homepage`) and leave the rest of the layout untouched.
+
+- `jh admin landing-page show` - Print the current landing page markdown (reports "No custom content set" when the layout has no Welcome card)
+- `jh admin landing-page update <markdown-content>` - Set the landing page markdown (adds a Welcome card as the first row if the layout has none)
   - `jh admin landing-page update --file landing.md` - Read content from a file
   - `cat landing.md | jh admin landing-page update` - Read content from stdin
-- `jh admin landing-page remove` - Remove the custom landing page and revert to the default
+- `jh admin landing-page remove` - Remove the Welcome card from the home page layout
 
 ### Vulnerability Scanning (`jh vuln`)
 
@@ -474,7 +476,7 @@ jh admin landing-page update --file landing.md
 # Set landing page from stdin
 cat landing.md | jh admin landing-page update
 
-# Remove custom landing page (revert to default)
+# Remove the custom landing page (drops the Welcome card from the home page layout)
 jh admin landing-page remove
 ```
 
