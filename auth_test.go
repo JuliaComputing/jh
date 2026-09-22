@@ -132,3 +132,30 @@ func TestReadStoredToken(t *testing.T) {
 		t.Errorf("parsed token mismatch: %+v", tok)
 	}
 }
+
+func TestAllowsAnonymousReads(t *testing.T) {
+	for server, want := range map[string]bool{
+		"juliahub.com":          true,
+		"JuliaHub.com":          true,
+		"nightly.juliahub.dev":  false,
+		"internal.juliahub.com": false,
+	} {
+		if got := allowsAnonymousReads(server); got != want {
+			t.Errorf("allowsAnonymousReads(%q) = %t, want %t", server, got, want)
+		}
+	}
+}
+
+func TestOptionalTokenWithoutStoredToken(t *testing.T) {
+	// An empty home means there is no stored token to load.
+	t.Setenv("HOME", t.TempDir())
+
+	tok, err := optionalToken("juliahub.com")
+	if err != nil || tok != nil {
+		t.Errorf("juliahub.com should fall back to anonymous, got token=%v err=%v", tok, err)
+	}
+
+	if _, err := optionalToken("nightly.juliahub.dev"); err == nil {
+		t.Error("private servers should still require authentication")
+	}
+}

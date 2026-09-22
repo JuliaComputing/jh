@@ -40,29 +40,22 @@ func TestGqlToInfo(t *testing.T) {
 	t.Run("full package", func(t *testing.T) {
 		p := Package{
 			Name: "Plots", UUID: "u-1", Owner: " JuliaPlots", License: "MIT",
-			IsApp: true, Score: 9.5,
+			IsApp:       true,
 			Metadata:    &PackageMetadata{Description: "viz", Repo: "r", Tags: []string{"plot"}, StarCount: 42, DocsLink: "d"},
-			RegistryMap: &PackageRegistryMap{Version: "1.0.0", RegistryID: 7, Status: true},
+			RegistryMap: &PackageRegistryMap{Version: "1.0.0", RegistryID: 7},
 		}
 		got := gqlToInfo(p, idToName)
 		if got.Registry != "General" {
 			t.Errorf("Registry = %q, want General (resolved from id)", got.Registry)
 		}
-		if got.Version != "1.0.0" || got.Status != "Active" || got.Stars != 42 || !got.IsApp {
+		if got.Version != "1.0.0" || got.Stars != 42 || !got.IsApp {
 			t.Errorf("fields not mapped: %+v", got)
-		}
-	})
-
-	t.Run("inactive status", func(t *testing.T) {
-		p := Package{Name: "X", RegistryMap: &PackageRegistryMap{RegistryID: 7, Status: false}}
-		if got := gqlToInfo(p, idToName); got.Status != "Inactive" {
-			t.Errorf("Status = %q, want Inactive", got.Status)
 		}
 	})
 
 	t.Run("nil metadata and registrymap are safe", func(t *testing.T) {
 		got := gqlToInfo(Package{Name: "Bare", UUID: "u"}, idToName)
-		if got.Name != "Bare" || got.Registry != "" || got.Description != "" || got.Status != "" {
+		if got.Name != "Bare" || got.Registry != "" || got.Description != "" || got.Version != "" {
 			t.Errorf("nil sub-structs should leave fields empty: %+v", got)
 		}
 	})
