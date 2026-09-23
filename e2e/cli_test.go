@@ -25,6 +25,7 @@ func TestSubcommandHelp(t *testing.T) {
 		{[]string{"admin", "--help"}, []string{"user", "token", "group", "credential", "landing-page"}},
 		{[]string{"admin", "credential", "--help"}, []string{"list", "add", "update", "delete"}},
 		{[]string{"scan", "--help"}, []string{"status", "results"}},
+		{[]string{"search", "--help"}, []string{"code", "symbols", "docs", "packages"}},
 	}
 	for _, tc := range cases {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
@@ -46,6 +47,9 @@ func TestArgValidation(t *testing.T) {
 		{"registry", "config"},
 		{"scan", "status"},
 		{"scan", "results"},
+		{"search", "code"},
+		{"search", "symbols"},
+		{"search", "docs"},
 	}
 	for _, args := range cases {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {

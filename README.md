@@ -14,6 +14,7 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 - **User Management**: Display user information, list users and groups
 - **Vulnerability Scanning**: Scan Julia packages for known security vulnerabilities
 - **Manifest Scanning**: Upload a `Manifest.toml` for a server-side Trivy vulnerability scan of its pinned dependencies
+- **Search**: Search package source code (regex), symbol definitions and uses, and rendered documentation across the indexed packages, with `--json` output for scripts and agents
 - **Administrative Commands**: Manage users, groups, tokens, credentials, and system resources (requires admin permissions)
 
 ## Installation
@@ -162,6 +163,7 @@ go build -o jh .
   - `--registries <names>` - Filter by registry names (comma-separated, e.g. `General,MyRegistry`)
   - `--limit <n>` - Maximum results to return (default: 10)
   - `--offset <n>` - Number of results to skip
+  - `--json` - Print only `{"results": [...], "total": N}` on stdout (also available as `jh search packages`)
 - `jh package info <package-name>` - Get detailed information about a specific package (exact name match, case-insensitive)
   - `jh package info --registries General` - Search in specific registries only
 - `jh package dependency <package-name>` - List package dependencies
@@ -287,6 +289,29 @@ The landing page is the markdown "Welcome" (greeter) card of the home page layou
 - `jh scan results <run-uuid>` - Fetch results for a finished scan
   - `--csv` - CSV output instead of JSON
   - `--output <file>` / `-o` - Write to a file instead of stdout
+
+### Search (`jh search`)
+
+Search the Julia packages indexed on JuliaHub. Every subcommand takes `--json`, which prints only a JSON document on stdout (notes and errors go to stderr), so the output can be consumed directly by scripts and by tool-calling agents.
+
+- `jh search code <pattern>` - Regular-expression (RE2) search over package source files; one result per matching line with package, registry, `file:line` and the line text
+  - `--package <name|uuid>` - Restrict to a package (repeatable; names are resolved to UUIDs via the package catalogue)
+  - `--registry <name>` - Restrict to a registry (repeatable)
+  - `--path <regex>` - Only search files whose path matches
+  - `--ignore-case` - Case-insensitive match
+  - `--limit <n>` - Maximum number of results (default: the server's)
+  - `--json` - `{"results": [...], "truncated": bool}`
+- `jh search symbols <name>` - Find where a function, type, macro or module is defined and used
+  - `--type <kind>` - `function`, `type`, `macro` or `module` (repeatable)
+  - `--usage <kind>` - `define` or `use` (repeatable)
+  - `--package`, `--registry`, `--limit`, `--json` as for `code`
+- `jh search docs <query>` - Natural-language search over rendered package documentation; results are packages ranked by score with their matching sections
+  - `--threshold <x>` - Drop results scoring below `x`
+  - `--strict-phrase` - Require the query as a phrase rather than separate terms
+  - `--package`, `--registry`, `--limit`, `--json` as for `code`
+- `jh search packages [search-term]` - The package catalogue search (same as `jh package search`), with `--registries`, `--limit`, `--offset`, `--verbose` and `--json` (`{"results": [...], "total": N}`)
+- `--server` / `-s` accepts a JuliaHub host as elsewhere, or a full URL such as `--server http://localhost:4446` to point `code`/`symbols`/`docs` at a locally running search service (no stored login required; the request is sent unauthenticated with a note on stderr, and `--package` must then be given as a UUID)
+- Older JuliaHub installs expose only the legacy search routes; the CLI detects this and falls back to them automatically. In human-readable mode a `note: results truncated (search stopped early)` line on stderr means the server stopped before exhausting the index
 
 ### Update (`jh update`)
 
@@ -529,6 +554,35 @@ jh scan status <run-uuid>
 # Pull results for a finished scan
 jh scan results <run-uuid>
 jh scan results <run-uuid> --csv --output results.csv
+```
+
+### Search
+
+```bash
+# Regex search over package source; restrict to two packages and a registry
+jh search code "@kwdef" --package DataFrames --package CSV --registry General
+
+# Only files under src/, case-insensitive, at most 20 hits
+jh search code "todo" --path "^src/" --ignore-case --limit 20
+
+# Where is the DataFrame type defined?
+jh search symbols DataFrame --type type --usage define
+
+# Every use of the @time macro
+jh search symbols @time --type macro --usage use --limit 50
+
+# Documentation search, five best packages
+jh search docs "read a CSV file into a DataFrame" --limit 5
+
+# Package catalogue search under the search group
+jh search packages dataframes --registries General
+
+# Machine-readable output for scripts and agents: only JSON on stdout
+jh search code "function innerjoin" --json | jq '.results[] | .packagename + " " + .file'
+jh search packages plots --json | jq '.results[0].uuid'
+
+# Point the code/symbols/docs commands at a local search service
+jh search code "foo" --server http://localhost:4446 --package a93c6f00-e57d-5684-b7b6-d8193f3e46c0
 ```
 
 ### Git Workflow

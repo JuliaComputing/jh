@@ -49,6 +49,47 @@ func fetchRegistries(server string) ([]Registry, error) {
 	return registries, nil
 }
 
+// resolveRegistries turns the comma-separated --registries value into the
+// parallel registry ID and name lists the package commands pass on (IDs for
+// the GraphQL fallback, names for REST). An empty csv selects every registry;
+// names are matched case-insensitively and an unknown name is an error.
+func resolveRegistries(server, csv string) ([]int, []string, error) {
+	allRegistries, err := fetchRegistries(server)
+	if err != nil {
+		return nil, nil, fmt.Errorf("Failed to fetch registries: %w", err)
+	}
+
+	var ids []int
+	var names []string
+	if strings.TrimSpace(csv) == "" {
+		for _, reg := range allRegistries {
+			ids = append(ids, reg.RegistryID)
+			names = append(names, reg.Name)
+		}
+		return ids, names, nil
+	}
+
+	for _, requested := range strings.Split(csv, ",") {
+		requested = strings.TrimSpace(requested)
+		if requested == "" {
+			continue
+		}
+		found := false
+		for _, reg := range allRegistries {
+			if strings.EqualFold(reg.Name, requested) {
+				ids = append(ids, reg.RegistryID)
+				names = append(names, reg.Name)
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, nil, fmt.Errorf("Registry not found: '%s'", requested)
+		}
+	}
+	return ids, names, nil
+}
+
 // apiGet performs a GET request with up to 3 attempts, retrying on transient errors.
 func apiGet(url, idToken string) ([]byte, error) {
 	client := &http.Client{Timeout: 30 * time.Second}

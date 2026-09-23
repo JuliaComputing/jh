@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -111,24 +112,59 @@ type PackageSearchParams struct {
 	RegistryIDs   []int
 	RegistryNames []string
 	Verbose       bool
+	JSON          bool // print {"results": [...], "total": N} instead of the table
 }
 
 // packageInfo is a common display struct used by both REST and GraphQL paths.
+// The json tags define the --json output of `jh package search` /
+// `jh search packages`.
 type packageInfo struct {
-	Name        string
-	UUID        string
-	Owner       string
-	Registry    string
-	Version     string
-	Description string
-	SourceURL   string
-	Tags        []string
-	Stars       int
-	DocsURL     string
-	License     string
-	IsApp       bool
-	Score       float64
-	Status      string
+	Name        string   `json:"name"`
+	UUID        string   `json:"uuid"`
+	Owner       string   `json:"owner"`
+	Registry    string   `json:"registry"`
+	Version     string   `json:"version"`
+	Description string   `json:"description"`
+	SourceURL   string   `json:"source_url"`
+	Tags        []string `json:"tags"`
+	Stars       int      `json:"stars"`
+	DocsURL     string   `json:"docs_url"`
+	License     string   `json:"license"`
+	IsApp       bool     `json:"is_app"`
+	Score       float64  `json:"score"`
+	Status      string   `json:"status"`
+}
+
+// writePackagesJSON writes `{"results": [...], "total": N}`, 2-space indented
+// with a trailing newline — the only thing on stdout in --json mode. Tags is
+// always an array (never null) so consumers can iterate it unconditionally.
+func writePackagesJSON(w io.Writer, pkgs []packageInfo, total int) error {
+	results := make([]packageInfo, len(pkgs))
+	for i, p := range pkgs {
+		if p.Tags == nil {
+			p.Tags = []string{}
+		}
+		results[i] = p
+	}
+	doc := struct {
+		Results []packageInfo `json:"results"`
+		Total   int           `json:"total"`
+	}{results, total}
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to encode packages: %w", err)
+	}
+	_, err = w.Write(append(out, '\n'))
+	return err
+}
+
+// emitPackages prints the search outcome in the format params ask for.
+func emitPackages(params PackageSearchParams, infos []packageInfo, total int) error {
+	if params.JSON {
+		return writePackagesJSON(os.Stdout, infos, total)
+	}
+	printPackages(infos, total, params.Verbose)
+	return nil
 }
 
 func printPackages(pkgs []packageInfo, total int, verbose bool) {
@@ -451,8 +487,7 @@ func searchPackagesREST(params PackageSearchParams) error {
 	for i, p := range pkgs {
 		infos[i] = restToInfo(p)
 	}
-	printPackages(infos, total, params.Verbose)
-	return nil
+	return emitPackages(params, infos, total)
 }
 
 func searchPackagesGraphQL(params PackageSearchParams) error {
@@ -469,12 +504,14 @@ func searchPackagesGraphQL(params PackageSearchParams) error {
 	for i, p := range pkgs {
 		infos[i] = gqlToInfo(p, registryIDToName)
 	}
-	printPackages(infos, total, params.Verbose)
-	return nil
+	return emitPackages(params, infos, total)
 }
 
+// searchPackages tries the REST endpoint first and falls back to GraphQL,
+// announcing the fallback on stderr so stdout stays clean for --json.
 func searchPackages(params PackageSearchParams) error {
 	if err := searchPackagesREST(params); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: REST package search failed (%v); falling back to GraphQL\n", err)
 		return searchPackagesGraphQL(params)
 	}
 	return nil
