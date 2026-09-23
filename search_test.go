@@ -561,3 +561,11 @@ func readAll(r *http.Request) ([]byte, error) {
 	_, err := buf.ReadFrom(r.Body)
 	return buf.Bytes(), err
 }
+
+func TestPackageUUIDsByNameGQL(t *testing.T) {
+	pkgs := []Package{{Name: "Foo", UUID: "u1"}, {Name: "foo", UUID: "u1"}, {Name: "Bar", UUID: "u2"}, {Name: "Foo", UUID: ""}}
+	got := packageUUIDsByNameGQL(pkgs, "FOO")
+	if len(got) != 1 || got[0] != "u1" {
+		t.Errorf("got %v, want [u1]", got)
+	}
+}

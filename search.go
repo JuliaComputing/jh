@@ -403,6 +403,38 @@ func packageUUIDsByName(pkgs []RESTPackage, name string) []string {
 	return dedupeStrings(uuids)
 }
 
+// lookupPackageUUIDs resolves one package name to its UUID(s): /packages/info
+// first, then the GraphQL package search, mirroring getPackageInfo's fallback
+// for installs without the REST endpoint.
+func lookupPackageUUIDs(server, name string) ([]string, error) {
+	pkgs, _, restErr := fetchRESTPackages(server, name, 100, 0, nil)
+	if restErr == nil {
+		if found := packageUUIDsByName(pkgs, name); len(found) > 0 {
+			return found, nil
+		}
+		return nil, fmt.Errorf("package not found: %s", name)
+	}
+	gql, gqlErr := fetchGraphQLPackages(server, name, 100, 0, nil)
+	if gqlErr != nil {
+		return nil, fmt.Errorf("failed to look up package %q: %v; GraphQL fallback: %w", name, restErr, gqlErr)
+	}
+	if found := packageUUIDsByNameGQL(gql, name); len(found) > 0 {
+		return found, nil
+	}
+	return nil, fmt.Errorf("package not found: %s", name)
+}
+
+// packageUUIDsByNameGQL is packageUUIDsByName over GraphQL package rows.
+func packageUUIDsByNameGQL(pkgs []Package, name string) []string {
+	var uuids []string
+	for _, p := range pkgs {
+		if strings.EqualFold(p.Name, name) && p.UUID != "" {
+			uuids = append(uuids, p.UUID)
+		}
+	}
+	return dedupeStrings(uuids)
+}
+
 // resolveSearchPackages turns --package values into the UUID list the search
 // API expects. UUIDs pass through; names are looked up via /packages/info on
 // server (a host, not a URL — the lookup is unavailable against a local
@@ -421,13 +453,9 @@ func resolveSearchPackages(server string, values []string, localOnly bool) ([]st
 		if localOnly {
 			return nil, fmt.Errorf("package %q cannot be resolved by name against a local http:// server; pass its UUID", v)
 		}
-		pkgs, _, err := fetchRESTPackages(server, v, 100, 0, nil)
+		found, err := lookupPackageUUIDs(server, v)
 		if err != nil {
-			return nil, fmt.Errorf("failed to look up package %q: %w", v, err)
-		}
-		found := packageUUIDsByName(pkgs, v)
-		if len(found) == 0 {
-			return nil, fmt.Errorf("package not found: %s", v)
+			return nil, err
 		}
 		uuids = append(uuids, found...)
 	}
