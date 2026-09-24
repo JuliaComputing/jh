@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -151,6 +153,29 @@ func searchBaseURL(server string) string {
 // local development service rather than a JuliaHub install.
 func isLocalSearchBaseURL(baseURL string) bool {
 	return strings.HasPrefix(baseURL, "http://")
+}
+
+// searchTokenAllowed reports whether the stored JuliaHub token may be sent to
+// baseURL: always over https, and over plain http only to a loopback host (the
+// local-development case). Anywhere else the token would cross the network in
+// cleartext, so the request goes out unauthenticated instead.
+func searchTokenAllowed(baseURL string) bool {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	switch u.Scheme {
+	case "https":
+		return true
+	case "http":
+		host := u.Hostname()
+		if host == "localhost" {
+			return true
+		}
+		ip := net.ParseIP(host)
+		return ip != nil && ip.IsLoopback()
+	}
+	return false
 }
 
 // --- request builders (pure; unit-tested without HTTP) ---
@@ -327,6 +352,12 @@ func postSearchWithToken(client *http.Client, baseURL string, kind searchKind, t
 	if status != http.StatusNotFound && status != http.StatusMethodNotAllowed {
 		return decodeSearchResponse(status, respBody)
 	}
+	// A 404/405 carrying a structured {code, message} body came from the v1
+	// API itself, not from a web server that has no such route: report it
+	// rather than re-running the search on the legacy route.
+	if se := decodeSearchError(status, respBody); se.Code != "" {
+		return nil, false, se
+	}
 
 	// v1 is absent on this install: try the legacy envelope route.
 	legacyStatus, legacyBody, err := doSearchRequest(client, baseURL, searchLegacyPrefix+string(kind), token, payload)
@@ -348,11 +379,14 @@ func postSearchWithToken(client *http.Client, baseURL string, kind searchKind, t
 
 // postSearch performs an authenticated search against baseURL (see
 // searchBaseURL). Against a plain-http local service a missing stored token is
-// tolerated: the request goes out unauthenticated with a note on stderr.
+// tolerated: the request goes out unauthenticated with a note on stderr. The
+// token is never sent in cleartext to a non-loopback host (searchTokenAllowed).
 func postSearch(baseURL string, kind searchKind, body any) (json.RawMessage, bool, error) {
 	var bearer string
 	token, err := ensureValidToken()
 	switch {
+	case err == nil && !searchTokenAllowed(baseURL):
+		fmt.Fprintf(os.Stderr, "note: not sending the stored JuliaHub token over plain http to %s; the request goes out unauthenticated\n", baseURL)
 	case err == nil:
 		bearer = token.IDToken
 	case isLocalSearchBaseURL(baseURL):

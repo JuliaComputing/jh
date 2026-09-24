@@ -310,7 +310,7 @@ Search the Julia packages indexed on JuliaHub. Every subcommand takes `--json`, 
   - `--strict-phrase` - Require the query as a phrase rather than separate terms
   - `--package`, `--registry`, `--limit`, `--json` as for `code`
 - `jh search packages [search-term]` - The package catalogue search (same as `jh package search`), with `--registries`, `--limit`, `--offset`, `--verbose` and `--json` (`{"results": [...], "total": N}`)
-- `--server` / `-s` accepts a JuliaHub host as elsewhere, or a full URL such as `--server http://localhost:4446` to point `code`/`symbols`/`docs` at a locally running search service (no stored login required; the request is sent unauthenticated with a note on stderr, and `--package` must then be given as a UUID)
+- `--server` / `-s` accepts a JuliaHub host as elsewhere, or a full URL such as `--server http://localhost:4446` to point `code`/`symbols`/`docs` at a locally running search service (no stored login required; the request is sent unauthenticated with a note on stderr, and `--package` must then be given as a UUID). The stored token is only ever sent over `https://`, or over `http://` to a loopback host; a plain-http URL on any other host gets an unauthenticated request and a note
 - Older JuliaHub installs expose only the legacy search routes; the CLI detects this and falls back to them automatically. In human-readable mode a `note: results truncated (search stopped early)` line on stderr means the server stopped before exhausting the index
 
 ### Update (`jh update`)

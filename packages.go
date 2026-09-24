@@ -478,43 +478,51 @@ func fetchGraphQLPackageCount(server, search string, registryIDs []int) (int, er
 	return response.Data.PackageAggregate.Aggregate.Count, nil
 }
 
-func searchPackagesREST(params PackageSearchParams) error {
+// fetchPackagesREST fetches one page of package search results over REST.
+func fetchPackagesREST(params PackageSearchParams) ([]packageInfo, int, error) {
 	pkgs, total, err := fetchRESTPackages(params.Server, params.Search, params.Limit, params.Offset, params.RegistryNames)
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
 	infos := make([]packageInfo, len(pkgs))
 	for i, p := range pkgs {
 		infos[i] = restToInfo(p)
 	}
-	return emitPackages(params, infos, total)
+	return infos, total, nil
 }
 
-func searchPackagesGraphQL(params PackageSearchParams) error {
+// fetchPackagesGraphQL fetches the same page over GraphQL.
+func fetchPackagesGraphQL(params PackageSearchParams) ([]packageInfo, int, error) {
 	pkgs, err := fetchGraphQLPackages(params.Server, params.Search, params.Limit, params.Offset, params.RegistryIDs)
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
 	total, err := fetchGraphQLPackageCount(params.Server, params.Search, params.RegistryIDs)
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
 	registryIDToName := buildRegistryIDToName(params.RegistryIDs, params.RegistryNames)
 	infos := make([]packageInfo, len(pkgs))
 	for i, p := range pkgs {
 		infos[i] = gqlToInfo(p, registryIDToName)
 	}
-	return emitPackages(params, infos, total)
+	return infos, total, nil
 }
 
-// searchPackages tries the REST endpoint first and falls back to GraphQL,
-// announcing the fallback on stderr so stdout stays clean for --json.
+// searchPackages fetches over REST and falls back to GraphQL when that fetch
+// fails, announcing the fallback on stderr so stdout stays clean for --json.
+// Only the fetch is retried: the results are emitted exactly once, so a
+// failure while writing them (a closed pipe, say) cannot trigger a second
+// search and a second document on stdout.
 func searchPackages(params PackageSearchParams) error {
-	if err := searchPackagesREST(params); err != nil {
+	infos, total, err := fetchPackagesREST(params)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: REST package search failed (%v); falling back to GraphQL\n", err)
-		return searchPackagesGraphQL(params)
+		if infos, total, err = fetchPackagesGraphQL(params); err != nil {
+			return err
+		}
 	}
-	return nil
+	return emitPackages(params, infos, total)
 }
 
 func executeGraphQL(server string, token *StoredToken, gqlReq GraphQLRequest) ([]byte, error) {

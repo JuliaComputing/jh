@@ -463,6 +463,54 @@ func TestPostSearchFallsBackToLegacy(t *testing.T) {
 	}
 }
 
+// TestPostSearchV1StructuredNotFoundIsNotAFallback: a 404 whose body is a v1
+// {code, message} error came from the search API, not from a web server
+// lacking the route, so the legacy route must not be tried.
+func TestPostSearchV1StructuredNotFoundIsNotAFallback(t *testing.T) {
+	var legacyHits int
+	srv := searchTestServer(t, map[string]http.HandlerFunc{
+		"/search/v1/code": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"code":"package_not_found","message":"no such package"}`))
+		},
+		"/search/code": func(w http.ResponseWriter, r *http.Request) {
+			legacyHits++
+			w.Write([]byte(`{"success":true,"data":[]}`))
+		},
+	})
+
+	body, _ := buildCodeSearchRequest("x", nil, nil, "", false, 0)
+	_, _, err := postSearchWithToken(srv.Client(), srv.URL, searchCode, "tok", body)
+	var se *searchError
+	if !errors.As(err, &se) || se.Code != "package_not_found" || se.Status != http.StatusNotFound {
+		t.Fatalf("err = %v, want the structured 404 error", err)
+	}
+	if legacyHits != 0 {
+		t.Errorf("legacy route was tried %d time(s) on a structured v1 404", legacyHits)
+	}
+}
+
+func TestSearchTokenAllowed(t *testing.T) {
+	cases := map[string]bool{
+		"https://juliahub.com":     true,
+		"https://some-host:8443":   true,
+		"http://localhost:4446":    true,
+		"http://127.0.0.1:4446":    true,
+		"http://[::1]:4446":        true,
+		"http://some-host:4446":    false,
+		"http://192.168.1.10:4446": false,
+		"http://juliahub.com":      false,
+		"ftp://localhost":          false,
+		"://bad":                   false,
+	}
+	for base, want := range cases {
+		if got := searchTokenAllowed(base); got != want {
+			t.Errorf("searchTokenAllowed(%q) = %v, want %v", base, got, want)
+		}
+	}
+}
+
 func TestPostSearchLegacyFailureEnvelope(t *testing.T) {
 	srv := searchTestServer(t, map[string]http.HandlerFunc{
 		"/search/v1/sym": func(w http.ResponseWriter, r *http.Request) {
