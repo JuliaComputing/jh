@@ -22,6 +22,7 @@ The application follows a command-line interface pattern using the Cobra library
 - **landing.go**: Landing page management (show, update, remove) via the homepage layout API. The layout is a JSON widget array; the landing page is the `greeter` widget's `metadata.content` markdown. `update` replaces that content (adding a greeter as the first, full-width row and shifting the others down when none exists), `remove` drops the greeter widget; both POST the complete layout back, preserving every field the CLI does not model. There is no separate DELETE endpoint any more
 - **vuln.go**: Vulnerability scanning for Julia packages via REST API
 - **scan.go**: Trivy manifest scanning — discover and upload a Julia manifest (+ optional project file) and fetch results via the StaticAnalysis service. Manifest discovery recognizes every name Julia/Pkg accepts (`Manifest.toml`, `JuliaManifest.toml`, and version-specific `Manifest-v1.11.toml` / `JuliaManifest-v1.11.toml`); when a directory holds more than one, the user is prompted to select (defaults to the highest-precedence candidate). Project file is `Project.toml` or `JuliaProject.toml`
+- **search.go**: `jh search code|symbols|docs` against the search service (`POST /search/v1/{code,sym,docs}`, legacy `POST /search/{code,sym,docs}` fallback), with request builders, response decoders, table renderers and the `--json` writer as pure functions; the cobra commands live in `main.go`
 - **git.go**: Git integration (clone, push, fetch, pull) with JuliaHub authentication
 - **julia.go**: Julia installation and management
 - **run.go**: Julia execution with JuliaHub configuration
@@ -64,6 +65,7 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh admin landing-page`: Landing page management (show/update/remove the home page's Welcome/greeter markdown card via the homepage layout API)
    - `jh vuln`: Vulnerability scanning for Julia packages (REST API; defaults to latest stable version via `GET /docs/<registry>/<package>/versions.json`; supports `--version` for a specific version, `--registry` to specify the registry for version lookup (default: General), `--advisory` to filter to a specific advisory ID, `--all` to show all advisories regardless of affected status, and `--verbose` for additional details)
    - `jh scan`: Manifest vulnerability scanning via the StaticAnalysis service (REST API under `/api/v0/static_analysis/`); uploads a `Manifest.toml` (and sibling `Project.toml` unless `--no-project`) and POSTs to `/manifest/scan` to obtain a `run_uuid`; subcommands `status` and `results` hit `/manifest/scan/status/{run_uuid}` and `/results/manifest/{run_uuid}`; **polls by default** and prints results when the scan completes — Ctrl+C detaches and the `run_uuid` (printed up front) can be passed to `jh scan status` / `jh scan results` later. Pass `--no-wait` to submit-and-exit. `--csv` requests `text/csv` (content-negotiated via `Accept` header)
+   - `jh search`: Search across indexed packages — `code <pattern>` (RE2 over source files; `--path`, `--ignore-case`), `symbols <name>` (`--type function|type|macro|module`, `--usage define|use`, validated client-side), `docs <query>` (`--threshold`, `--strict-phrase`), all with repeatable `--package` (name or UUID) / `--registry`, `--limit` and `--json`; `packages [term]` is `jh package search` under the search group (shares `runPackageSearch`)
    - `jh clone`: Git clone with JuliaHub authentication and project name resolution
    - `jh push/fetch/pull`: Git operations with JuliaHub authentication
    - `jh git-credential`: Git credential helper for seamless authentication
@@ -252,6 +254,19 @@ go run . scan status <run-uuid>
 go run . scan results <run-uuid> --csv
 ```
 
+### Test search operations
+```bash
+go run . search code "function foo" --limit 5
+go run . search code "@kwdef" --package DataFrames --path "^src/" --ignore-case
+go run . search symbols DataFrame --type type --usage define
+go run . search docs "join two tables" --limit 5 --threshold 0.5
+go run . search packages dataframes --registries General
+go run . search code "innerjoin" --json | jq .truncated
+
+# Against a locally running search service (no login needed; --package must be a UUID)
+go run . search code "foo" --server http://localhost:4446
+```
+
 ### Test Git operations
 ```bash
 go run . clone john/my-project  # Clone from another user
@@ -330,6 +345,7 @@ The application uses OAuth2 device flow:
 - **Registry credentials**: `GET /api/v1/sysconfig/credentials` to fetch (returns `CredentialsInfo` object directly); `POST` to add tokens/apps; `PUT` to update tokens/apps or replace all SSH credentials; `DELETE` with `{tokens:[...], githubApps:[...]}` to delete
 - **Package search/info primary**: `/packages/info` endpoint with `name`, `registries`, `tags`, `licenses`, `limit`, `offset` query params; returns `{packages: [...], meta: {total: N}}`
 - **Package dependencies**: `/docs/{registry}/{package}/stable/pkg.json` for dependency information
+- **Search**: `POST /search/v1/code`, `/search/v1/sym`, `/search/v1/docs` with a JSON body (`pattern`, `package` [UUIDs], `registry` [names], `maxresults`, plus per-kind `pathfilter`/`ignorecase`, `types`/`usages`, `threshold`/`strictphrase`); 200 → `{"results": [...], "truncated": bool}`, any failure → non-2xx `{"code", "message", "details"?}` with stable codes (`invalid_request`, `request_too_large`, `invalid_pattern`, `invalid_pathfilter`, `invalid_types`, `invalid_usages`, `invalid_registry`, `search_failed`, `metadata_unavailable`). Older installs have only `POST /search/{code,sym,docs}`, which answer 200 with `{"success": bool, "data": <results or error string>}`; the CLI retries there when v1 answers 404/405
 - **Authentication**: Bearer token with ID token
 - **Upload workflow**: 3-step process (request presigned URL, upload to URL, close upload)
 - **Credential write pattern**: Targeted mutations via `POST`/`PUT`/`DELETE`; SSH operations require read-modify-write (fetch + full-replacement `PUT`) since `sshcreds` in PUT is a full replacement
@@ -508,7 +524,13 @@ jh run setup
 - Landing page commands (`jh admin landing-page`) use REST API: GET `/app/homepage` (show), POST `/app/config/homepage` (update), DELETE `/app/config/homepage` (remove); require appropriate permissions
 - Landing page `update` command accepts content inline as an argument, from a file via `--file`, or piped via stdin (priority: `--file` > arg > stdin)
 - Landing page response uses custom JSON unmarshaling (`homepageResponse`) to handle `message` being either an object or a string
-- Package search (`jh package search`) and info (`jh package info`) both try REST API (`/packages/info`) first, then fall back to GraphQL (`FilteredPackages` / `FilteredPackagesCount` via `/v1/graphql`) on failure; a warning is printed to stderr when the fallback is used
+- Package search (`jh package search`) and info (`jh package info`) both try REST API (`/packages/info`) first, then fall back to GraphQL (`FilteredPackages` / `FilteredPackagesCount` via `/v1/graphql`) on failure; `searchPackages` prints `warning: REST package search failed (...); falling back to GraphQL` to stderr when it falls back (`getPackageInfo` falls back silently)
+- `--registries` resolution for `jh package search` / `jh package info` / `jh search packages` goes through `resolveRegistries(server, csv)` in `registries.go` (empty = all registries; unknown name → `Registry not found: '<name>'`)
+- `jh package search` / `jh search packages --json` sets `PackageSearchParams.JSON`; both the REST and GraphQL paths then call `writePackagesJSON`, which prints `{"results": [...], "total": N}` (snake_case keys from `packageInfo`'s json tags, `tags` always an array) 2-space indented with a trailing newline — nothing else on stdout
+- **JSON output convention** (`jh search *`): `--json` prints only the document on stdout, 2-space indented, trailing newline — `{"results": <server array, untouched>, "truncated": bool}` for code/symbols/docs; warnings, the human-mode `note: results truncated (search stopped early)` line, and errors always go to stderr; exit code is 0/1 only
+- `jh search` HTTP flow: `postSearch(baseURL, kind, body)` → `postSearchWithToken(client, baseURL, kind, token, body)` → `doSearchRequest(client, baseURL, path, token, body)`; v1 first, legacy route on 404/405, `search_unavailable` when both are missing. Non-2xx bodies become `*searchError{Status, Code, Message, Details}` (`Error()` is `<code>: <message>`, or `HTTP <status>: <body>` when undecodable; legacy `success:false` → code `legacy_error`); `printSearchError` adds a `known registries: ...` line from `details.known` on `invalid_registry`
+- `--server` for `jh search code|symbols|docs` is resolved by `searchBaseURL`: an explicit `http://`/`https://` URL is used verbatim (trailing slash trimmed) so the commands can target a local search service (`--server http://localhost:4446`); anything else is `https://` + `normalizeServer`. Against an `http://` base a missing stored token is tolerated (request sent without `Authorization`, note on stderr) and `--package` must be a UUID since name lookup needs `/packages/info`; `https://` still requires `ensureValidToken()`
+- `--package` names are resolved with `fetchRESTPackages(server, name, 100, 0, nil)` + exact case-insensitive match; the same package appears once per registry with the same UUID, so UUIDs are deduplicated, and distinct packages sharing a name all contribute; no match → `package not found: <name>`. `--registry` names are passed through verbatim for the server to validate
 - REST API passes `--registries` as comma-separated registry names to the `registries` query param; GraphQL fallback passes registry IDs to the `registries` variable
 - `fetchRegistries` in `registries.go` is used by `listRegistries`, `packageSearchCmd`, `packageInfoCmd`, and `packageDependencyCmd` to resolve registry names to IDs (for GraphQL) and names (for REST)
 - Both REST and GraphQL package search/info paths produce identical output columns (Registry and Owner); GraphQL resolves registry names from the `registryIDs`/`registryNames` already in `PackageSearchParams` — no extra API call needed

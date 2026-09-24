@@ -39,7 +39,7 @@ func requirePath(t *testing.T, names ...string) *cobra.Command {
 func TestCommandTreeWiring(t *testing.T) {
 	for _, top := range []string{
 		"auth", "dataset", "vuln", "scan", "package", "registry",
-		"user", "group", "clone", "git-credential", "admin",
+		"user", "group", "clone", "git-credential", "admin", "search",
 	} {
 		if findSub(rootCmd, top) == nil {
 			t.Errorf("rootCmd missing top-level command %q", top)
@@ -64,6 +64,16 @@ func TestCommandTreeWiring(t *testing.T) {
 	// admin landing-page update/remove.
 	requirePath(t, "admin", "landing-page", "update")
 	requirePath(t, "admin", "landing-page", "remove")
+
+	// search code/symbols/docs/packages.
+	for _, sub := range []string{"code", "symbols", "docs", "packages"} {
+		c := requirePath(t, "search", sub)
+		for _, flag := range []string{"server", "json"} {
+			if c.Flags().Lookup(flag) == nil {
+				t.Errorf("search %s missing --%s flag", sub, flag)
+			}
+		}
+	}
 }
 
 func TestNormalizeServer(t *testing.T) {

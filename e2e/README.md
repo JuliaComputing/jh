@@ -27,6 +27,7 @@ One file per command category, plus shared infrastructure:
 | [registry_test.go](registry_test.go) | `registry list` → `config`/`registrator`/`permission list` on a real registry |
 | [vuln_test.go](vuln_test.go) | `vuln <package>` |
 | [scan_test.go](scan_test.go) | `scan <manifest>` (--no-wait) → `scan status`/`results <uuid>` + input validation |
+| [search_test.go](search_test.go) | `search packages/symbols/code … --json` (parsed JSON shape) + `search code "["` invalid-pattern error |
 | [job_test.go](job_test.go) | `job list` |
 | [admin_test.go](admin_test.go) | `admin user/token/group/credential list`, `landing-page show` |
 | [verbose_test.go](verbose_test.go) | `--verbose` / flag variants of the read commands (`registry list`, `admin … list`, `package search`, `vuln --all/--verbose`) |

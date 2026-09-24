@@ -130,19 +130,24 @@ func writeTokenToConfig(server string, token TokenResponse) error {
 }
 
 func getServerFromFlagOrConfig(cmd *cobra.Command) (string, error) {
-	server, _ := cmd.Flags().GetString("server")
-	serverFlagUsed := cmd.Flags().Changed("server")
-
-	if !serverFlagUsed {
-		// Read from config file if no -s flag was provided
-		configServer, err := readConfigFile()
-		if err != nil {
-			return "", err
-		}
-		server = configServer
+	server, err := rawServerFromFlagOrConfig(cmd)
+	if err != nil {
+		return "", err
 	}
-
 	return normalizeServer(server), nil
+}
+
+// rawServerFromFlagOrConfig returns the --server value as given, or the
+// configured server when the flag was not used, without normalization. The
+// search commands use it so an explicit http(s):// URL survives (see
+// searchBaseURL); everything else goes through getServerFromFlagOrConfig.
+func rawServerFromFlagOrConfig(cmd *cobra.Command) (string, error) {
+	server, _ := cmd.Flags().GetString("server")
+	if cmd.Flags().Changed("server") {
+		return server, nil
+	}
+	// Read from config file if no -s flag was provided
+	return readConfigFile()
 }
 
 func normalizeServer(server string) string {
@@ -917,79 +922,50 @@ Filtering options:
 Use --verbose flag for comprehensive output, or get a concise summary by default.`,
 	Example: "  jh package search dataframes\n  jh package search --verbose plots\n  jh package search --limit 20 ml\n  jh package search --registries General optimization",
 	Args:    cobra.MaximumNArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		server, err := getServerFromFlagOrConfig(cmd)
-		if err != nil {
-			fmt.Printf("Failed to get server config: %v\n", err)
-			os.Exit(1)
-		}
+	Run:     runPackageSearch,
+}
 
-		search := ""
-		if len(args) > 0 {
-			search = args[0]
-		}
+// runPackageSearch is the shared body of `jh package search` and
+// `jh search packages`: resolve the --registries filter, then search (REST
+// first, GraphQL fallback), printing a table or, with --json, only the JSON
+// document on stdout.
+func runPackageSearch(cmd *cobra.Command, args []string) {
+	server, err := getServerFromFlagOrConfig(cmd)
+	if err != nil {
+		fmt.Printf("Failed to get server config: %v\n", err)
+		os.Exit(1)
+	}
 
-		limit, _ := cmd.Flags().GetInt("limit")
-		offset, _ := cmd.Flags().GetInt("offset")
-		verbose, _ := cmd.Flags().GetBool("verbose")
-		registryNamesStr, _ := cmd.Flags().GetString("registries")
+	search := ""
+	if len(args) > 0 {
+		search = args[0]
+	}
 
-		// Fetch all registries from the API
-		allRegistries, err := fetchRegistries(server)
-		if err != nil {
-			fmt.Printf("Failed to fetch registries: %v\n", err)
-			os.Exit(1)
-		}
+	limit, _ := cmd.Flags().GetInt("limit")
+	offset, _ := cmd.Flags().GetInt("offset")
+	verbose, _ := cmd.Flags().GetBool("verbose")
+	asJSON, _ := cmd.Flags().GetBool("json")
+	registryNamesStr, _ := cmd.Flags().GetString("registries")
 
-		// Determine which registry IDs and names to use
-		var registryIDs []int
-		var registryNames []string
-		if registryNamesStr != "" {
-			// Use only specified registries
-			requestedNames := strings.Split(registryNamesStr, ",")
-			for _, requestedName := range requestedNames {
-				requestedName = strings.TrimSpace(requestedName)
-				if requestedName == "" {
-					continue
-				}
+	registryIDs, registryNames, err := resolveRegistries(server, registryNamesStr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
 
-				// Find matching registry (case-insensitive)
-				found := false
-				for _, reg := range allRegistries {
-					if strings.EqualFold(reg.Name, requestedName) {
-						registryIDs = append(registryIDs, reg.RegistryID)
-						registryNames = append(registryNames, reg.Name)
-						found = true
-						break
-					}
-				}
-
-				if !found {
-					fmt.Printf("Registry not found: '%s'\n", requestedName)
-					os.Exit(1)
-				}
-			}
-		} else {
-			// Use all registries
-			for _, reg := range allRegistries {
-				registryIDs = append(registryIDs, reg.RegistryID)
-				registryNames = append(registryNames, reg.Name)
-			}
-		}
-
-		if err := searchPackages(PackageSearchParams{
-			Server:        server,
-			Search:        search,
-			Limit:         limit,
-			Offset:        offset,
-			RegistryIDs:   registryIDs,
-			RegistryNames: registryNames,
-			Verbose:       verbose,
-		}); err != nil {
-			fmt.Printf("Failed to search packages: %v\n", err)
-			os.Exit(1)
-		}
-	},
+	if err := searchPackages(PackageSearchParams{
+		Server:        server,
+		Search:        search,
+		Limit:         limit,
+		Offset:        offset,
+		RegistryIDs:   registryIDs,
+		RegistryNames: registryNames,
+		Verbose:       verbose,
+		JSON:          asJSON,
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to search packages: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 var packageInfoCmd = &cobra.Command{
@@ -1018,43 +994,10 @@ The package name must match exactly (case-insensitive).`,
 		packageName := args[0]
 		registryNamesStr, _ := cmd.Flags().GetString("registries")
 
-		// Fetch all registries from the API
-		allRegistries, err := fetchRegistries(server)
+		registryIDs, registryNames, err := resolveRegistries(server, registryNamesStr)
 		if err != nil {
-			fmt.Printf("Failed to fetch registries: %v\n", err)
+			fmt.Fprintf(os.Stderr, "%v\n", err)
 			os.Exit(1)
-		}
-
-		var registryIDs []int
-		var registryNames []string
-		if registryNamesStr != "" {
-			requestedNames := strings.Split(registryNamesStr, ",")
-			for _, requestedName := range requestedNames {
-				requestedName = strings.TrimSpace(requestedName)
-				if requestedName == "" {
-					continue
-				}
-
-				found := false
-				for _, reg := range allRegistries {
-					if strings.EqualFold(reg.Name, requestedName) {
-						registryIDs = append(registryIDs, reg.RegistryID)
-						registryNames = append(registryNames, reg.Name)
-						found = true
-						break
-					}
-				}
-
-				if !found {
-					fmt.Printf("Registry not found: '%s'\n", requestedName)
-					os.Exit(1)
-				}
-			}
-		} else {
-			for _, reg := range allRegistries {
-				registryIDs = append(registryIDs, reg.RegistryID)
-				registryNames = append(registryNames, reg.Name)
-			}
 		}
 
 		if err := getPackageInfo(server, packageName, registryIDs, registryNames); err != nil {
@@ -1094,6 +1037,186 @@ the --registry flag.`,
 			os.Exit(1)
 		}
 	},
+}
+
+var searchCmd = &cobra.Command{
+	Use:   "search",
+	Short: "Search code, symbols, documentation and packages",
+	Long: `Search the Julia packages indexed on JuliaHub.
+
+Four kinds of search are available, one per subcommand:
+
+  code      grep-style regular-expression search over package source files
+  symbols   definitions and uses of functions, types, macros and modules
+  docs      semantic search over rendered package documentation
+  packages  the package catalogue (name, description, tags), as jh package search
+
+code, symbols and docs accept --package (name or UUID, repeatable) and
+--registry (name, repeatable) to narrow the search, and --limit to cap the
+number of results. Every subcommand takes --json, which prints only a JSON
+document on stdout — {"results": [...], "truncated": bool} for code, symbols
+and docs; {"results": [...], "total": N} for packages — with notes and errors
+on stderr, so the output can be consumed by scripts and tool-calling agents.
+
+--server accepts a JuliaHub host (as elsewhere) or, for local development of
+the search service, a full URL such as http://localhost:4446.`,
+	Example: `  jh search code "Base.@kwdef" --package DataFrames
+  jh search symbols DataFrame --type type --usage define
+  jh search docs "join two tables" --limit 5
+  jh search packages dataframes --json`,
+}
+
+var searchCodeCmd = &cobra.Command{
+	Use:   "code <pattern>",
+	Short: "Search package source code with a regular expression",
+	Long: `Search the source files of indexed packages for a regular expression.
+
+The pattern is RE2 syntax (Go/Rust-style; no backreferences). Use --path to
+keep only files whose path matches a second regular expression, and
+--ignore-case for a case-insensitive match. Each result is one matching line
+with its package, registry, file and line number.`,
+	Example: `  jh search code "function foo"
+  jh search code "@kwdef" --package DataFrames --package CSV
+  jh search code "TODO" --path "src/.*\.jl$" --registry General --limit 20
+  jh search code "mutable struct" --ignore-case --json`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		baseURL, server := searchTarget(cmd)
+		packages, _ := cmd.Flags().GetStringArray("package")
+		registries, _ := cmd.Flags().GetStringArray("registry")
+		pathFilter, _ := cmd.Flags().GetString("path")
+		ignoreCase, _ := cmd.Flags().GetBool("ignore-case")
+		limit, _ := cmd.Flags().GetInt("limit")
+		asJSON, _ := cmd.Flags().GetBool("json")
+
+		uuids, err := resolveSearchPackages(server, packages, isLocalSearchBaseURL(baseURL))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+		body, err := buildCodeSearchRequest(args[0], uuids, registries, pathFilter, ignoreCase, limit)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+		if err := runSearch(baseURL, searchCode, body, asJSON, renderCodeResults); err != nil {
+			printSearchError(os.Stderr, err)
+			os.Exit(1)
+		}
+	},
+}
+
+var searchSymbolsCmd = &cobra.Command{
+	Use:   "symbols <name>",
+	Short: "Search symbol definitions and uses",
+	Long: `Search for a symbol — a function, type, macro or module name — across the
+indexed packages, distinguishing where it is defined from where it is used.
+
+--type restricts the symbol kind (function, type, macro, module) and --usage
+the occurrence kind (define, use); both are repeatable.`,
+	Example: `  jh search symbols DataFrame
+  jh search symbols innerjoin --type function --usage define
+  jh search symbols @time --type macro --package BenchmarkTools
+  jh search symbols Tables --usage use --limit 50 --json`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		baseURL, server := searchTarget(cmd)
+		packages, _ := cmd.Flags().GetStringArray("package")
+		registries, _ := cmd.Flags().GetStringArray("registry")
+		types, _ := cmd.Flags().GetStringArray("type")
+		usages, _ := cmd.Flags().GetStringArray("usage")
+		limit, _ := cmd.Flags().GetInt("limit")
+		asJSON, _ := cmd.Flags().GetBool("json")
+
+		uuids, err := resolveSearchPackages(server, packages, isLocalSearchBaseURL(baseURL))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+		body, err := buildSymbolSearchRequest(args[0], uuids, registries, types, usages, limit)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+		if err := runSearch(baseURL, searchSym, body, asJSON, renderSymbolResults); err != nil {
+			printSearchError(os.Stderr, err)
+			os.Exit(1)
+		}
+	},
+}
+
+var searchDocsCmd = &cobra.Command{
+	Use:   "docs <query>",
+	Short: "Search package documentation",
+	Long: `Search the rendered documentation of indexed packages with a natural-language
+query. Results are packages ranked by relevance score, each with the matching
+documentation sections.
+
+--threshold drops results scoring below the given value; --strict-phrase
+requires the query to appear as a phrase rather than as separate terms.`,
+	Example: `  jh search docs "read a CSV file into a DataFrame"
+  jh search docs "differential equations" --registry General --limit 5
+  jh search docs "sparse matrix" --threshold 0.5 --json
+  jh search docs "group by" --strict-phrase --package DataFrames`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		baseURL, server := searchTarget(cmd)
+		packages, _ := cmd.Flags().GetStringArray("package")
+		registries, _ := cmd.Flags().GetStringArray("registry")
+		strictPhrase, _ := cmd.Flags().GetBool("strict-phrase")
+		limit, _ := cmd.Flags().GetInt("limit")
+		asJSON, _ := cmd.Flags().GetBool("json")
+		var threshold *float64
+		if cmd.Flags().Changed("threshold") {
+			v, _ := cmd.Flags().GetFloat64("threshold")
+			threshold = &v
+		}
+
+		uuids, err := resolveSearchPackages(server, packages, isLocalSearchBaseURL(baseURL))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+		body, err := buildDocsSearchRequest(args[0], uuids, registries, threshold, strictPhrase, limit)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+		if err := runSearch(baseURL, searchDocs, body, asJSON, renderDocsResults); err != nil {
+			printSearchError(os.Stderr, err)
+			os.Exit(1)
+		}
+	},
+}
+
+var searchPackagesCmd = &cobra.Command{
+	Use:   "packages [search-term]",
+	Short: "Search the package catalogue",
+	Long: `Search for Julia packages by name, description and tags — the same search as
+jh package search, under the search group.
+
+Filter by registry with --registries (comma-separated). Use --verbose for the
+full per-package listing, or --json for {"results": [...], "total": N}.`,
+	Example: `  jh search packages dataframes
+  jh search packages --registries General optimization
+  jh search packages --limit 20 plots --json`,
+	Args: cobra.MaximumNArgs(1),
+	Run:  runPackageSearch,
+}
+
+// searchTarget resolves the --server flag for the search subcommands into the
+// base URL the search paths are appended to and the bare host used for
+// package-name lookups. It exits on a config read failure like the other
+// commands do.
+func searchTarget(cmd *cobra.Command) (baseURL, server string) {
+	raw, err := rawServerFromFlagOrConfig(cmd)
+	if err != nil {
+		fmt.Printf("Failed to get server config: %v\n", err)
+		os.Exit(1)
+	}
+	baseURL = searchBaseURL(raw)
+	server = strings.TrimPrefix(strings.TrimPrefix(baseURL, "https://"), "http://")
+	return baseURL, server
 }
 
 var registryCmd = &cobra.Command{
@@ -2463,6 +2586,7 @@ func init() {
 	packageSearchCmd.Flags().Int("offset", 0, "Number of results to skip")
 	packageSearchCmd.Flags().String("registries", "", "Filter by registry names (comma-separated, e.g., 'General,CustomRegistry')")
 	packageSearchCmd.Flags().Bool("verbose", false, "Show detailed package information")
+	packageSearchCmd.Flags().Bool("json", false, "Print only a JSON document ({\"results\": [...], \"total\": N}) on stdout")
 	packageInfoCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	packageInfoCmd.Flags().String("registries", "", "Filter by registry names (comma-separated, e.g., 'General,CustomRegistry')")
 	packageDependencyCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
@@ -2507,6 +2631,25 @@ func init() {
 	scanResultsCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	scanResultsCmd.Flags().Bool("csv", false, "Fetch results as CSV")
 	scanResultsCmd.Flags().StringP("output", "o", "", "Write results to this file instead of stdout")
+	for _, c := range []*cobra.Command{searchCodeCmd, searchSymbolsCmd, searchDocsCmd} {
+		c.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server, or a full http(s):// URL of a search service")
+		c.Flags().StringArray("package", nil, "Restrict to a package by name or UUID (repeatable)")
+		c.Flags().StringArray("registry", nil, "Restrict to a registry by name (repeatable)")
+		c.Flags().Int("limit", 0, "Maximum number of results (default: server default)")
+		c.Flags().Bool("json", false, "Print only a JSON document ({\"results\": [...], \"truncated\": bool}) on stdout")
+	}
+	searchCodeCmd.Flags().String("path", "", "Only search files whose path matches this regular expression")
+	searchCodeCmd.Flags().Bool("ignore-case", false, "Case-insensitive match")
+	searchSymbolsCmd.Flags().StringArray("type", nil, "Symbol kind: function, type, macro or module (repeatable)")
+	searchSymbolsCmd.Flags().StringArray("usage", nil, "Occurrence kind: define or use (repeatable)")
+	searchDocsCmd.Flags().Float64("threshold", 0, "Minimum relevance score to include a result")
+	searchDocsCmd.Flags().Bool("strict-phrase", false, "Require the query to appear as a phrase")
+	searchPackagesCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	searchPackagesCmd.Flags().Int("limit", 10, "Maximum number of results to return")
+	searchPackagesCmd.Flags().Int("offset", 0, "Number of results to skip")
+	searchPackagesCmd.Flags().String("registries", "", "Filter by registry names (comma-separated, e.g., 'General,CustomRegistry')")
+	searchPackagesCmd.Flags().Bool("verbose", false, "Show detailed package information")
+	searchPackagesCmd.Flags().Bool("json", false, "Print only a JSON document ({\"results\": [...], \"total\": N}) on stdout")
 
 	authCmd.AddCommand(authLoginCmd, authRefreshCmd, authStatusCmd, authEnvCmd)
 	jobCmd.AddCommand(jobListCmd, jobStartCmd)
@@ -2551,8 +2694,9 @@ func init() {
 	runCmd.AddCommand(runSetupCmd)
 	gitCredentialCmd.AddCommand(gitCredentialHelperCmd, gitCredentialGetCmd, gitCredentialStoreCmd, gitCredentialEraseCmd, gitCredentialSetupCmd)
 	scanCmd.AddCommand(scanStatusCmd, scanResultsCmd)
+	searchCmd.AddCommand(searchCodeCmd, searchSymbolsCmd, searchDocsCmd, searchPackagesCmd)
 
-	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, projectCmd, packageCmd, registryCmd, userCmd, groupCmd, adminCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd, vulnCmd, scanCmd)
+	rootCmd.AddCommand(authCmd, jobCmd, datasetCmd, projectCmd, packageCmd, registryCmd, userCmd, groupCmd, adminCmd, juliaCmd, cloneCmd, pushCmd, fetchCmd, pullCmd, runCmd, gitCredentialCmd, updateCmd, vulnCmd, scanCmd, searchCmd)
 }
 
 func main() {
