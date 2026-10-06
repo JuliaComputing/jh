@@ -691,38 +691,50 @@ func getPackageInfoGraphQL(server, packageName string, registryIDs []int, regist
 	return nil
 }
 
-func getPackageDependencies(server string, packageName string, registryName string, showIndirect bool) error {
-	var targetRegistry string
-	if registryName != "" {
-		targetRegistry = registryName
-	} else {
-		allRegistries, err := fetchRegistries(server)
-		if err != nil {
-			return fmt.Errorf("failed to fetch registries: %w", err)
-		}
-		var registryIDs []int
-		for _, reg := range allRegistries {
-			registryIDs = append(registryIDs, reg.RegistryID)
-		}
-		gqlPkgs, err := fetchGraphQLPackages(server, packageName, 100, 0, registryIDs)
-		if err != nil {
-			return fmt.Errorf("failed to search for package %q: %w", packageName, err)
-		}
-		for i := range gqlPkgs {
-			if strings.EqualFold(gqlPkgs[i].Name, packageName) {
-				if gqlPkgs[i].RegistryMap != nil {
-					for _, reg := range allRegistries {
-						if reg.RegistryID == gqlPkgs[i].RegistryMap.RegistryID {
-							targetRegistry = reg.Name
-							break
-						}
-					}
-				}
-				break
+// findPackageRegistry returns the registry of the package named packageName
+// (exact, case-insensitive): from the REST package listing, or, when that is
+// unavailable, from the GraphQL package search.
+func findPackageRegistry(server, packageName string) (string, error) {
+	pkgs, _, restErr := fetchRESTPackages(server, packageName, 100, 0, nil)
+	if restErr == nil {
+		for _, p := range pkgs {
+			if strings.EqualFold(p.Name, packageName) && p.Registry != "" {
+				return p.Registry, nil
 			}
 		}
-		if targetRegistry == "" {
-			return fmt.Errorf("package not found: %s", packageName)
+		return "", fmt.Errorf("package not found: %s", packageName)
+	}
+
+	allRegistries, err := fetchRegistries(server)
+	if err != nil {
+		return "", fmt.Errorf("failed to search for package %q: %v; failed to fetch registries: %w", packageName, restErr, err)
+	}
+	var registryIDs []int
+	for _, reg := range allRegistries {
+		registryIDs = append(registryIDs, reg.RegistryID)
+	}
+	gqlPkgs, err := fetchGraphQLPackages(server, packageName, 100, 0, registryIDs)
+	if err != nil {
+		return "", fmt.Errorf("failed to search for package %q: %v; GraphQL fallback: %w", packageName, restErr, err)
+	}
+	for i := range gqlPkgs {
+		if strings.EqualFold(gqlPkgs[i].Name, packageName) && gqlPkgs[i].RegistryMap != nil {
+			for _, reg := range allRegistries {
+				if reg.RegistryID == gqlPkgs[i].RegistryMap.RegistryID {
+					return reg.Name, nil
+				}
+			}
+		}
+	}
+	return "", fmt.Errorf("package not found: %s", packageName)
+}
+
+func getPackageDependencies(server string, packageName string, registryName string, showIndirect bool) error {
+	targetRegistry := registryName
+	if targetRegistry == "" {
+		var err error
+		if targetRegistry, err = findPackageRegistry(server, packageName); err != nil {
+			return err
 		}
 	}
 
