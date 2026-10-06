@@ -306,8 +306,8 @@ Search the Julia packages indexed on JuliaHub. Every subcommand takes `--json`, 
   - `--usage <kind>` - `define` or `use` (repeatable)
   - `--package`, `--registry`, `--limit`, `--json` as for `code`
 - `jh search docs <query>` - Natural-language search over rendered package documentation; results are packages ranked by score with their matching sections
-  - `--threshold <x>` - Drop results scoring below `x`
-  - `--strict-phrase` - Require the query as a phrase rather than separate terms
+  - `--threshold <x>` - Keep results scoring at least `x` (0-1) times the best result's score
+  - `--strict-phrase` / `--strict-phrase=false` - Require the query as a phrase / match its words separately (default: the server's setting, strict on a default install)
   - `--package`, `--registry`, `--limit`, `--json` as for `code`
 - `jh search packages [search-term]` - The package catalogue search (same as `jh package search`), with `--registries`, `--limit`, `--offset`, `--verbose` and `--json` (`{"results": [...], "total": N}`)
 - `--server` / `-s` accepts a JuliaHub host as elsewhere, or a full URL such as `--server http://localhost:4446` to point `code`/`symbols`/`docs` at a locally running search service (no stored login required; the request is sent unauthenticated with a note on stderr, and `--package` must then be given as a UUID). The stored token is only ever sent over `https://`, or over `http://` to a loopback host; a plain-http URL on any other host gets an unauthenticated request and a note
