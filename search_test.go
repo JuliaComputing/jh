@@ -67,8 +67,8 @@ func TestBuildSymbolSearchRequest(t *testing.T) {
 }
 
 func TestBuildDocsSearchRequest(t *testing.T) {
-	th := 0.42
-	req, err := buildDocsSearchRequest("join tables", []string{"u1", "u2"}, nil, &th, true, 3)
+	th, yes, no := 0.42, true, false
+	req, err := buildDocsSearchRequest("join tables", []string{"u1", "u2"}, nil, &th, &yes, 3)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -78,20 +78,27 @@ func TestBuildDocsSearchRequest(t *testing.T) {
 		t.Errorf("docs request JSON\n got %s\nwant %s", got, want)
 	}
 
-	// A nil threshold is omitted; an explicit zero is sent.
-	req, _ = buildDocsSearchRequest("q", nil, nil, nil, false, 0)
+	// A nil threshold / strictphrase is omitted (server default); explicit
+	// values, zero and false included, are sent.
+	req, _ = buildDocsSearchRequest("q", nil, nil, nil, nil, 0)
 	got, _ = json.Marshal(req)
 	if string(got) != `{"pattern":"q"}` {
 		t.Errorf("minimal docs request JSON = %s", got)
 	}
 	zero := 0.0
-	req, _ = buildDocsSearchRequest("q", nil, nil, &zero, false, 0)
+	req, _ = buildDocsSearchRequest("q", nil, nil, &zero, nil, 0)
 	got, _ = json.Marshal(req)
 	if string(got) != `{"pattern":"q","threshold":0}` {
 		t.Errorf("zero-threshold docs request JSON = %s", got)
 	}
 
-	if _, err := buildDocsSearchRequest("", nil, nil, nil, false, 0); err == nil {
+	req, _ = buildDocsSearchRequest("q", nil, nil, nil, &no, 0)
+	got, _ = json.Marshal(req)
+	if string(got) != `{"pattern":"q","strictphrase":false}` {
+		t.Errorf("strictphrase=false docs request JSON = %s", got)
+	}
+
+	if _, err := buildDocsSearchRequest("", nil, nil, nil, nil, 0); err == nil {
 		t.Error("expected error for empty query")
 	}
 }

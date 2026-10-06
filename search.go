@@ -69,7 +69,7 @@ type docsSearchRequest struct {
 	Registry     []string `json:"registry,omitempty"`
 	MaxResults   int      `json:"maxresults,omitempty"`
 	Threshold    *float64 `json:"threshold,omitempty"`
-	StrictPhrase bool     `json:"strictphrase,omitempty"`
+	StrictPhrase *bool    `json:"strictphrase,omitempty"` // nil: the server's default
 }
 
 // searchResponse is the 200 body of the v1 endpoints.
@@ -249,7 +249,10 @@ func buildSymbolSearchRequest(pattern string, packages, registries, types, usage
 	}, nil
 }
 
-func buildDocsSearchRequest(pattern string, packages, registries []string, threshold *float64, strictPhrase bool, limit int) (docsSearchRequest, error) {
+// buildDocsSearchRequest builds the docs search body. A nil threshold or
+// strictPhrase leaves the server's configured default in effect; both are
+// pointers so that an explicit value (strictphrase false included) is sent.
+func buildDocsSearchRequest(pattern string, packages, registries []string, threshold *float64, strictPhrase *bool, limit int) (docsSearchRequest, error) {
 	if err := validateSearchCommon(pattern, limit); err != nil {
 		return docsSearchRequest{}, err
 	}
