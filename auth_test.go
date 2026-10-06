@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -237,5 +239,91 @@ func TestRememberAuthServerFromToken(t *testing.T) {
 	rememberAuthServerFromToken("a.juliahub.dev", makeJWT(t, JWTClaims{Issuer: "https://evil.example/dex"}))
 	if got := authServerFor("a.juliahub.dev"); got != "a.juliahub.dev" {
 		t.Errorf("untrusted issuer was used: %q", got)
+	}
+}
+
+type fakeClock struct {
+	now   time.Time
+	slept []time.Duration
+}
+
+func (c *fakeClock) Now() time.Time { return c.now }
+func (c *fakeClock) Sleep(d time.Duration) {
+	c.slept = append(c.slept, d)
+	c.now = c.now.Add(d)
+}
+
+// tokenEndpoint answers successive polls with the given bodies (the last one
+// repeats) and records the posted forms.
+func tokenEndpoint(t *testing.T, bodies ...string) (*httptest.Server, *[]url.Values) {
+	t.Helper()
+	var forms []url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.ParseForm()
+		forms = append(forms, r.PostForm)
+		i := min(len(forms)-1, len(bodies)-1)
+		w.Write([]byte(bodies[i]))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &forms
+}
+
+func TestPollDeviceTokenHonoursIntervalAndSlowDown(t *testing.T) {
+	srv, forms := tokenEndpoint(t,
+		`{"error":"authorization_pending"}`,
+		`{"error":"slow_down"}`,
+		`{"error":"authorization_pending"}`,
+		`{"access_token":"a","refresh_token":"r","id_token":"i"}`,
+	)
+	clock := &fakeClock{now: time.Unix(1000, 0)}
+	tok, err := pollDeviceToken(srv.Client(), srv.URL, DeviceCodeResponse{DeviceCode: "dc", Interval: 5, ExpiresIn: 300}, clock)
+	if err != nil {
+		t.Fatalf("pollDeviceToken: %v", err)
+	}
+	if tok.AccessToken != "a" || tok.RefreshToken != "r" {
+		t.Errorf("token = %+v", tok)
+	}
+	want := []time.Duration{5 * time.Second, 5 * time.Second, 10 * time.Second, 10 * time.Second}
+	if !reflect.DeepEqual(clock.slept, want) {
+		t.Errorf("slept %v, want %v (interval, then +5s after slow_down)", clock.slept, want)
+	}
+	if got := (*forms)[0]; got.Get("device_code") != "dc" || got.Get("scope") != "openid email profile offline_access" {
+		t.Errorf("poll form = %v", got)
+	}
+}
+
+func TestPollDeviceTokenDefaultsInterval(t *testing.T) {
+	srv, _ := tokenEndpoint(t, `{"access_token":"a"}`)
+	clock := &fakeClock{now: time.Unix(0, 0)}
+	if _, err := pollDeviceToken(srv.Client(), srv.URL, DeviceCodeResponse{}, clock); err != nil {
+		t.Fatal(err)
+	}
+	if len(clock.slept) != 1 || clock.slept[0] != defaultDevicePollInterval {
+		t.Errorf("slept %v, want one default interval", clock.slept)
+	}
+}
+
+func TestPollDeviceTokenStops(t *testing.T) {
+	cases := map[string]struct {
+		bodies  []string
+		expires int
+		want    string
+	}{
+		"denied":           {[]string{`{"error":"access_denied"}`}, 300, "denied"},
+		"expired_token":    {[]string{`{"error":"expired_token"}`}, 300, "expired"},
+		"deadline passes":  {[]string{`{"error":"authorization_pending"}`}, 12, "expired"},
+		"unknown error":    {[]string{`{"error":"invalid_client"}`}, 300, "invalid_client"},
+		"no access token":  {[]string{`{}`}, 300, "no access token"},
+		"non-JSON gateway": {[]string{`<html>502</html>`}, 300, "parse"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			srv, _ := tokenEndpoint(t, c.bodies...)
+			clock := &fakeClock{now: time.Unix(0, 0)}
+			_, err := pollDeviceToken(srv.Client(), srv.URL, DeviceCodeResponse{Interval: 5, ExpiresIn: c.expires}, clock)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("err = %v, want it to mention %q", err, c.want)
+			}
+		})
 	}
 }

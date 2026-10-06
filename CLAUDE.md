@@ -326,7 +326,7 @@ The CLI supports multiple JuliaHub environments:
 The application uses OAuth2 device flow:
 1. Request device code from `/dex/device/code`
 2. Present verification URL to user
-3. Poll `/dex/token` endpoint until authorization complete
+3. Poll `/dex/token` endpoint until authorization complete (`pollDeviceToken`, RFC 8628 §3.5: the server's `interval` (default 5 s) between polls, +5 s on `slow_down`, stop on `access_denied` / `expired_token` / after `expires_in`)
 4. Store tokens in configuration file with JWT claims extraction
 
 ## API Patterns

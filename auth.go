@@ -282,22 +282,64 @@ func deviceFlow(server string) (*TokenResponse, error) {
 	fmt.Printf("Go to %s and authorize this device\n", deviceResp.VerificationURIComplete)
 	fmt.Printf("Waiting for authorization...\n")
 
-	time.Sleep(15 * time.Second)
 	// Step 3: Poll for token
+	client := &http.Client{Timeout: 30 * time.Second}
+	token, err := pollDeviceToken(client, tokenURL, deviceResp, realClock{})
+	if err != nil {
+		return nil, err
+	}
+	if token.RefreshToken == "" {
+		fmt.Printf("Warning: No refresh token received. This may indicate an issue with the authentication provider.\n")
+		fmt.Printf("Consider trying the GitHub connector instead for better token management.\n")
+	}
+	return token, nil
+}
+
+// pollClock lets tests drive pollDeviceToken without waiting.
+type pollClock interface {
+	Now() time.Time
+	Sleep(time.Duration)
+}
+
+type realClock struct{}
+
+func (realClock) Now() time.Time        { return time.Now() }
+func (realClock) Sleep(d time.Duration) { time.Sleep(d) }
+
+// defaultDevicePollInterval is RFC 8628's default when the server sends none.
+const defaultDevicePollInterval = 5 * time.Second
+
+// pollDeviceToken polls the token endpoint until the user approves the device,
+// following RFC 8628 section 3.5: wait the server's interval between polls,
+// add 5 seconds to it on slow_down, keep going on authorization_pending, and
+// stop on access_denied, expired_token or once the device code has expired.
+func pollDeviceToken(client *http.Client, tokenURL string, dc DeviceCodeResponse, clock pollClock) (*TokenResponse, error) {
+	interval := time.Duration(dc.Interval) * time.Second
+	if interval <= 0 {
+		interval = defaultDevicePollInterval
+	}
+	var deadline time.Time
+	if dc.ExpiresIn > 0 {
+		deadline = clock.Now().Add(time.Duration(dc.ExpiresIn) * time.Second)
+	}
+	expired := fmt.Errorf("the login request expired before it was approved; run 'jh auth login' again")
+
 	for {
-		time.Sleep(4 * time.Second)
+		clock.Sleep(interval)
+		if !deadline.IsZero() && clock.Now().After(deadline) {
+			return nil, expired
+		}
 
 		tokenData := url.Values{}
 		tokenData.Set("client_id", "device")
-		tokenData.Set("device_code", deviceResp.DeviceCode)
-		tokenData.Set("scope", "openiod email profile offline_access")
+		tokenData.Set("device_code", dc.DeviceCode)
+		tokenData.Set("scope", "openid email profile offline_access")
 		tokenData.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
 
-		tokenResp, err := http.PostForm(tokenURL, tokenData)
+		tokenResp, err := client.PostForm(tokenURL, tokenData)
 		if err != nil {
 			return nil, fmt.Errorf("failed to request token: %w", err)
 		}
-
 		tokenBody, err := io.ReadAll(tokenResp.Body)
 		tokenResp.Body.Close()
 		if err != nil {
@@ -309,19 +351,21 @@ func deviceFlow(server string) (*TokenResponse, error) {
 			return nil, fmt.Errorf("failed to parse token response: %w", err)
 		}
 
-		if token.Error != "" {
-			if token.Error == "authorization_pending" {
-				continue
-			}
-			return nil, fmt.Errorf("authorization failed: %s", token.Error)
-		}
-
-		if token.AccessToken != "" {
-			if token.RefreshToken == "" {
-				fmt.Printf("Warning: No refresh token received. This may indicate an issue with the authentication provider.\n")
-				fmt.Printf("Consider trying the GitHub connector instead for better token management.\n")
+		switch token.Error {
+		case "":
+			if token.AccessToken == "" {
+				return nil, fmt.Errorf("no access token in token response")
 			}
 			return &token, nil
+		case "authorization_pending":
+		case "slow_down":
+			interval += 5 * time.Second
+		case "access_denied":
+			return nil, fmt.Errorf("authorization was denied")
+		case "expired_token":
+			return nil, expired
+		default:
+			return nil, fmt.Errorf("authorization failed: %s", token.Error)
 		}
 	}
 }
