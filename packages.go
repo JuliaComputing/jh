@@ -360,13 +360,18 @@ func buildPackagesInfoQuery(search string, registryNames []string, page restPage
 
 // fetchRESTPackages lists packages matching search via packagesInfoPath and
 // returns the limit/offset window and the total match count.
+//
+// The listing is public on JuliaHub.com-style installs, so the stored login's
+// token is sent only when it belongs to server (tokenForServer); enterprise
+// installs answer 401 without one.
 func fetchRESTPackages(server, search string, limit, offset int, registryNames []string) ([]RESTPackage, int, error) {
-	token, err := ensureValidToken()
-	if err != nil {
-		return nil, 0, fmt.Errorf("authentication required: %w", err)
-	}
+	token := tokenForServer(server)
 	client := &http.Client{Timeout: 30 * time.Second}
-	return fetchRESTPackagesFrom(client, "https://"+server, token.IDToken, search, limit, offset, registryNames)
+	pkgs, total, err := fetchRESTPackagesFrom(client, "https://"+server, token, search, limit, offset, registryNames)
+	if err != nil && token == "" && strings.Contains(err.Error(), "status 401") {
+		err = fmt.Errorf("%w (this server requires a login: run 'jh auth login -s %s')", err, server)
+	}
+	return pkgs, total, err
 }
 
 // fetchRESTPackagesFrom is the testable core of fetchRESTPackages (client,
@@ -420,7 +425,11 @@ func fetchPackagesInfoPage(client *http.Client, baseURL, token string, q url.Val
 		return nil, 0, fmt.Errorf("failed to read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, 0, fmt.Errorf("API request failed (status %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		msg := strings.TrimSpace(string(body))
+		if strings.HasPrefix(msg, "<") {
+			msg = http.StatusText(resp.StatusCode) // an HTML error page from the web server
+		}
+		return nil, 0, fmt.Errorf("API request failed (status %d): %s", resp.StatusCode, msg)
 	}
 
 	var response PackageRESTListResponse
@@ -591,9 +600,10 @@ func fetchPackagesGraphQL(params PackageSearchParams) ([]packageInfo, int, error
 func searchPackages(params PackageSearchParams) error {
 	infos, total, err := fetchPackagesREST(params)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: REST package search failed (%v); falling back to GraphQL\n", err)
+		restErr := err
+		fmt.Fprintf(os.Stderr, "warning: REST package search failed (%v); falling back to GraphQL\n", restErr)
 		if infos, total, err = fetchPackagesGraphQL(params); err != nil {
-			return err
+			return fmt.Errorf("%v; GraphQL fallback: %w", restErr, err)
 		}
 	}
 	return emitPackages(params, infos, total)

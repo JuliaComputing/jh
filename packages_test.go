@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strconv"
-	"strings"
 	"testing"
 )
 
@@ -183,10 +182,12 @@ func TestFetchRESTPackagesFromWindow(t *testing.T) {
 
 func TestFetchRESTPackagesFromHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "nope", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte("<html><head><title>401 Authorization Required</title></head></html>"))
 	}))
 	defer srv.Close()
-	if _, _, err := fetchRESTPackagesFrom(srv.Client(), srv.URL, "t", "x", 10, 0, nil); err == nil || !strings.Contains(err.Error(), "status 401") {
-		t.Errorf("want a status 401 error, got %v", err)
+	_, _, err := fetchRESTPackagesFrom(srv.Client(), srv.URL, "t", "x", 10, 0, nil)
+	if err == nil || err.Error() != "API request failed (status 401): Unauthorized" {
+		t.Errorf("want a one-line status 401 error, got %v", err)
 	}
 }

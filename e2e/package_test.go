@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// `jh package` — search/info/dependency. These depend on the REST `/packages/info`
+// `jh package` — search/info/dependency. These depend on the REST `/api/v1/ui/packages/info`
 // endpoint with a GraphQL fallback; on some instances those are unavailable or
 // the GraphQL role is not permitted ("query is not allowed"). Such cases are
 // treated as backend gaps and skipped; when the commands work, real structure

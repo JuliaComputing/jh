@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -930,6 +931,18 @@ Use --verbose flag for comprehensive output, or get a concise summary by default
 // `jh search packages`: resolve the --registries filter, then search (REST
 // first, GraphQL fallback), printing a table or, with --json, only the JSON
 // document on stdout.
+// splitRegistryNames splits a comma-separated --registries value, dropping
+// empty entries.
+func splitRegistryNames(csv string) []string {
+	var names []string
+	for _, n := range strings.Split(csv, ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			names = append(names, n)
+		}
+	}
+	return names
+}
+
 func runPackageSearch(cmd *cobra.Command, args []string) {
 	server, err := getServerFromFlagOrConfig(cmd)
 	if err != nil {
@@ -949,7 +962,12 @@ func runPackageSearch(cmd *cobra.Command, args []string) {
 	registryNamesStr, _ := cmd.Flags().GetString("registries")
 
 	registryIDs, registryNames, err := resolveRegistries(server, registryNamesStr)
-	if err != nil {
+	if errors.Is(err, errRegistryFetch) {
+		// Listing registries needs a login, but the REST package listing is
+		// public on JuliaHub.com-style installs: search with the names as
+		// given (only the GraphQL fallback needs registry IDs).
+		registryIDs, registryNames = nil, splitRegistryNames(registryNamesStr)
+	} else if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}

@@ -617,3 +617,70 @@ func TestPackageUUIDsByNameGQL(t *testing.T) {
 		t.Errorf("got %v, want [u1]", got)
 	}
 }
+
+func TestLoginMatchesServer(t *testing.T) {
+	cases := []struct {
+		login, host string
+		want        bool
+	}{
+		{"nightly.juliahub.dev", "nightly.juliahub.dev", true},
+		{"auth.nightly-juliahub.juliahub.dev", "nightly-juliahub.juliahub.dev", true},
+		{"juliahub.com", "juliahub.com", true},
+		{"tanmaylocal.juliahub.dev", "nightly.juliahub.dev", false},
+		{"nightly.juliahub.dev", "auth.nightly.juliahub.dev", false},
+		{"", "nightly.juliahub.dev", false},
+	}
+	for _, c := range cases {
+		if got := loginMatchesServer(c.login, c.host); got != c.want {
+			t.Errorf("loginMatchesServer(%q, %q) = %v, want %v", c.login, c.host, got, c.want)
+		}
+	}
+}
+
+func TestChooseToken(t *testing.T) {
+	valid := func() (*StoredToken, error) { return &StoredToken{IDToken: "fresh"}, nil }
+	broken := func() (*StoredToken, error) { return nil, errors.New("refresh failed") }
+	never := func() (*StoredToken, error) {
+		t.Error("ensureValid must not run for another server's login")
+		return nil, nil
+	}
+	stored := &StoredToken{Server: "nightly.juliahub.dev", IDToken: "old"}
+
+	if tok, note := chooseToken("nightly.juliahub.dev", stored, nil, valid); tok != "fresh" || note != "" {
+		t.Errorf("own server: token %q note %q", tok, note)
+	}
+	if tok, note := chooseToken("other.juliahub.dev", stored, nil, never); tok != "" || !strings.Contains(note, "is for nightly.juliahub.dev, not other.juliahub.dev") {
+		t.Errorf("other server: token %q note %q", tok, note)
+	}
+	if tok, note := chooseToken("nightly.juliahub.dev", stored, nil, broken); tok != "" || !strings.Contains(note, "could not be refreshed") {
+		t.Errorf("refresh failure: token %q note %q", tok, note)
+	}
+	if tok, note := chooseToken("nightly.juliahub.dev", nil, errors.New("no config"), never); tok != "" || note != "" {
+		t.Errorf("no login: token %q note %q (anonymous use should be silent)", tok, note)
+	}
+}
+
+func TestAddLoginHint(t *testing.T) {
+	err := error(&searchError{Status: http.StatusUnauthorized, Message: "<html>401</html>"})
+	addLoginHint(err, "nightly.juliahub.dev")
+	var buf bytes.Buffer
+	printSearchError(&buf, err)
+	if !strings.Contains(buf.String(), "run 'jh auth login -s nightly.juliahub.dev'") {
+		t.Errorf("missing login hint:\n%s", buf.String())
+	}
+	other := &searchError{Status: http.StatusBadRequest, Code: "invalid_pattern"}
+	addLoginHint(other, "x")
+	if other.LoginHint != "" {
+		t.Errorf("hint added to a non-auth error")
+	}
+}
+
+func TestDecodeSearchErrorHTMLPage(t *testing.T) {
+	se := decodeSearchError(http.StatusUnauthorized, []byte("<html>\n<head><title>401 Authorization Required</title></head>\n</html>\n"))
+	if se.Message != "Unauthorized" || strings.Contains(se.Error(), "<") {
+		t.Errorf("HTML error page should collapse to the status text, got %q", se.Error())
+	}
+	if se := decodeSearchError(http.StatusBadGateway, []byte("upstream down")); se.Message != "upstream down" {
+		t.Errorf("plain-text bodies are kept, got %q", se.Message)
+	}
+}
