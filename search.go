@@ -12,6 +12,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -68,7 +69,7 @@ type docsSearchRequest struct {
 	Registry     []string `json:"registry,omitempty"`
 	MaxResults   int      `json:"maxresults,omitempty"`
 	Threshold    *float64 `json:"threshold,omitempty"`
-	StrictPhrase bool     `json:"strictphrase,omitempty"`
+	StrictPhrase *bool    `json:"strictphrase,omitempty"` // nil: the server's default
 }
 
 // searchResponse is the 200 body of the v1 endpoints.
@@ -99,6 +100,9 @@ type searchError struct {
 	Code    string
 	Message string
 	Details any
+	// LoginHint, when set, tells the user how to authenticate (an
+	// unauthenticated request was refused).
+	LoginHint string
 }
 
 func (e *searchError) Error() string {
@@ -109,9 +113,12 @@ func (e *searchError) Error() string {
 }
 
 // Hint returns a follow-up line for the user when the error details carry
-// something actionable — currently the `known` registry list the server sends
-// with invalid_registry. Empty when there is nothing to add.
+// something actionable — the `known` registry list the server sends with
+// invalid_registry, or how to log in when an unauthenticated request was refused. Empty when there is nothing to add.
 func (e *searchError) Hint() string {
+	if e.LoginHint != "" {
+		return e.LoginHint
+	}
 	details, ok := e.Details.(map[string]any)
 	if !ok {
 		return ""
@@ -242,7 +249,10 @@ func buildSymbolSearchRequest(pattern string, packages, registries, types, usage
 	}, nil
 }
 
-func buildDocsSearchRequest(pattern string, packages, registries []string, threshold *float64, strictPhrase bool, limit int) (docsSearchRequest, error) {
+// buildDocsSearchRequest builds the docs search body. A nil threshold or
+// strictPhrase leaves the server's configured default in effect; both are
+// pointers so that an explicit value (strictphrase false included) is sent.
+func buildDocsSearchRequest(pattern string, packages, registries []string, threshold *float64, strictPhrase *bool, limit int) (docsSearchRequest, error) {
 	if err := validateSearchCommon(pattern, limit); err != nil {
 		return docsSearchRequest{}, err
 	}
@@ -281,7 +291,13 @@ func decodeSearchError(status int, body []byte) *searchError {
 	if err := json.Unmarshal(body, &er); err == nil && er.Code != "" {
 		return &searchError{Status: status, Code: er.Code, Message: er.Message, Details: er.Details}
 	}
-	return &searchError{Status: status, Message: strings.TrimSpace(string(body))}
+	msg := strings.TrimSpace(string(body))
+	if strings.HasPrefix(msg, "<") {
+		// An HTML error page from the web server (e.g. nginx's 401), not
+		// the search API: the status text says all there is to say.
+		msg = http.StatusText(status)
+	}
+	return &searchError{Status: status, Message: msg}
 }
 
 // decodeLegacySearchResponse interprets the pre-v1 `{"success","data"}`
@@ -377,26 +393,97 @@ func postSearchWithToken(client *http.Client, baseURL string, kind searchKind, t
 	return decodeLegacySearchResponse(legacyBody)
 }
 
-// postSearch performs an authenticated search against baseURL (see
-// searchBaseURL). Against a plain-http local service a missing stored token is
-// tolerated: the request goes out unauthenticated with a note on stderr. The
-// token is never sent in cleartext to a non-loopback host (searchTokenAllowed).
+// postSearch performs a search against baseURL (see searchBaseURL).
+//
+// Against a JuliaHub host the stored login's token is sent only when that
+// login belongs to the host (tokenForServer); otherwise the request goes out
+// without one, which JuliaHub.com-style installs accept, and a 401 is
+// reported with a hint to log in. Against a plain-http local service a missing
+// stored token is tolerated, and the token is never sent in cleartext to a
+// non-loopback host (searchTokenAllowed).
 func postSearch(baseURL string, kind searchKind, body any) (json.RawMessage, bool, error) {
 	var bearer string
-	token, err := ensureValidToken()
-	switch {
-	case err == nil && !searchTokenAllowed(baseURL):
-		fmt.Fprintf(os.Stderr, "note: not sending the stored JuliaHub token over plain http to %s; the request goes out unauthenticated\n", baseURL)
-	case err == nil:
-		bearer = token.IDToken
-	case isLocalSearchBaseURL(baseURL):
-		fmt.Fprintf(os.Stderr, "note: no stored JuliaHub token; sending an unauthenticated request to %s\n", baseURL)
-	default:
-		return nil, false, fmt.Errorf("authentication required: %w", err)
+	if isLocalSearchBaseURL(baseURL) {
+		token, err := ensureValidToken()
+		switch {
+		case err == nil && !searchTokenAllowed(baseURL):
+			fmt.Fprintf(os.Stderr, "note: not sending the stored JuliaHub token over plain http to %s; the request goes out unauthenticated\n", baseURL)
+		case err == nil:
+			bearer = token.IDToken
+		default:
+			fmt.Fprintf(os.Stderr, "note: no stored JuliaHub token; sending an unauthenticated request to %s\n", baseURL)
+		}
+	} else {
+		bearer = tokenForServer(strings.TrimPrefix(baseURL, "https://"))
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
-	return postSearchWithToken(client, baseURL, kind, bearer, body)
+	results, truncated, err := postSearchWithToken(client, baseURL, kind, bearer, body)
+	if bearer == "" {
+		addLoginHint(err, strings.TrimPrefix(baseURL, "https://"))
+	}
+	return results, truncated, err
+}
+
+// addLoginHint marks a 401/403 to an unauthenticated search with how to log
+// in to host.
+func addLoginHint(err error, host string) {
+	var se *searchError
+	if errors.As(err, &se) && (se.Status == http.StatusUnauthorized || se.Status == http.StatusForbidden) {
+		se.LoginHint = fmt.Sprintf("this server requires a login: run 'jh auth login -s %s'", host)
+	}
+}
+
+// --- which token to send ---
+
+// loginMatchesServer reports whether a stored login (its server= value)
+// belongs to host. A login stored as auth.<host> (the dex host of a
+// JuliaHub.com-style install) belongs to <host> too.
+func loginMatchesServer(loginServer, host string) bool {
+	if loginServer == "" || host == "" {
+		return false
+	}
+	login, h := normalizeServer(loginServer), normalizeServer(host)
+	return login == h || login == "auth."+h
+}
+
+// chooseToken is the decision behind tokenForServer: the ID token of the
+// stored login if it belongs to host and is (or can be made) valid, else no
+// token, plus a note for stderr explaining why none is sent (empty when there
+// is no stored login at all — anonymous use needs no comment).
+func chooseToken(host string, stored *StoredToken, readErr error, ensureValid func() (*StoredToken, error)) (token, note string) {
+	if readErr != nil || stored == nil {
+		return "", ""
+	}
+	if !loginMatchesServer(stored.Server, host) {
+		return "", fmt.Sprintf("note: the stored JuliaHub login is for %s, not %s; searching without it (run 'jh auth login -s %s' to log in there)", stored.Server, host, host)
+	}
+	valid, err := ensureValid()
+	if err != nil {
+		return "", fmt.Sprintf("note: the stored login for %s could not be refreshed (%v); searching without it", host, err)
+	}
+	return valid.IDToken, ""
+}
+
+var (
+	tokenNotesMu sync.Mutex
+	tokenNotes   = map[string]bool{}
+)
+
+// tokenForServer returns the token to send to host (possibly none), printing
+// chooseToken's note to stderr at most once per process.
+func tokenForServer(host string) string {
+	stored, readErr := readStoredToken()
+	token, note := chooseToken(host, stored, readErr, ensureValidToken)
+	if note != "" {
+		tokenNotesMu.Lock()
+		if !tokenNotes[note] {
+			tokenNotes[note] = true
+			fmt.Fprintln(os.Stderr, note)
+		}
+		tokenNotesMu.Unlock()
+	}
+	return token
 }
 
 // --- package / registry filter resolution ---
@@ -437,8 +524,8 @@ func packageUUIDsByName(pkgs []RESTPackage, name string) []string {
 	return dedupeStrings(uuids)
 }
 
-// lookupPackageUUIDs resolves one package name to its UUID(s): /packages/info
-// first, then the GraphQL package search, mirroring getPackageInfo's fallback
+// lookupPackageUUIDs resolves one package name to its UUID(s): the REST
+// package listing (packagesInfoPath) first, then the GraphQL package search, mirroring getPackageInfo's fallback
 // for installs without the REST endpoint.
 func lookupPackageUUIDs(server, name string) ([]string, error) {
 	pkgs, _, restErr := fetchRESTPackages(server, name, 100, 0, nil)
@@ -470,7 +557,7 @@ func packageUUIDsByNameGQL(pkgs []Package, name string) []string {
 }
 
 // resolveSearchPackages turns --package values into the UUID list the search
-// API expects. UUIDs pass through; names are looked up via /packages/info on
+// API expects. UUIDs pass through; names are looked up via the package listing on
 // server (a host, not a URL — the lookup is unavailable against a local
 // http:// search service, where UUIDs must be given).
 func resolveSearchPackages(server string, values []string, localOnly bool) ([]string, error) {

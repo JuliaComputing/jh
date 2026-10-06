@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -300,59 +301,141 @@ func buildRegistryIDToName(ids []int, names []string) map[int]string {
 	return m
 }
 
-// fetchRESTPackages calls the /packages/info endpoint and returns raw results and total count.
-func fetchRESTPackages(server, search string, limit, offset int, registryNames []string) ([]RESTPackage, int, error) {
-	token, err := ensureValidToken()
-	if err != nil {
-		return nil, 0, fmt.Errorf("authentication required: %w", err)
-	}
+// packagesInfoPath is the package listing endpoint behind the web UI's package
+// pages. It pages with pagination[page]/[per_page] (1-based pages, at most
+// packagesInfoMaxPerPage rows each) rather than limit/offset.
+const (
+	packagesInfoPath       = "/api/v1/ui/packages/info"
+	packagesInfoMaxPerPage = 100
+)
 
-	url := fmt.Sprintf("https://%s/packages/info", server)
-	req, err := http.NewRequest("GET", url, nil)
+// restPage is one page request against packagesInfoPath.
+type restPage struct {
+	Page    int
+	PerPage int
+}
+
+// planRESTPages maps the CLI's limit/offset window onto the pages that cover
+// it, all of one size: min(limit, packagesInfoMaxPerPage). The window starts
+// skip rows into the first page; an offset that is not a multiple of the page
+// size costs one extra page.
+func planRESTPages(limit, offset int) (pages []restPage, skip int) {
+	if limit <= 0 {
+		limit = 10
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	per := min(limit, packagesInfoMaxPerPage)
+	first := offset / per
+	last := (offset + limit - 1) / per
+	for p := first; p <= last; p++ {
+		pages = append(pages, restPage{Page: p + 1, PerPage: per})
+	}
+	return pages, offset - first*per
+}
+
+// buildPackagesInfoQuery returns the query string for one page. With a search
+// term the results are ordered by the server's relevance score (exact name >
+// prefix > substring, then stars), like the GraphQL search; without one, by
+// stars (the server's default). Name breaks ties: packages of one repository
+// share a score, and without a tiebreak their order changes between requests,
+// so consecutive pages could repeat or skip rows.
+func buildPackagesInfoQuery(search string, registryNames []string, page restPage) url.Values {
+	q := url.Values{}
+	q.Set("sorts[0]", "-stargazers_count")
+	if search != "" {
+		q.Set("name", search)
+		q.Set("sorts[0]", "-score")
+	}
+	q.Set("sorts[1]", "name")
+	if len(registryNames) > 0 {
+		q.Set("registries", strings.Join(registryNames, ","))
+	}
+	q.Set("pagination[type]", "offset")
+	q.Set("pagination[page]", fmt.Sprintf("%d", page.Page))
+	q.Set("pagination[per_page]", fmt.Sprintf("%d", page.PerPage))
+	return q
+}
+
+// fetchRESTPackages lists packages matching search via packagesInfoPath and
+// returns the limit/offset window and the total match count.
+//
+// The listing is public on JuliaHub.com-style installs, so the stored login's
+// token is sent only when it belongs to server (tokenForServer); enterprise
+// installs answer 401 without one.
+func fetchRESTPackages(server, search string, limit, offset int, registryNames []string) ([]RESTPackage, int, error) {
+	token := tokenForServer(server)
+	client := &http.Client{Timeout: 30 * time.Second}
+	pkgs, total, err := fetchRESTPackagesFrom(client, "https://"+server, token, search, limit, offset, registryNames)
+	if err != nil && token == "" && strings.Contains(err.Error(), "status 401") {
+		err = fmt.Errorf("%w (this server requires a login: run 'jh auth login -s %s')", err, server)
+	}
+	return pkgs, total, err
+}
+
+// fetchRESTPackagesFrom is the testable core of fetchRESTPackages (client,
+// base URL and token are injected; an empty token sends no Authorization).
+func fetchRESTPackagesFrom(client *http.Client, baseURL, token, search string, limit, offset int, registryNames []string) ([]RESTPackage, int, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	pages, skip := planRESTPages(limit, offset)
+	var all []RESTPackage
+	total := 0
+	for _, page := range pages {
+		pkgs, t, err := fetchPackagesInfoPage(client, baseURL, token, buildPackagesInfoQuery(search, registryNames, page))
+		if err != nil {
+			return nil, 0, err
+		}
+		total = t
+		all = append(all, pkgs...)
+		if len(pkgs) < page.PerPage {
+			break // last page
+		}
+	}
+	if skip >= len(all) {
+		return []RESTPackage{}, total, nil
+	}
+	all = all[skip:]
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	return all, total, nil
+}
+
+func fetchPackagesInfoPage(client *http.Client, baseURL, token string, q url.Values) ([]RESTPackage, int, error) {
+	req, err := http.NewRequest("GET", baseURL+packagesInfoPath+"?"+q.Encode(), nil)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to create request: %w", err)
 	}
-
-	q := req.URL.Query()
-	if search != "" {
-		q.Add("name", search)
+	if token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
 	}
-	if limit > 0 {
-		q.Add("limit", fmt.Sprintf("%d", limit))
-	}
-	if offset > 0 {
-		q.Add("offset", fmt.Sprintf("%d", offset))
-	}
-	if len(registryNames) > 0 {
-		q.Add("registries", strings.Join(registryNames, ","))
-	}
-	req.URL.RawQuery = q.Encode()
-
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
 	req.Header.Set("Accept", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to make request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, 0, fmt.Errorf("API request failed (status %d): %s", resp.StatusCode, string(body))
-	}
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to read response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		msg := strings.TrimSpace(string(body))
+		if strings.HasPrefix(msg, "<") {
+			msg = http.StatusText(resp.StatusCode) // an HTML error page from the web server
+		}
+		return nil, 0, fmt.Errorf("API request failed (status %d): %s", resp.StatusCode, msg)
 	}
 
 	var response PackageRESTListResponse
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, 0, fmt.Errorf("failed to parse response: %w", err)
 	}
-
 	return response.Packages, response.Meta.Total, nil
 }
 
@@ -517,9 +600,10 @@ func fetchPackagesGraphQL(params PackageSearchParams) ([]packageInfo, int, error
 func searchPackages(params PackageSearchParams) error {
 	infos, total, err := fetchPackagesREST(params)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: REST package search failed (%v); falling back to GraphQL\n", err)
+		restErr := err
+		fmt.Fprintf(os.Stderr, "warning: REST package search failed (%v); falling back to GraphQL\n", restErr)
 		if infos, total, err = fetchPackagesGraphQL(params); err != nil {
-			return err
+			return fmt.Errorf("%v; GraphQL fallback: %w", restErr, err)
 		}
 	}
 	return emitPackages(params, infos, total)
@@ -607,38 +691,50 @@ func getPackageInfoGraphQL(server, packageName string, registryIDs []int, regist
 	return nil
 }
 
-func getPackageDependencies(server string, packageName string, registryName string, showIndirect bool) error {
-	var targetRegistry string
-	if registryName != "" {
-		targetRegistry = registryName
-	} else {
-		allRegistries, err := fetchRegistries(server)
-		if err != nil {
-			return fmt.Errorf("failed to fetch registries: %w", err)
-		}
-		var registryIDs []int
-		for _, reg := range allRegistries {
-			registryIDs = append(registryIDs, reg.RegistryID)
-		}
-		gqlPkgs, err := fetchGraphQLPackages(server, packageName, 100, 0, registryIDs)
-		if err != nil {
-			return fmt.Errorf("failed to search for package %q: %w", packageName, err)
-		}
-		for i := range gqlPkgs {
-			if strings.EqualFold(gqlPkgs[i].Name, packageName) {
-				if gqlPkgs[i].RegistryMap != nil {
-					for _, reg := range allRegistries {
-						if reg.RegistryID == gqlPkgs[i].RegistryMap.RegistryID {
-							targetRegistry = reg.Name
-							break
-						}
-					}
-				}
-				break
+// findPackageRegistry returns the registry of the package named packageName
+// (exact, case-insensitive): from the REST package listing, or, when that is
+// unavailable, from the GraphQL package search.
+func findPackageRegistry(server, packageName string) (string, error) {
+	pkgs, _, restErr := fetchRESTPackages(server, packageName, 100, 0, nil)
+	if restErr == nil {
+		for _, p := range pkgs {
+			if strings.EqualFold(p.Name, packageName) && p.Registry != "" {
+				return p.Registry, nil
 			}
 		}
-		if targetRegistry == "" {
-			return fmt.Errorf("package not found: %s", packageName)
+		return "", fmt.Errorf("package not found: %s", packageName)
+	}
+
+	allRegistries, err := fetchRegistries(server)
+	if err != nil {
+		return "", fmt.Errorf("failed to search for package %q: %v; failed to fetch registries: %w", packageName, restErr, err)
+	}
+	var registryIDs []int
+	for _, reg := range allRegistries {
+		registryIDs = append(registryIDs, reg.RegistryID)
+	}
+	gqlPkgs, err := fetchGraphQLPackages(server, packageName, 100, 0, registryIDs)
+	if err != nil {
+		return "", fmt.Errorf("failed to search for package %q: %v; GraphQL fallback: %w", packageName, restErr, err)
+	}
+	for i := range gqlPkgs {
+		if strings.EqualFold(gqlPkgs[i].Name, packageName) && gqlPkgs[i].RegistryMap != nil {
+			for _, reg := range allRegistries {
+				if reg.RegistryID == gqlPkgs[i].RegistryMap.RegistryID {
+					return reg.Name, nil
+				}
+			}
+		}
+	}
+	return "", fmt.Errorf("package not found: %s", packageName)
+}
+
+func getPackageDependencies(server string, packageName string, registryName string, showIndirect bool) error {
+	targetRegistry := registryName
+	if targetRegistry == "" {
+		var err error
+		if targetRegistry, err = findPackageRegistry(server, packageName); err != nil {
+			return err
 		}
 	}
 

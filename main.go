@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -270,6 +271,7 @@ refresh them proactively.`,
 		fmt.Printf("Refreshing token for server: %s\n", storedToken.Server)
 
 		// Refresh the token
+		rememberAuthServerFromToken(storedToken.Server, storedToken.AccessToken)
 		refreshedToken, err := refreshToken(storedToken.Server, storedToken.RefreshToken)
 		if err != nil {
 			fmt.Printf("Failed to refresh token: %v\n", err)
@@ -929,6 +931,18 @@ Use --verbose flag for comprehensive output, or get a concise summary by default
 // `jh search packages`: resolve the --registries filter, then search (REST
 // first, GraphQL fallback), printing a table or, with --json, only the JSON
 // document on stdout.
+// splitRegistryNames splits a comma-separated --registries value, dropping
+// empty entries.
+func splitRegistryNames(csv string) []string {
+	var names []string
+	for _, n := range strings.Split(csv, ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			names = append(names, n)
+		}
+	}
+	return names
+}
+
 func runPackageSearch(cmd *cobra.Command, args []string) {
 	server, err := getServerFromFlagOrConfig(cmd)
 	if err != nil {
@@ -948,7 +962,12 @@ func runPackageSearch(cmd *cobra.Command, args []string) {
 	registryNamesStr, _ := cmd.Flags().GetString("registries")
 
 	registryIDs, registryNames, err := resolveRegistries(server, registryNamesStr)
-	if err != nil {
+	if errors.Is(err, errRegistryFetch) {
+		// Listing registries needs a login, but the REST package listing is
+		// public on JuliaHub.com-style installs: search with the names as
+		// given (only the GraphQL fallback needs registry IDs).
+		registryIDs, registryNames = nil, splitRegistryNames(registryNamesStr)
+	} else if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
@@ -1152,18 +1171,26 @@ var searchDocsCmd = &cobra.Command{
 query. Results are packages ranked by relevance score, each with the matching
 documentation sections.
 
---threshold drops results scoring below the given value; --strict-phrase
-requires the query to appear as a phrase rather than as separate terms.`,
+--threshold keeps only results scoring at least that fraction (0-1) of the
+best result's score. --strict-phrase requires the query to appear as a phrase;
+--strict-phrase=false matches documents containing its words separately.
+Without either flag the server's defaults apply (on a default install: a
+threshold of 0.15 and strict phrase matching).`,
 	Example: `  jh search docs "read a CSV file into a DataFrame"
   jh search docs "differential equations" --registry General --limit 5
   jh search docs "sparse matrix" --threshold 0.5 --json
-  jh search docs "group by" --strict-phrase --package DataFrames`,
+  jh search docs "group by" --strict-phrase --package DataFrames
+  jh search docs "sparse matrix factorization" --strict-phrase=false`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		baseURL, server := searchTarget(cmd)
 		packages, _ := cmd.Flags().GetStringArray("package")
 		registries, _ := cmd.Flags().GetStringArray("registry")
-		strictPhrase, _ := cmd.Flags().GetBool("strict-phrase")
+		var strictPhrase *bool
+		if cmd.Flags().Changed("strict-phrase") {
+			v, _ := cmd.Flags().GetBool("strict-phrase")
+			strictPhrase = &v
+		}
 		limit, _ := cmd.Flags().GetInt("limit")
 		asJSON, _ := cmd.Flags().GetBool("json")
 		var threshold *float64
@@ -2642,8 +2669,8 @@ func init() {
 	searchCodeCmd.Flags().Bool("ignore-case", false, "Case-insensitive match")
 	searchSymbolsCmd.Flags().StringArray("type", nil, "Symbol kind: function, type, macro or module (repeatable)")
 	searchSymbolsCmd.Flags().StringArray("usage", nil, "Occurrence kind: define or use (repeatable)")
-	searchDocsCmd.Flags().Float64("threshold", 0, "Minimum relevance score to include a result")
-	searchDocsCmd.Flags().Bool("strict-phrase", false, "Require the query to appear as a phrase")
+	searchDocsCmd.Flags().Float64("threshold", 0, "Keep results scoring at least this fraction (0-1) of the best result's score (default: server setting)")
+	searchDocsCmd.Flags().Bool("strict-phrase", false, "Require the query to appear as a phrase; --strict-phrase=false matches its words separately (default: server setting)")
 	searchPackagesCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	searchPackagesCmd.Flags().Int("limit", 10, "Maximum number of results to return")
 	searchPackagesCmd.Flags().Int("offset", 0, "Number of results to skip")

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -53,10 +54,14 @@ func fetchRegistries(server string) ([]Registry, error) {
 // parallel registry ID and name lists the package commands pass on (IDs for
 // the GraphQL fallback, names for REST). An empty csv selects every registry;
 // names are matched case-insensitively and an unknown name is an error.
+// errRegistryFetch wraps resolveRegistries failures to list the registries at
+// all (as opposed to a requested name not being found).
+var errRegistryFetch = errors.New("Failed to fetch registries")
+
 func resolveRegistries(server, csv string) ([]int, []string, error) {
 	allRegistries, err := fetchRegistries(server)
 	if err != nil {
-		return nil, nil, fmt.Errorf("Failed to fetch registries: %w", err)
+		return nil, nil, fmt.Errorf("%w: %w", errRegistryFetch, err)
 	}
 
 	var ids []int

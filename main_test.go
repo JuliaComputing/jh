@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -164,5 +165,15 @@ func TestWriteAndReadConfigFile(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0600 {
 		t.Errorf("Config file permissions should be 0600, got %o", info.Mode().Perm())
+	}
+}
+
+func TestSplitRegistryNames(t *testing.T) {
+	got := splitRegistryNames(" General, ,MyReg ,")
+	if want := []string{"General", "MyReg"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if got := splitRegistryNames(""); got != nil {
+		t.Errorf("empty -> %v, want nil", got)
 	}
 }
