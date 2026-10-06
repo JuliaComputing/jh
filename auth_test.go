@@ -205,8 +205,13 @@ func TestPickAuthServer(t *testing.T) {
 
 func TestDexDiscoverable(t *testing.T) {
 	mux := http.NewServeMux()
+	var base string
 	mux.HandleFunc("/ok/dex/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"issuer":"https://x/dex"}`))
+		w.Write([]byte(`{"issuer":"` + base + `/ok/dex/"}`))
+	})
+	// A host serving some other host's document (e.g. a wildcard ingress).
+	mux.HandleFunc("/relay/dex/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"issuer":"https://elsewhere.example/dex"}`))
 	})
 	mux.HandleFunc("/html/dex/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<html>bad gateway</html>`))
@@ -216,7 +221,8 @@ func TestDexDiscoverable(t *testing.T) {
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
-	for path, want := range map[string]bool{"/ok": true, "/html": false, "/noissuer": false, "/missing": false} {
+	base = srv.URL
+	for path, want := range map[string]bool{"/ok": true, "/relay": false, "/html": false, "/noissuer": false, "/missing": false} {
 		if got := dexDiscoverable(srv.Client(), srv.URL+path); got != want {
 			t.Errorf("dexDiscoverable(%s) = %v, want %v", path, got, want)
 		}

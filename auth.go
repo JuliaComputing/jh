@@ -234,8 +234,10 @@ func rememberAuthServerFromToken(server, accessToken string) {
 	}
 }
 
-// dexDiscoverable reports whether baseURL serves a dex OIDC discovery
-// document (HTTP 200, JSON with an issuer).
+// dexDiscoverable reports whether baseURL serves its own dex: an OIDC
+// discovery document (HTTP 200) whose issuer is baseURL/dex, as OIDC requires.
+// A host that merely relays another host's document (a wildcard ingress, say)
+// does not count.
 func dexDiscoverable(client *http.Client, baseURL string) bool {
 	resp, err := client.Get(baseURL + "/dex/.well-known/openid-configuration")
 	if err != nil {
@@ -248,7 +250,10 @@ func dexDiscoverable(client *http.Client, baseURL string) bool {
 	var doc struct {
 		Issuer string `json:"issuer"`
 	}
-	return json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&doc) == nil && doc.Issuer != ""
+	if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&doc) != nil {
+		return false
+	}
+	return strings.TrimSuffix(doc.Issuer, "/") == baseURL+"/dex"
 }
 
 func deviceFlow(server string) (*TokenResponse, error) {

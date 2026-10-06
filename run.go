@@ -47,7 +47,9 @@ func createJuliaAuthFile(server string, token *StoredToken) error {
 		return fmt.Errorf("failed to decode JWT token: %w", err)
 	}
 
-	// Calculate refresh URL
+	// Calculate refresh URL. The token's issuer names the auth host, so no
+	// discovery probe is needed for a token we already hold.
+	rememberAuthServerFromToken(server, token.AccessToken)
 	refreshURL := fmt.Sprintf("https://%s/dex/token", authServerFor(server))
 
 	// Write TOML content
