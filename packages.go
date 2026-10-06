@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -300,59 +301,132 @@ func buildRegistryIDToName(ids []int, names []string) map[int]string {
 	return m
 }
 
-// fetchRESTPackages calls the /packages/info endpoint and returns raw results and total count.
+// packagesInfoPath is the package listing endpoint behind the web UI's package
+// pages. It pages with pagination[page]/[per_page] (1-based pages, at most
+// packagesInfoMaxPerPage rows each) rather than limit/offset.
+const (
+	packagesInfoPath       = "/api/v1/ui/packages/info"
+	packagesInfoMaxPerPage = 100
+)
+
+// restPage is one page request against packagesInfoPath.
+type restPage struct {
+	Page    int
+	PerPage int
+}
+
+// planRESTPages maps the CLI's limit/offset window onto the pages that cover
+// it, all of one size: min(limit, packagesInfoMaxPerPage). The window starts
+// skip rows into the first page; an offset that is not a multiple of the page
+// size costs one extra page.
+func planRESTPages(limit, offset int) (pages []restPage, skip int) {
+	if limit <= 0 {
+		limit = 10
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	per := min(limit, packagesInfoMaxPerPage)
+	first := offset / per
+	last := (offset + limit - 1) / per
+	for p := first; p <= last; p++ {
+		pages = append(pages, restPage{Page: p + 1, PerPage: per})
+	}
+	return pages, offset - first*per
+}
+
+// buildPackagesInfoQuery returns the query string for one page. With a search
+// term the results are ordered by the server's relevance score (exact name >
+// prefix > substring, then stars), like the GraphQL search; without one, by
+// stars (the server's default). Name breaks ties: packages of one repository
+// share a score, and without a tiebreak their order changes between requests,
+// so consecutive pages could repeat or skip rows.
+func buildPackagesInfoQuery(search string, registryNames []string, page restPage) url.Values {
+	q := url.Values{}
+	q.Set("sorts[0]", "-stargazers_count")
+	if search != "" {
+		q.Set("name", search)
+		q.Set("sorts[0]", "-score")
+	}
+	q.Set("sorts[1]", "name")
+	if len(registryNames) > 0 {
+		q.Set("registries", strings.Join(registryNames, ","))
+	}
+	q.Set("pagination[type]", "offset")
+	q.Set("pagination[page]", fmt.Sprintf("%d", page.Page))
+	q.Set("pagination[per_page]", fmt.Sprintf("%d", page.PerPage))
+	return q
+}
+
+// fetchRESTPackages lists packages matching search via packagesInfoPath and
+// returns the limit/offset window and the total match count.
 func fetchRESTPackages(server, search string, limit, offset int, registryNames []string) ([]RESTPackage, int, error) {
 	token, err := ensureValidToken()
 	if err != nil {
 		return nil, 0, fmt.Errorf("authentication required: %w", err)
 	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	return fetchRESTPackagesFrom(client, "https://"+server, token.IDToken, search, limit, offset, registryNames)
+}
 
-	url := fmt.Sprintf("https://%s/packages/info", server)
-	req, err := http.NewRequest("GET", url, nil)
+// fetchRESTPackagesFrom is the testable core of fetchRESTPackages (client,
+// base URL and token are injected; an empty token sends no Authorization).
+func fetchRESTPackagesFrom(client *http.Client, baseURL, token, search string, limit, offset int, registryNames []string) ([]RESTPackage, int, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	pages, skip := planRESTPages(limit, offset)
+	var all []RESTPackage
+	total := 0
+	for _, page := range pages {
+		pkgs, t, err := fetchPackagesInfoPage(client, baseURL, token, buildPackagesInfoQuery(search, registryNames, page))
+		if err != nil {
+			return nil, 0, err
+		}
+		total = t
+		all = append(all, pkgs...)
+		if len(pkgs) < page.PerPage {
+			break // last page
+		}
+	}
+	if skip >= len(all) {
+		return []RESTPackage{}, total, nil
+	}
+	all = all[skip:]
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	return all, total, nil
+}
+
+func fetchPackagesInfoPage(client *http.Client, baseURL, token string, q url.Values) ([]RESTPackage, int, error) {
+	req, err := http.NewRequest("GET", baseURL+packagesInfoPath+"?"+q.Encode(), nil)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to create request: %w", err)
 	}
-
-	q := req.URL.Query()
-	if search != "" {
-		q.Add("name", search)
+	if token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
 	}
-	if limit > 0 {
-		q.Add("limit", fmt.Sprintf("%d", limit))
-	}
-	if offset > 0 {
-		q.Add("offset", fmt.Sprintf("%d", offset))
-	}
-	if len(registryNames) > 0 {
-		q.Add("registries", strings.Join(registryNames, ","))
-	}
-	req.URL.RawQuery = q.Encode()
-
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
 	req.Header.Set("Accept", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to make request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, 0, fmt.Errorf("API request failed (status %d): %s", resp.StatusCode, string(body))
-	}
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to read response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, 0, fmt.Errorf("API request failed (status %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	var response PackageRESTListResponse
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, 0, fmt.Errorf("failed to parse response: %w", err)
 	}
-
 	return response.Packages, response.Meta.Total, nil
 }
 

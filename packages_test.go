@@ -1,7 +1,13 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -100,4 +106,87 @@ func TestBuildGraphQLPackageVariables(t *testing.T) {
 			t.Errorf("registries = %v, want {3,7}", v["registries"])
 		}
 	})
+}
+
+func TestPlanRESTPages(t *testing.T) {
+	cases := []struct {
+		limit, offset int
+		pages         []restPage
+		skip          int
+	}{
+		{10, 0, []restPage{{1, 10}}, 0},
+		{10, 20, []restPage{{3, 10}}, 0},
+		{10, 15, []restPage{{2, 10}, {3, 10}}, 5},
+		{250, 0, []restPage{{1, 100}, {2, 100}, {3, 100}}, 0},
+		{0, 0, []restPage{{1, 10}}, 0},
+	}
+	for _, c := range cases {
+		pages, skip := planRESTPages(c.limit, c.offset)
+		if !reflect.DeepEqual(pages, c.pages) || skip != c.skip {
+			t.Errorf("planRESTPages(%d, %d) = %v, %d; want %v, %d", c.limit, c.offset, pages, skip, c.pages, c.skip)
+		}
+	}
+}
+
+func TestBuildPackagesInfoQuery(t *testing.T) {
+	q := buildPackagesInfoQuery("plots", []string{"General", "MyReg"}, restPage{Page: 2, PerPage: 25})
+	want := "name=plots&pagination%5Bpage%5D=2&pagination%5Bper_page%5D=25&pagination%5Btype%5D=offset&registries=General%2CMyReg&sorts%5B0%5D=-score&sorts%5B1%5D=name"
+	if got := q.Encode(); got != want {
+		t.Errorf("query = %s\nwant    %s", got, want)
+	}
+	// Without a search term: most-starred first, still with the name tiebreak.
+	q = buildPackagesInfoQuery("", nil, restPage{1, 10})
+	if q.Has("name") || q.Get("sorts[0]") != "-stargazers_count" || q.Get("sorts[1]") != "name" {
+		t.Errorf("unexpected params without a search term: %s", q.Encode())
+	}
+}
+
+func TestFetchRESTPackagesFromWindow(t *testing.T) {
+	// 23 packages P00..P22 served in pages; ask for 10 starting at offset 15.
+	var gotAuth []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != packagesInfoPath {
+			http.NotFound(w, r)
+			return
+		}
+		gotAuth = append(gotAuth, r.Header.Get("Authorization"))
+		page, _ := strconv.Atoi(r.URL.Query().Get("pagination[page]"))
+		per, _ := strconv.Atoi(r.URL.Query().Get("pagination[per_page]"))
+		var pkgs []RESTPackage
+		for i := (page - 1) * per; i < page*per && i < 23; i++ {
+			pkgs = append(pkgs, RESTPackage{Name: fmt.Sprintf("P%02d", i)})
+		}
+		json.NewEncoder(w).Encode(PackageRESTListResponse{Packages: pkgs, Meta: struct {
+			Total int `json:"total"`
+		}{23}})
+	}))
+	defer srv.Close()
+
+	pkgs, total, err := fetchRESTPackagesFrom(srv.Client(), srv.URL, "", "", 10, 15, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, p := range pkgs {
+		names = append(names, p.Name)
+	}
+	want := []string{"P15", "P16", "P17", "P18", "P19", "P20", "P21", "P22"}
+	if !reflect.DeepEqual(names, want) || total != 23 {
+		t.Errorf("got %v (total %d), want %v (total 23)", names, total, want)
+	}
+	for _, a := range gotAuth {
+		if a != "" {
+			t.Errorf("empty token should send no Authorization header, got %q", a)
+		}
+	}
+}
+
+func TestFetchRESTPackagesFromHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "nope", http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	if _, _, err := fetchRESTPackagesFrom(srv.Client(), srv.URL, "t", "x", 10, 0, nil); err == nil || !strings.Contains(err.Error(), "status 401") {
+		t.Errorf("want a status 401 error, got %v", err)
+	}
 }

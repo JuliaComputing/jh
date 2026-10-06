@@ -437,8 +437,8 @@ func packageUUIDsByName(pkgs []RESTPackage, name string) []string {
 	return dedupeStrings(uuids)
 }
 
-// lookupPackageUUIDs resolves one package name to its UUID(s): /packages/info
-// first, then the GraphQL package search, mirroring getPackageInfo's fallback
+// lookupPackageUUIDs resolves one package name to its UUID(s): the REST
+// package listing (packagesInfoPath) first, then the GraphQL package search, mirroring getPackageInfo's fallback
 // for installs without the REST endpoint.
 func lookupPackageUUIDs(server, name string) ([]string, error) {
 	pkgs, _, restErr := fetchRESTPackages(server, name, 100, 0, nil)
@@ -470,7 +470,7 @@ func packageUUIDsByNameGQL(pkgs []Package, name string) []string {
 }
 
 // resolveSearchPackages turns --package values into the UUID list the search
-// API expects. UUIDs pass through; names are looked up via /packages/info on
+// API expects. UUIDs pass through; names are looked up via the package listing on
 // server (a host, not a URL — the lookup is unavailable against a local
 // http:// search service, where UUIDs must be given).
 func resolveSearchPackages(server string, values []string, localOnly bool) ([]string, error) {
