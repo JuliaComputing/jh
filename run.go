@@ -48,13 +48,7 @@ func createJuliaAuthFile(server string, token *StoredToken) error {
 	}
 
 	// Calculate refresh URL
-	var authServer string
-	if server == "juliahub.com" {
-		authServer = "auth.juliahub.com"
-	} else {
-		authServer = server
-	}
-	refreshURL := fmt.Sprintf("https://%s/dex/token", authServer)
+	refreshURL := fmt.Sprintf("https://%s/dex/token", authServerFor(server))
 
 	// Write TOML content
 	content := fmt.Sprintf(`expires_at = %d

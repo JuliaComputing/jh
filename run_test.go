@@ -49,6 +49,7 @@ func TestCreateJuliaAuthFile(t *testing.T) {
 	}
 
 	t.Run("writes auth.toml for a custom server", func(t *testing.T) {
+		stubAuthDiscovery(t, func(server string) string { return server })
 		if err := createJuliaAuthFile("nightly.juliahub.dev", token); err != nil {
 			t.Fatalf("createJuliaAuthFile: %v", err)
 		}
@@ -69,6 +70,20 @@ func TestCreateJuliaAuthFile(t *testing.T) {
 			if !strings.Contains(content, want) {
 				t.Errorf("auth.toml missing %q\n---\n%s", want, content)
 			}
+		}
+	})
+
+	t.Run("JuliaHub.com-style server uses its auth. host", func(t *testing.T) {
+		stubAuthDiscovery(t, func(server string) string { return "auth." + server })
+		if err := createJuliaAuthFile("nightly-juliahub.juliahub.dev", token); err != nil {
+			t.Fatalf("createJuliaAuthFile: %v", err)
+		}
+		data, err := os.ReadFile(filepath.Join(depot, "servers", "nightly-juliahub.juliahub.dev", "auth.toml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := `refresh_url = "https://auth.nightly-juliahub.juliahub.dev/dex/token"`; !strings.Contains(string(data), want) {
+			t.Errorf("auth.toml missing %q\n---\n%s", want, data)
 		}
 	})
 

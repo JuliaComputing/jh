@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -151,13 +152,107 @@ func readStoredToken() (*StoredToken, error) {
 	return token, nil
 }
 
-func deviceFlow(server string) (*TokenResponse, error) {
-	var authServer string
+// authServerCache remembers discovered auth (dex) hosts for this process.
+var (
+	authServerMu    sync.Mutex
+	authServerCache = map[string]string{}
+)
+
+// authServerFor returns the host that serves the dex OIDC endpoints for a
+// JuliaHub server. Enterprise installs serve dex at <server>/dex; JuliaHub.com
+// style installs (juliahub.com included) serve it from auth.<server>/dex.
+// juliahub.com is known; for any other server both candidates are probed via
+// the OIDC discovery document, falling back to the server itself.
+func authServerFor(server string) string {
 	if server == "juliahub.com" {
-		authServer = "auth.juliahub.com"
-	} else {
-		authServer = server
+		return "auth.juliahub.com"
 	}
+	authServerMu.Lock()
+	defer authServerMu.Unlock()
+	if host, ok := authServerCache[server]; ok {
+		return host
+	}
+	host := discoverAuthServer(server)
+	authServerCache[server] = host
+	return host
+}
+
+// discoverAuthServer is a variable so tests can avoid the network.
+var discoverAuthServer = func(server string) string {
+	client := &http.Client{Timeout: 10 * time.Second}
+	return pickAuthServer(server, func(host string) bool {
+		return dexDiscoverable(client, "https://"+host)
+	})
+}
+
+// pickAuthServer returns the first of auth.<server>, server whose dex answers
+// discovery, else server. auth.<server> goes first because it is the cheap
+// probe either way: on JuliaHub.com-style installs it answers at once while
+// <server>/dex is slow to fail (a gateway error after several seconds), and on
+// enterprise installs the auth. name normally does not resolve at all.
+func pickAuthServer(server string, discoverable func(host string) bool) string {
+	var candidates []string
+	if !strings.HasPrefix(server, "auth.") {
+		candidates = append(candidates, "auth."+server)
+	}
+	candidates = append(candidates, server)
+	// Probe concurrently (a failing probe can take seconds), pick in order.
+	up := make([]bool, len(candidates))
+	var wg sync.WaitGroup
+	for i, host := range candidates {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			up[i] = discoverable(host)
+		}()
+	}
+	wg.Wait()
+	for i, host := range candidates {
+		if up[i] {
+			return host
+		}
+	}
+	return server
+}
+
+// rememberAuthServerFromToken records the auth host named by a stored token's
+// issuer (https://<host>/dex), so refreshing it needs no discovery probe. Only
+// an issuer on server itself or on auth.<server> is trusted.
+func rememberAuthServerFromToken(server, accessToken string) {
+	claims, err := decodeJWT(accessToken)
+	if err != nil {
+		return
+	}
+	u, err := url.Parse(claims.Issuer)
+	if err != nil || u.Scheme != "https" || strings.TrimSuffix(u.Path, "/") != "/dex" {
+		return
+	}
+	if host := u.Host; host == server || host == "auth."+server {
+		authServerMu.Lock()
+		authServerCache[server] = host
+		authServerMu.Unlock()
+	}
+}
+
+// dexDiscoverable reports whether baseURL serves a dex OIDC discovery
+// document (HTTP 200, JSON with an issuer).
+func dexDiscoverable(client *http.Client, baseURL string) bool {
+	resp, err := client.Get(baseURL + "/dex/.well-known/openid-configuration")
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	var doc struct {
+		Issuer string `json:"issuer"`
+	}
+	return json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&doc) == nil && doc.Issuer != ""
+}
+
+func deviceFlow(server string) (*TokenResponse, error) {
+	authServer := authServerFor(server)
 
 	deviceCodeURL := fmt.Sprintf("https://%s/dex/device/code", authServer)
 	tokenURL := fmt.Sprintf("https://%s/dex/token", authServer)
@@ -232,12 +327,7 @@ func deviceFlow(server string) (*TokenResponse, error) {
 }
 
 func refreshToken(server string, refreshToken string) (*TokenResponse, error) {
-	var authServer string
-	if server == "juliahub.com" {
-		authServer = "auth.juliahub.com"
-	} else {
-		authServer = server
-	}
+	authServer := authServerFor(server)
 
 	tokenURL := fmt.Sprintf("https://%s/dex/token", authServer)
 
@@ -294,6 +384,7 @@ func ensureValidToken() (*StoredToken, error) {
 		return nil, fmt.Errorf("access token expired and no refresh token available")
 	}
 
+	rememberAuthServerFromToken(storedToken.Server, storedToken.AccessToken)
 	refreshedToken, err := refreshToken(storedToken.Server, storedToken.RefreshToken)
 	if err != nil {
 		return nil, fmt.Errorf("failed to refresh token: %w", err)
