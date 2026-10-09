@@ -5,6 +5,7 @@ package e2e
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -84,8 +85,42 @@ func firstID(out string) string {
 // has no version to inspect or download, so status/download fail on it by
 // design and it cannot drive a happy-path test.
 func firstIDOfType(out, dtype string) string {
+	if entries := datasetEntriesOfType(out, dtype); len(entries) > 0 {
+		return entries[0].id
+	}
+	return ""
+}
+
+// smallestIDOfType is firstIDOfType restricted to entries whose listed size is
+// known and in (0, maxBytes], returning the smallest. Download tests use it so
+// they never pull whatever large blob another suite left behind on a shared
+// instance.
+func smallestIDOfType(out, dtype string, maxBytes int64) string {
+	best, bestSize := "", int64(-1)
+	for _, e := range datasetEntriesOfType(out, dtype) {
+		if e.size <= 0 || e.size > maxBytes {
+			continue
+		}
+		if bestSize < 0 || e.size < bestSize {
+			best, bestSize = e.id, e.size
+		}
+	}
+	return best
+}
+
+type datasetEntry struct {
+	id   string
+	size int64 // -1 when the entry has no "Size:" line
+}
+
+var reSizeLine = regexp.MustCompile(`(?m)^Size:\s*(\d+)\s*bytes\s*$`)
+
+// datasetEntriesOfType returns, in listing order, the `dataset list` entries of
+// type dtype with at least one uploaded version.
+func datasetEntriesOfType(out, dtype string) []datasetEntry {
 	typeRe := regexp.MustCompile(`(?m)^Type:\s*` + regexp.QuoteMeta(dtype) + `\s*$`)
 	verRe := regexp.MustCompile(`(?m)^Version:\s*v[1-9][0-9]*\s*$`)
+	var entries []datasetEntry
 	ids := reIDLine.FindAllStringSubmatchIndex(out, -1)
 	for i, loc := range ids {
 		end := len(out)
@@ -93,11 +128,18 @@ func firstIDOfType(out, dtype string) string {
 			end = ids[i+1][0]
 		}
 		entry := out[loc[0]:end]
-		if typeRe.MatchString(entry) && verRe.MatchString(entry) {
-			return out[loc[2]:loc[3]]
+		if !typeRe.MatchString(entry) || !verRe.MatchString(entry) {
+			continue
 		}
+		size := int64(-1)
+		if m := reSizeLine.FindStringSubmatch(entry); len(m) == 2 {
+			if n, err := strconv.ParseInt(m[1], 10, 64); err == nil {
+				size = n
+			}
+		}
+		entries = append(entries, datasetEntry{id: out[loc[2]:loc[3]], size: size})
 	}
-	return ""
+	return entries
 }
 
 // TestFirstIDOfType pins the listing-parse behaviour firstIDOfType relies on:
@@ -141,6 +183,52 @@ func TestFirstIDOfType(t *testing.T) {
 	}
 	if got := firstIDOfType("No datasets found", "Blob"); got != "" {
 		t.Errorf("firstIDOfType on empty listing = %q, want empty", got)
+	}
+}
+
+// TestSmallestIDOfType pins the download tests' dataset choice: the smallest
+// uploaded Blob within the cap, never one over it, one of unknown size, or an
+// empty one. Pure output parsing.
+func TestSmallestIDOfType(t *testing.T) {
+	listing := "Found 5 dataset(s):\n" +
+		"\n" +
+		"ID: 1aaaaaaa-0000-0000-0000-000000000001\n" +
+		"Name: large_blob\n" +
+		"Size: 1073741824 bytes\n" +
+		"Type: Blob\n" +
+		"Version: v1\n" +
+		"\n" +
+		"ID: 1aaaaaaa-0000-0000-0000-000000000002\n" +
+		"Name: medium\n" +
+		"Size: 4096 bytes\n" +
+		"Type: Blob\n" +
+		"Version: v3\n" +
+		"\n" +
+		"ID: 1aaaaaaa-0000-0000-0000-000000000003\n" +
+		"Name: tiny_tree\n" +
+		"Size: 10 bytes\n" +
+		"Type: BlobTree\n" +
+		"Version: v1\n" +
+		"\n" +
+		"ID: 1aaaaaaa-0000-0000-0000-000000000004\n" +
+		"Name: small\n" +
+		"Size: 51 bytes\n" +
+		"Type: Blob\n" +
+		"Version: v1\n" +
+		"\n" +
+		"ID: 1aaaaaaa-0000-0000-0000-000000000005\n" +
+		"Name: no_size_line\n" +
+		"Type: Blob\n" +
+		"Version: v1\n"
+
+	if got := smallestIDOfType(listing, "Blob", 10<<20); got != "1aaaaaaa-0000-0000-0000-000000000004" {
+		t.Errorf("smallestIDOfType(Blob) = %q, want the 51-byte Blob", got)
+	}
+	if got := smallestIDOfType(listing, "Blob", 50); got != "" {
+		t.Errorf("smallestIDOfType(Blob, cap 50) = %q, want empty (every Blob is over the cap or unsized)", got)
+	}
+	if got := firstIDOfType(listing, "Blob"); got != "1aaaaaaa-0000-0000-0000-000000000001" {
+		t.Errorf("firstIDOfType(Blob) = %q, want the first Blob regardless of size", got)
 	}
 }
 

@@ -50,15 +50,21 @@ func TestDatasetStatusFirst(t *testing.T) {
 	}
 }
 
-// TestDatasetDownloadFirst lists datasets, takes the first Blob-type one
-// with an uploaded version, downloads it to a temp path, and asserts the file was written and is
+// downloadSizeCap bounds the dataset TestDatasetDownloadFirst will fetch.
+// Shared instances keep large blobs left over by other suites, and the first
+// one listed can take longer than the command timeout to download.
+const downloadSizeCap = 20 << 20 // 20 MiB
+
+// TestDatasetDownloadFirst lists datasets, takes the smallest Blob-type one
+// with an uploaded version and a listed size within downloadSizeCap,
+// downloads it to a temp path, and asserts the file was written and is
 // non-empty.
 func TestDatasetDownloadFirst(t *testing.T) {
 	requireCreds(t)
 	list := runOK(t, "dataset", "list").combined()
-	id := firstIDOfType(list, "Blob")
+	id := smallestIDOfType(list, "Blob", downloadSizeCap)
 	if id == "" {
-		t.Skip("no Blob-type datasets with an uploaded version on this instance to download")
+		t.Skipf("no Blob-type datasets with an uploaded version of at most %d bytes on this instance to download", downloadSizeCap)
 	}
 
 	dest := filepath.Join(t.TempDir(), "dataset.bin")
