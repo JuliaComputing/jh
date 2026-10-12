@@ -341,6 +341,10 @@ func planRESTPages(limit, offset int) (pages []restPage, skip int) {
 // stars (the server's default). Name breaks ties: packages of one repository
 // share a score, and without a tiebreak their order changes between requests,
 // so consecutive pages could repeat or skip rows.
+//
+// Every sort key carries a direction sign: the API rejects unsigned keys
+// (`^[+-].+$`), and servers only honour the `-` form, so the tiebreak is
+// descending. Any fixed direction keeps the paging stable.
 func buildPackagesInfoQuery(search string, registryNames []string, page restPage) url.Values {
 	q := url.Values{}
 	q.Set("sorts[0]", "-stargazers_count")
@@ -348,7 +352,7 @@ func buildPackagesInfoQuery(search string, registryNames []string, page restPage
 		q.Set("name", search)
 		q.Set("sorts[0]", "-score")
 	}
-	q.Set("sorts[1]", "name")
+	q.Set("sorts[1]", "-name")
 	if len(registryNames) > 0 {
 		q.Set("registries", strings.Join(registryNames, ","))
 	}

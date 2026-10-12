@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -129,14 +131,29 @@ func TestPlanRESTPages(t *testing.T) {
 
 func TestBuildPackagesInfoQuery(t *testing.T) {
 	q := buildPackagesInfoQuery("plots", []string{"General", "MyReg"}, restPage{Page: 2, PerPage: 25})
-	want := "name=plots&pagination%5Bpage%5D=2&pagination%5Bper_page%5D=25&pagination%5Btype%5D=offset&registries=General%2CMyReg&sorts%5B0%5D=-score&sorts%5B1%5D=name"
+	want := "name=plots&pagination%5Bpage%5D=2&pagination%5Bper_page%5D=25&pagination%5Btype%5D=offset&registries=General%2CMyReg&sorts%5B0%5D=-score&sorts%5B1%5D=-name"
 	if got := q.Encode(); got != want {
 		t.Errorf("query = %s\nwant    %s", got, want)
 	}
 	// Without a search term: most-starred first, still with the name tiebreak.
 	q = buildPackagesInfoQuery("", nil, restPage{1, 10})
-	if q.Has("name") || q.Get("sorts[0]") != "-stargazers_count" || q.Get("sorts[1]") != "name" {
+	if q.Has("name") || q.Get("sorts[0]") != "-stargazers_count" || q.Get("sorts[1]") != "-name" {
 		t.Errorf("unexpected params without a search term: %s", q.Encode())
+	}
+	// The API's Sorts schema requires a direction sign on every key.
+	signed := regexp.MustCompile(`^[+-].+$`)
+	for _, search := range []string{"plots", ""} {
+		q = buildPackagesInfoQuery(search, nil, restPage{1, 10})
+		for key, vals := range q {
+			if !strings.HasPrefix(key, "sorts[") {
+				continue
+			}
+			for _, v := range vals {
+				if !signed.MatchString(v) {
+					t.Errorf("search %q: %s=%q does not match the API's sort pattern ^[+-].+$", search, key, v)
+				}
+			}
+		}
 	}
 }
 
