@@ -128,6 +128,9 @@ go run . package dependency CSV --registry General
 # Get package dependents (reverse dependencies)
 go run . package dependents JuMP
 go run . package dependents JuMP --indirect
+go run . package dependents JuMP --json | jq .total
+go run . package dependency JuMP --json
+go run . package info JuMP --json
 ```
 
 ### Test registry operations
@@ -530,6 +533,7 @@ jh run setup
 - Landing page response uses custom JSON unmarshaling (`homepageResponse`) to handle `message` being either an object or a string
 - Package search (`jh package search`) and info (`jh package info`) both try REST API (`/api/v1/ui/packages/info`) first, then fall back to GraphQL (`FilteredPackages` / `FilteredPackagesCount` via `/v1/graphql`) on failure; `searchPackages` prints `warning: REST package search failed (...); falling back to GraphQL` to stderr when it falls back (`getPackageInfo` falls back silently)
 - `--registries` resolution for `jh package search` / `jh package info` / `jh search packages` goes through `resolveRegistries(server, csv)` in `registries.go` (empty = all registries; unknown name → `Registry not found: '<name>'`)
+- `jh package info --json` prints the exact matches in the same `{"results": [...], "total": N}` document (`writePackagesJSON`; no match → empty `results`). `jh package dependency --json` prints `dependenciesDoc` and `jh package dependents --json` prints `dependentsDoc` (counts always cover every dependent; `dependents` lists indirect ones only with `--indirect`). All go through `writeJSON`; errors from these three commands go to stderr
 - `jh package search` / `jh search packages --json` sets `PackageSearchParams.JSON`; both the REST and GraphQL paths then call `writePackagesJSON`, which prints `{"results": [...], "total": N}` (snake_case keys from `packageInfo`'s json tags, `tags` always an array) 2-space indented with a trailing newline — nothing else on stdout
 - **JSON output convention** (`jh search *`): `--json` prints only the document on stdout, 2-space indented, trailing newline — `{"results": <server array, untouched>, "truncated": bool}` for code/symbols/docs; warnings, the human-mode `note: results truncated (search stopped early)` line, and errors always go to stderr; exit code is 0/1 only
 - `jh search` HTTP flow: `postSearch(baseURL, kind, body)` → `postSearchWithToken(client, baseURL, kind, token, body)` → `doSearchRequest(client, baseURL, path, token, body)`; v1 first, legacy route on 404/405, `search_unavailable` when both are missing. Non-2xx bodies become `*searchError{Status, Code, Message, Details}` (`Error()` is `<code>: <message>`, or `HTTP <status>: <body>` when undecodable; legacy `success:false` → code `legacy_error`); `printSearchError` adds a `known registries: ...` line from `details.known` on `invalid_registry`

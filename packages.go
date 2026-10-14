@@ -148,9 +148,20 @@ type packageInfo struct {
 	Status      string   `json:"status"`
 }
 
-// writePackagesJSON writes `{"results": [...], "total": N}`, 2-space indented
-// with a trailing newline — the only thing on stdout in --json mode. Tags is
-// always an array (never null) so consumers can iterate it unconditionally.
+// writeJSON writes doc 2-space indented with a trailing newline — the only
+// thing on stdout in --json mode.
+func writeJSON(w io.Writer, doc interface{}) error {
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to encode JSON: %w", err)
+	}
+	_, err = w.Write(append(out, '\n'))
+	return err
+}
+
+// writePackagesJSON writes `{"results": [...], "total": N}` with writeJSON.
+// Tags is always an array (never null) so consumers can iterate it
+// unconditionally.
 func writePackagesJSON(w io.Writer, pkgs []packageInfo, total int) error {
 	results := make([]packageInfo, len(pkgs))
 	for i, p := range pkgs {
@@ -163,12 +174,7 @@ func writePackagesJSON(w io.Writer, pkgs []packageInfo, total int) error {
 		Results []packageInfo `json:"results"`
 		Total   int           `json:"total"`
 	}{results, total}
-	out, err := json.MarshalIndent(doc, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to encode packages: %w", err)
-	}
-	_, err = w.Write(append(out, '\n'))
-	return err
+	return writeJSON(w, doc)
 }
 
 // emitPackages prints the search outcome in the format params ask for.
@@ -661,23 +667,18 @@ func executeGraphQL(server string, token *StoredToken, gqlReq GraphQLRequest) ([
 	return body, nil
 }
 
-func getPackageInfo(server, packageName string, registryIDs []int, registryNames []string) error {
-	if err := getPackageInfoREST(server, packageName, registryNames); err != nil {
-		return getPackageInfoGraphQL(server, packageName, registryIDs, registryNames)
-	}
-	return nil
-}
-
-func getPackageInfoREST(server, packageName string, registryNames []string) error {
-	pkgs, _, err := fetchRESTPackages(server, packageName, 100, 0, registryNames)
+// getPackageInfo prints the packages named packageName (exact,
+// case-insensitive), one per registry, as a verbose listing or, with asJSON,
+// as `{"results": [...], "total": N}`.
+func getPackageInfo(server, packageName string, registryIDs []int, registryNames []string, asJSON bool) error {
+	matches, err := findPackageInfoREST(server, packageName, registryNames)
 	if err != nil {
-		return err
-	}
-	var matches []packageInfo
-	for _, p := range pkgs {
-		if strings.EqualFold(p.Name, packageName) {
-			matches = append(matches, restToInfo(p))
+		if matches, err = findPackageInfoGraphQL(server, packageName, registryIDs, registryNames); err != nil {
+			return err
 		}
+	}
+	if asJSON {
+		return writePackagesJSON(os.Stdout, matches, len(matches))
 	}
 	if len(matches) == 0 {
 		fmt.Println("Package not found")
@@ -687,10 +688,24 @@ func getPackageInfoREST(server, packageName string, registryNames []string) erro
 	return nil
 }
 
-func getPackageInfoGraphQL(server, packageName string, registryIDs []int, registryNames []string) error {
+func findPackageInfoREST(server, packageName string, registryNames []string) ([]packageInfo, error) {
+	pkgs, _, err := fetchRESTPackages(server, packageName, 100, 0, registryNames)
+	if err != nil {
+		return nil, err
+	}
+	var matches []packageInfo
+	for _, p := range pkgs {
+		if strings.EqualFold(p.Name, packageName) {
+			matches = append(matches, restToInfo(p))
+		}
+	}
+	return matches, nil
+}
+
+func findPackageInfoGraphQL(server, packageName string, registryIDs []int, registryNames []string) ([]packageInfo, error) {
 	pkgs, err := fetchGraphQLPackages(server, packageName, 100, 0, registryIDs)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	registryIDToName := buildRegistryIDToName(registryIDs, registryNames)
 	var matches []packageInfo
@@ -699,12 +714,7 @@ func getPackageInfoGraphQL(server, packageName string, registryIDs []int, regist
 			matches = append(matches, gqlToInfo(p, registryIDToName))
 		}
 	}
-	if len(matches) == 0 {
-		fmt.Println("Package not found")
-		return nil
-	}
-	printPackages(matches, len(matches), true)
-	return nil
+	return matches, nil
 }
 
 // findPackageRegistry returns the registry of the package named packageName
@@ -795,7 +805,15 @@ func fetchPackageDocs(server, packageName, registryName string) (*PackageDocsRes
 	return &docsResp, targetRegistry, nil
 }
 
-func getPackageDependencies(server string, packageName string, registryName string, showIndirect bool) error {
+// dependenciesDoc is the --json output of `jh package dependency`.
+type dependenciesDoc struct {
+	Name         string              `json:"name"`
+	Version      string              `json:"version"`
+	Registry     string              `json:"registry"`
+	Dependencies []PackageDependency `json:"dependencies"`
+}
+
+func getPackageDependencies(server string, packageName string, registryName string, showIndirect, asJSON bool) error {
 	docsResp, targetRegistry, err := fetchPackageDocs(server, packageName, registryName)
 	if err != nil {
 		return err
@@ -810,6 +828,13 @@ func getPackageDependencies(server string, packageName string, registryName stri
 				deps = append(deps, dep)
 			}
 		}
+	}
+
+	if asJSON {
+		if deps == nil {
+			deps = []PackageDependency{}
+		}
+		return writeJSON(os.Stdout, dependenciesDoc{docsResp.Name, docsResp.Version, targetRegistry, deps})
 	}
 
 	if len(deps) == 0 {
@@ -901,13 +926,45 @@ func printDependentsTable(title string, deps []PackageDependent) {
 	}
 }
 
-func getPackageDependents(server, packageName, registryName string, showIndirect bool) error {
+// dependentsDoc is the --json output of `jh package dependents`. The counts
+// cover every dependent; Dependents lists the indirect ones only with
+// --indirect.
+type dependentsDoc struct {
+	Name       string             `json:"name"`
+	Version    string             `json:"version"`
+	Registry   string             `json:"registry"`
+	Direct     int                `json:"direct"`
+	Indirect   int                `json:"indirect"`
+	Total      int                `json:"total"`
+	Dependents []PackageDependent `json:"dependents"`
+}
+
+func newDependentsDoc(docsResp *PackageDocsResponse, registry string, direct, indirect []PackageDependent, showIndirect bool) dependentsDoc {
+	listed := append([]PackageDependent{}, direct...)
+	if showIndirect {
+		listed = append(listed, indirect...)
+	}
+	return dependentsDoc{
+		Name:       docsResp.Name,
+		Version:    docsResp.Version,
+		Registry:   registry,
+		Direct:     len(direct),
+		Indirect:   len(indirect),
+		Total:      len(direct) + len(indirect),
+		Dependents: listed,
+	}
+}
+
+func getPackageDependents(server, packageName, registryName string, showIndirect, asJSON bool) error {
 	docsResp, targetRegistry, err := fetchPackageDocs(server, packageName, registryName)
 	if err != nil {
 		return err
 	}
 
 	direct, indirect := splitDependents(docsResp.Dependents)
+	if asJSON {
+		return writeJSON(os.Stdout, newDependentsDoc(docsResp, targetRegistry, direct, indirect, showIndirect))
+	}
 	if len(direct)+len(indirect) == 0 {
 		fmt.Printf("Package %s (v%s) has no dependents\n", docsResp.Name, docsResp.Version)
 		return nil
