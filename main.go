@@ -1077,7 +1077,7 @@ The command fetches dependency information from the package documentation
 JSON endpoint. If a package exists in multiple registries, it uses the
 first registry by default. You can specify a different registry using
 the --registry flag.`,
-	Example: "  jh package dependency DataFrames\n  jh package dependency --indirect Plots\n  jh package dependency --registry General CSV\n  jh package dependency --json JuMP",
+	Example: "  jh package dependency DataFrames\n  jh package dependency --indirect Plots\n  jh package dependency --registry General CSV\n  jh package dependency --short JuMP\n  jh package dependency --json JuMP",
 	Args:    cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
@@ -1088,10 +1088,11 @@ the --registry flag.`,
 
 		packageName := args[0]
 		asJSON, _ := cmd.Flags().GetBool("json")
+		short, _ := cmd.Flags().GetBool("short")
 		registryName, _ := cmd.Flags().GetString("registry")
 		showIndirect, _ := cmd.Flags().GetBool("indirect")
 
-		if err := getPackageDependencies(server, packageName, registryName, showIndirect, asJSON); err != nil {
+		if err := getPackageDependencies(server, packageName, registryName, showIndirect, asJSON, short); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to get package dependencies: %v\n", err)
 			os.Exit(1)
 		}
@@ -1111,7 +1112,7 @@ The data comes from the same package documentation JSON endpoint as
 jh package dependency, for the package's stable version. If a package
 exists in multiple registries, it uses the first registry by default.
 You can specify a different registry using the --registry flag.`,
-	Example: "  jh package dependents JuMP\n  jh package dependents --indirect DataFrames\n  jh package dependents --registry General CSV\n  jh package dependents --json JuMP",
+	Example: "  jh package dependents JuMP\n  jh package dependents --indirect DataFrames\n  jh package dependents --registry General CSV\n  jh package dependents --short JuMP\n  jh package dependents --json JuMP",
 	Args:    cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
@@ -1122,10 +1123,11 @@ You can specify a different registry using the --registry flag.`,
 
 		packageName := args[0]
 		asJSON, _ := cmd.Flags().GetBool("json")
+		short, _ := cmd.Flags().GetBool("short")
 		registryName, _ := cmd.Flags().GetString("registry")
 		showIndirect, _ := cmd.Flags().GetBool("indirect")
 
-		if err := getPackageDependents(server, packageName, registryName, showIndirect, asJSON); err != nil {
+		if err := getPackageDependents(server, packageName, registryName, showIndirect, asJSON, short); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to get package dependents: %v\n", err)
 			os.Exit(1)
 		}
@@ -2496,10 +2498,14 @@ func init() {
 	packageDependencyCmd.Flags().String("registry", "", "Specify registry name (uses first registry if not specified)")
 	packageDependencyCmd.Flags().Bool("indirect", false, "Include indirect dependencies")
 	packageDependencyCmd.Flags().Bool("json", false, "Print only a JSON document ({\"name\", \"version\", \"registry\", \"dependencies\": [...]}) on stdout")
+	packageDependencyCmd.Flags().Bool("short", false, "Print only one line: the direct, indirect and total dependencies counts")
+	packageDependencyCmd.MarkFlagsMutuallyExclusive("short", "json")
 	packageDependentsCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	packageDependentsCmd.Flags().String("registry", "", "Specify registry name (uses first registry if not specified)")
 	packageDependentsCmd.Flags().Bool("indirect", false, "Also list indirect dependents")
 	packageDependentsCmd.Flags().Bool("json", false, "Print only a JSON document ({\"name\", \"version\", \"registry\", \"direct\", \"indirect\", \"total\", \"dependents\": [...]}) on stdout")
+	packageDependentsCmd.Flags().Bool("short", false, "Print only one line: the direct, indirect and total dependents counts")
+	packageDependentsCmd.MarkFlagsMutuallyExclusive("short", "json")
 	registryListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	registryListCmd.Flags().Bool("verbose", false, "Show detailed registry information")
 	projectListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")

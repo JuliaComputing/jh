@@ -998,7 +998,7 @@ type dependenciesDoc struct {
 	Dependencies []PackageDependency `json:"dependencies"`
 }
 
-func getPackageDependencies(server string, packageName string, registryName string, showIndirect, asJSON bool) error {
+func getPackageDependencies(server string, packageName string, registryName string, showIndirect, asJSON, short bool) error {
 	docsResp, targetRegistry, err := fetchPackageDocs(server, packageName, registryName)
 	if err != nil {
 		return err
@@ -1014,13 +1014,17 @@ func getPackageDependencies(server string, packageName string, registryName stri
 		return writeJSON(os.Stdout, dependenciesDoc{docsResp.Name, docsResp.Version, targetRegistry, deps})
 	}
 
+	summary := countsSummary(len(direct), len(indirect), "dependencies")
+	if short {
+		printPackageSummary(docsResp, targetRegistry, summary)
+		return nil
+	}
 	printPackageHeading(docsResp, targetRegistry)
 	if len(direct)+len(indirect) == 0 {
 		fmt.Println("No dependencies")
 		return nil
 	}
-	fmt.Printf("%s direct · %s indirect · %s total dependencies\n",
-		formatCount(len(direct)), formatCount(len(indirect)), formatCount(len(direct)+len(indirect)))
+	fmt.Println(summary)
 	if len(direct) > 0 {
 		fmt.Println()
 		printDependencyTable("Direct dependencies", direct)
@@ -1032,6 +1036,18 @@ func getPackageDependencies(server string, packageName string, registryName stri
 		fmt.Printf("\n%s\n", dim(fmt.Sprintf("Use --indirect to list the %s indirect dependencies", formatCount(len(indirect)))))
 	}
 	return nil
+}
+
+// countsSummary renders "9 direct · 40 indirect · 49 total <noun>".
+func countsSummary(direct, indirect int, noun string) string {
+	return fmt.Sprintf("%s direct · %s indirect · %s total %s",
+		formatCount(direct), formatCount(indirect), formatCount(direct+indirect), noun)
+}
+
+// printPackageSummary prints the one-line --short form:
+// "<name>  v<version> · <registry>: <summary>".
+func printPackageSummary(docsResp *PackageDocsResponse, registry, summary string) {
+	fmt.Printf("%s  %s %s\n", bold(docsResp.Name), dim("v"+docsResp.Version+" · "+registry+":"), summary)
 }
 
 // printPackageHeading prints "<name>  v<version> · <registry>" and a blank line.
@@ -1157,7 +1173,7 @@ func newDependentsDoc(docsResp *PackageDocsResponse, registry string, direct, in
 	}
 }
 
-func getPackageDependents(server, packageName, registryName string, showIndirect, asJSON bool) error {
+func getPackageDependents(server, packageName, registryName string, showIndirect, asJSON, short bool) error {
 	docsResp, targetRegistry, err := fetchPackageDocs(server, packageName, registryName)
 	if err != nil {
 		return err
@@ -1167,13 +1183,17 @@ func getPackageDependents(server, packageName, registryName string, showIndirect
 	if asJSON {
 		return writeJSON(os.Stdout, newDependentsDoc(docsResp, targetRegistry, direct, indirect, showIndirect))
 	}
+	summary := countsSummary(len(direct), len(indirect), "dependents")
+	if short {
+		printPackageSummary(docsResp, targetRegistry, summary)
+		return nil
+	}
 	printPackageHeading(docsResp, targetRegistry)
 	if len(direct)+len(indirect) == 0 {
 		fmt.Println("No dependents")
 		return nil
 	}
-	fmt.Printf("%s direct · %s indirect · %s total dependents\n",
-		formatCount(len(direct)), formatCount(len(indirect)), formatCount(len(direct)+len(indirect)))
+	fmt.Println(summary)
 	if len(direct) > 0 {
 		fmt.Println()
 		printDependentsTable("Direct dependents", direct)
