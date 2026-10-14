@@ -169,11 +169,13 @@ go build -o jh .
   - Default: Shows up to 10 direct dependencies (NAME, REGISTRY, UUID, VERSIONS)
   - `jh package dependency --indirect` - Include both direct and indirect dependencies
   - `jh package dependency --registry General` - Specify registry to use
+  - `jh package dependency --short` - Print one line: `JuMP  v1.32.1 · General: 9 direct · 40 indirect · 49 total dependencies`
   - `jh package dependency --json` - Print only `{"name", "version", "registry", "dependencies": [...]}` on stdout (`--indirect` adds the indirect ones)
 - `jh package dependents <package-name>` - List packages that depend on a package (reverse dependencies)
   - Default: Prints direct/indirect/total counts and lists the direct dependents (NAME, REGISTRY, UUID)
   - `jh package dependents --indirect` - Also list indirect dependents
   - `jh package dependents --registry General` - Specify registry to use
+  - `jh package dependents --short` - Print one line: `JuMP  v1.32.1 · General: 335 direct · 94 indirect · 429 total dependents`
   - `jh package dependents --json` - Print only `{"name", "version", "registry", "direct", "indirect", "total", "dependents": [...]}` on stdout; the counts always cover every dependent, `dependents` lists the indirect ones only with `--indirect`
 
 ### Registry Management (`jh registry`)

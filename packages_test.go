@@ -382,3 +382,12 @@ func TestListTags(t *testing.T) {
 		t.Errorf("listTags keeps at least one tag: %q", got)
 	}
 }
+
+func TestCountsSummary(t *testing.T) {
+	if got := countsSummary(9, 40, "dependencies"); got != "9 direct · 40 indirect · 49 total dependencies" {
+		t.Errorf("countsSummary = %q", got)
+	}
+	if got := countsSummary(1335, 0, "dependents"); got != "1,335 direct · 0 indirect · 1,335 total dependents" {
+		t.Errorf("countsSummary = %q", got)
+	}
+}
