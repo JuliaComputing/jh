@@ -294,3 +294,52 @@ func TestPackageJSONDocsEmptyArrays(t *testing.T) {
 		t.Errorf("empty info doc = %q (err %v), want results [] and total 0", buf.String(), err)
 	}
 }
+
+func TestRestToInfoListingExtras(t *testing.T) {
+	var p RESTPackage
+	body := `{"name":"JuMP","owner":"jump-dev","is_app":false,"is_dyad":true,
+		"downloads_timeseries":[{"date":"2026-10-11","count":10},{"date":"2026-10-12","count":32}]}`
+	if err := json.Unmarshal([]byte(body), &p); err != nil {
+		t.Fatal(err)
+	}
+	got := restToInfo(p)
+	if got.Owner != "jump-dev" || !got.IsDyad || got.IsApp {
+		t.Errorf("Owner/IsDyad/IsApp = %q/%v/%v, want jump-dev/true/false", got.Owner, got.IsDyad, got.IsApp)
+	}
+	if got.Downloads30d == nil || *got.Downloads30d != 42 {
+		t.Errorf("Downloads30d = %v, want 42", got.Downloads30d)
+	}
+	if len(got.DownloadsTimeseries) != 2 {
+		t.Errorf("DownloadsTimeseries = %v, want 2 days", got.DownloadsTimeseries)
+	}
+}
+
+func TestNewPackageDetails(t *testing.T) {
+	var docs PackageDocsResponse
+	body := `{"name":"JuMP","version":"1.32.1","homepage":"http://jump.dev","release_date":"Oct 2026",
+		"doctype":"documenter","documenter_errored":true,
+		"contributors":[{"name":"a","contributions":3,"type":"User","url":"u"}],
+		"deps":[{"direct":true,"uuid":"d1"},{"direct":false,"uuid":"d2"},{"direct":false,"uuid":"d1"}],
+		"reversedeps":[{"direct":true,"uuid":"r1"},{"direct":false,"uuid":"r1"},{"direct":false,"uuid":"r2"}]}`
+	if err := json.Unmarshal([]byte(body), &docs); err != nil {
+		t.Fatal(err)
+	}
+	got := newPackageDetails(packageInfo{}, &docs)
+	if got.DirectDependencies != 1 || got.Dependencies != 2 {
+		t.Errorf("dependencies = %d direct / %d total, want 1/2", got.DirectDependencies, got.Dependencies)
+	}
+	if got.DirectDependents != 1 || got.Dependents != 2 {
+		t.Errorf("dependents = %d direct / %d total, want 1/2", got.DirectDependents, got.Dependents)
+	}
+	if got.Homepage != "http://jump.dev" || got.ReleaseDate != "Oct 2026" || got.Version != "1.32.1" {
+		t.Errorf("metadata = %+v", got)
+	}
+	if !got.DocsBuildErrored || got.DocType != "documenter" || len(got.Contributors) != 1 {
+		t.Errorf("docs/contributors = %+v", got)
+	}
+
+	empty := newPackageDetails(packageInfo{}, nil)
+	if empty.DownloadsTimeseries == nil || empty.Contributors == nil {
+		t.Errorf("without pkg.json, arrays must be non-nil: %+v", empty)
+	}
+}
