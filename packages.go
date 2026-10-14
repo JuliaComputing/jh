@@ -73,11 +73,23 @@ type PackageDependent struct {
 	Slug     string `json:"slug"`
 }
 
+type PackageContributor struct {
+	Name          string `json:"name"`
+	Contributions int    `json:"contributions"`
+	Type          string `json:"type"`
+	URL           string `json:"url"`
+}
+
 type PackageDocsResponse struct {
-	Name         string              `json:"name"`
-	Version      string              `json:"version"`
-	Dependencies []PackageDependency `json:"deps"`
-	Dependents   []PackageDependent  `json:"reversedeps"`
+	Name              string               `json:"name"`
+	Version           string               `json:"version"`
+	Dependencies      []PackageDependency  `json:"deps"`
+	Dependents        []PackageDependent   `json:"reversedeps"`
+	Homepage          string               `json:"homepage"`
+	ReleaseDate       string               `json:"release_date"`
+	Contributors      []PackageContributor `json:"contributors"`
+	DocType           string               `json:"doctype"`
+	DocumenterErrored bool                 `json:"documenter_errored"`
 }
 
 type Package struct {
@@ -95,19 +107,26 @@ type Package struct {
 }
 
 type RESTPackage struct {
-	Name                   string   `json:"name"`
-	UUID                   string   `json:"uuid"`
-	Registry               string   `json:"registry"`
-	Description            string   `json:"description"`
-	StargazersCount        int      `json:"stargazers_count"`
-	SourceURL              string   `json:"source_url"`
-	JHubDocsURL            string   `json:"jhub_docs_url"`
-	LatestStableVersion    string   `json:"latest_stable_version"`
-	DetectedSourceLicenses []string `json:"detected_source_licenses"`
-	Downloads              struct {
-		Count int `json:"count"`
-	} `json:"downloads"`
-	Tags []string `json:"tags"`
+	Name                   string          `json:"name"`
+	UUID                   string          `json:"uuid"`
+	Registry               string          `json:"registry"`
+	Description            string          `json:"description"`
+	StargazersCount        int             `json:"stargazers_count"`
+	SourceURL              string          `json:"source_url"`
+	JHubDocsURL            string          `json:"jhub_docs_url"`
+	LatestStableVersion    string          `json:"latest_stable_version"`
+	DetectedSourceLicenses []string        `json:"detected_source_licenses"`
+	DownloadsTimeseries    []DownloadCount `json:"downloads_timeseries"`
+	Tags                   []string        `json:"tags"`
+	Owner                  string          `json:"owner"`
+	IsApp                  bool            `json:"is_app"`
+	IsDyad                 bool            `json:"is_dyad"`
+}
+
+// DownloadCount is one day of a package's download counts.
+type DownloadCount struct {
+	Date  string `json:"date"`
+	Count int    `json:"count"`
 }
 
 type PackageRESTListResponse struct {
@@ -144,8 +163,31 @@ type packageInfo struct {
 	DocsURL     string   `json:"docs_url"`
 	License     string   `json:"license"`
 	IsApp       bool     `json:"is_app"`
+	IsDyad      bool     `json:"is_dyad"`
 	Score       float64  `json:"score"`
 	Status      string   `json:"status"`
+	// Downloads30d is the sum of the REST listing's daily download counts,
+	// which cover the last 30 days; absent when the listing was not used.
+	Downloads30d        *int            `json:"downloads_30d,omitempty"`
+	DownloadsTimeseries []DownloadCount `json:"-"`
+	// Details is filled by `jh package info` only.
+	Details *packageDetails `json:"details,omitempty"`
+}
+
+// packageDetails holds what `jh package info` adds to a listing entry: the
+// daily download counts and the stable version's pkg.json metadata.
+type packageDetails struct {
+	DownloadsTimeseries []DownloadCount      `json:"downloads_timeseries"`
+	Version             string               `json:"version,omitempty"`
+	Homepage            string               `json:"homepage,omitempty"`
+	ReleaseDate         string               `json:"release_date,omitempty"`
+	Contributors        []PackageContributor `json:"contributors"`
+	DocType             string               `json:"doc_type,omitempty"`
+	DocsBuildErrored    bool                 `json:"docs_build_errored"`
+	DirectDependencies  int                  `json:"direct_dependencies"`
+	Dependencies        int                  `json:"dependencies"`
+	DirectDependents    int                  `json:"direct_dependents"`
+	Dependents          int                  `json:"dependents"`
 }
 
 // writeJSON writes doc 2-space indented with a trailing newline — the only
@@ -240,8 +282,17 @@ func printPackages(pkgs []packageInfo, total int, verbose bool) {
 			if pkg.IsApp {
 				fmt.Printf("Type: Application\n")
 			}
+			if pkg.IsDyad {
+				fmt.Printf("Type: Dyad library\n")
+			}
+			if pkg.Downloads30d != nil {
+				fmt.Printf("Downloads (last 30 days): %d\n", *pkg.Downloads30d)
+			}
 			if pkg.Score != 0 {
 				fmt.Printf("Score: %.2f\n", pkg.Score)
+			}
+			if pkg.Details != nil {
+				printPackageDetails(pkg.Details)
 			}
 		} else {
 			fmt.Printf("%-30s %-20s %-20s", pkg.Name, pkg.Registry, pkg.Owner)
@@ -265,18 +316,67 @@ func printPackages(pkgs []packageInfo, total int, verbose bool) {
 
 // restToInfo converts a RESTPackage to the common packageInfo display struct.
 func restToInfo(p RESTPackage) packageInfo {
-	return packageInfo{
-		Name:        p.Name,
-		UUID:        p.UUID,
-		Registry:    p.Registry,
-		Version:     p.LatestStableVersion,
-		Description: p.Description,
-		SourceURL:   p.SourceURL,
-		Tags:        p.Tags,
-		Stars:       p.StargazersCount,
-		DocsURL:     p.JHubDocsURL,
-		License:     strings.Join(p.DetectedSourceLicenses, ", "),
+	downloads := 0
+	for _, d := range p.DownloadsTimeseries {
+		downloads += d.Count
 	}
+	return packageInfo{
+		Name:                p.Name,
+		UUID:                p.UUID,
+		Owner:               p.Owner,
+		Registry:            p.Registry,
+		Version:             p.LatestStableVersion,
+		Description:         p.Description,
+		SourceURL:           p.SourceURL,
+		Tags:                p.Tags,
+		Stars:               p.StargazersCount,
+		DocsURL:             p.JHubDocsURL,
+		License:             strings.Join(p.DetectedSourceLicenses, ", "),
+		IsApp:               p.IsApp,
+		IsDyad:              p.IsDyad,
+		Downloads30d:        &downloads,
+		DownloadsTimeseries: p.DownloadsTimeseries,
+	}
+}
+
+// newPackageDetails builds the `jh package info` details from the listing's
+// download counts and, when docs is non-nil, the package's pkg.json. A
+// dependency or dependent listed both as direct and as indirect counts once,
+// as direct.
+func newPackageDetails(info packageInfo, docs *PackageDocsResponse) *packageDetails {
+	d := &packageDetails{
+		DownloadsTimeseries: info.DownloadsTimeseries,
+		Contributors:        []PackageContributor{},
+	}
+	if d.DownloadsTimeseries == nil {
+		d.DownloadsTimeseries = []DownloadCount{}
+	}
+	if docs == nil {
+		return d
+	}
+	d.Version = docs.Version
+	d.Homepage = docs.Homepage
+	d.ReleaseDate = docs.ReleaseDate
+	if docs.Contributors != nil {
+		d.Contributors = docs.Contributors
+	}
+	d.DocType = docs.DocType
+	d.DocsBuildErrored = docs.DocumenterErrored
+
+	depDirect := make(map[string]bool)
+	for _, dep := range docs.Dependencies {
+		depDirect[dep.UUID] = depDirect[dep.UUID] || dep.Direct
+	}
+	d.Dependencies = len(depDirect)
+	for _, direct := range depDirect {
+		if direct {
+			d.DirectDependencies++
+		}
+	}
+	direct, indirect := splitDependents(docs.Dependents)
+	d.DirectDependents = len(direct)
+	d.Dependents = len(direct) + len(indirect)
+	return d
 }
 
 // gqlToInfo converts a GraphQL Package to the common packageInfo display struct.
@@ -677,6 +777,16 @@ func getPackageInfo(server, packageName string, registryIDs []int, registryNames
 			return err
 		}
 	}
+	for i := range matches {
+		var docs *PackageDocsResponse
+		if matches[i].Registry != "" {
+			if docs, _, err = fetchPackageDocs(server, matches[i].Name, matches[i].Registry); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: no package details for %s in %s: %v\n", matches[i].Name, matches[i].Registry, err)
+				docs = nil
+			}
+		}
+		matches[i].Details = newPackageDetails(matches[i], docs)
+	}
 	if asJSON {
 		return writePackagesJSON(os.Stdout, matches, len(matches))
 	}
@@ -686,6 +796,43 @@ func getPackageInfo(server, packageName string, registryIDs []int, registryNames
 	}
 	printPackages(matches, len(matches), true)
 	return nil
+}
+
+// maxListedContributors caps the contributors `jh package info` names; --json
+// lists all of them.
+const maxListedContributors = 5
+
+func printPackageDetails(d *packageDetails) {
+	if d.Homepage != "" {
+		fmt.Printf("Homepage: %s\n", d.Homepage)
+	}
+	if d.ReleaseDate != "" {
+		fmt.Printf("Released: %s\n", d.ReleaseDate)
+	}
+	if d.Dependencies > 0 {
+		fmt.Printf("Dependencies: %d direct, %d total\n", d.DirectDependencies, d.Dependencies)
+	}
+	if d.Dependents > 0 {
+		fmt.Printf("Dependents: %d direct, %d total\n", d.DirectDependents, d.Dependents)
+	}
+	if n := len(d.Contributors); n > 0 {
+		var names []string
+		for i := 0; i < n && i < maxListedContributors; i++ {
+			names = append(names, d.Contributors[i].Name)
+		}
+		more := ""
+		if n > maxListedContributors {
+			more = ", ..."
+		}
+		fmt.Printf("Contributors: %d (%s%s)\n", n, strings.Join(names, ", "), more)
+	}
+	if d.DocType != "" {
+		status := d.DocType
+		if d.DocsBuildErrored {
+			status += " (build errored)"
+		}
+		fmt.Printf("Docs: %s\n", status)
+	}
 }
 
 func findPackageInfoREST(server, packageName string, registryNames []string) ([]packageInfo, error) {
