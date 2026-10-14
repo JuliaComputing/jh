@@ -164,14 +164,17 @@ go build -o jh .
   - `--offset <n>` - Number of results to skip
 - `jh package info <package-name>` - Get detailed information about a specific package (exact name match, case-insensitive)
   - `jh package info --registries General` - Search in specific registries only
+  - `jh package info --json` - Print only `{"results": [...], "total": N}` on stdout
 - `jh package dependency <package-name>` - List package dependencies
   - Default: Shows up to 10 direct dependencies (NAME, REGISTRY, UUID, VERSIONS)
   - `jh package dependency --indirect` - Include both direct and indirect dependencies
   - `jh package dependency --registry General` - Specify registry to use
+  - `jh package dependency --json` - Print only `{"name", "version", "registry", "dependencies": [...]}` on stdout (`--indirect` adds the indirect ones)
 - `jh package dependents <package-name>` - List packages that depend on a package (reverse dependencies)
   - Default: Prints direct/indirect/total counts and lists the direct dependents (NAME, REGISTRY, UUID)
   - `jh package dependents --indirect` - Also list indirect dependents
   - `jh package dependents --registry General` - Specify registry to use
+  - `jh package dependents --json` - Print only `{"name", "version", "registry", "direct", "indirect", "total", "dependents": [...]}` on stdout; the counts always cover every dependent, `dependents` lists the indirect ones only with `--indirect`
 
 ### Registry Management (`jh registry`)
 
