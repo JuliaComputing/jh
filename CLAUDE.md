@@ -14,7 +14,7 @@ The application follows a command-line interface pattern using the Cobra library
 - **auth.go**: OAuth2 device flow authentication with JWT token handling
 - **datasets.go**: Dataset operations (list, download, upload, status) with REST API integration
 - **registries.go**: Registry operations (list, config, add, update, registrator) with REST API integration
-- **packages.go**: Package operations (search, dependency) with REST API primary path (`/packages/info`), GraphQL fallback, and documentation API (`/docs/{registry}/{package}/stable/pkg.json`)
+- **packages.go**: Package operations (search, dependency) with REST API primary path (`/api/v1/ui/packages/info`), GraphQL fallback, and documentation API (`/docs/{registry}/{package}/stable/pkg.json`)
 - **projects.go**: Project management using GraphQL API with user filtering
 - **user.go**: User information retrieval using GraphQL API and REST API for listing users
 - **tokens.go**: Token management operations (list) with REST API integration
@@ -36,7 +36,7 @@ The application follows a command-line interface pattern using the Cobra library
    - Stores tokens securely in `~/.juliahub` with 0600 permissions
 
 2. **API Integration**:
-   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/registry/registries/descriptions`, `/api/v1/registry/config/registry/{name}`, `/api/v1/registry/config/registrator/{name}`), package search/info primary path (`/packages/info`), token management (`/app/token/activelist`), user management (`/app/config/features/manage`), admin group management (`/app/config/groups`), registry credential management (old API tried first, new API fallback), landing page management (`/app/homepage` GET, `/app/config/homepage` POST/DELETE), and vulnerability scanning (`/api/v1/ui/vulnerabilities/packages/{name}`)
+   - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/registry/registries/descriptions`, `/api/v1/registry/config/registry/{name}`, `/api/v1/registry/config/registrator/{name}`), package search/info primary path (`/api/v1/ui/packages/info`), token management (`/app/token/activelist`), user management (`/app/config/features/manage`), admin group management (`/app/config/groups`), registry credential management (old API tried first, new API fallback), landing page management (`/app/homepage` GET, `/app/config/homepage` POST/DELETE), and vulnerability scanning (`/api/v1/ui/vulnerabilities/packages/{name}`)
    - **GraphQL API**: Used for projects, user info, user list (`public_users`), group list, and package search/info fallback (`/v1/graphql`)
    - **Headers**: All GraphQL requests require `Authorization: Bearer <id_token>`, `X-Hasura-Role: jhuser`, and `X-Juliahub-Ensure-JS: true`
    - **Authentication**: Uses ID tokens (`token.IDToken`) for API calls
@@ -48,7 +48,7 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh registry config`: Show registry JSON config by name; subcommands add/update accept JSON via stdin or `--file`
    - `jh registry permission`: Registry permission management (list, set, remove)
    - `jh registry registrator`: Show registrator config by name; subcommand update accepts JSON via stdin or `--file`
-   - `jh package`: Package search and dependency (REST primary via `/packages/info`, GraphQL fallback; dependency data from `/docs/{registry}/{package}/stable/pkg.json`)
+   - `jh package`: Package search and dependency (REST primary via `/api/v1/ui/packages/info`, GraphQL fallback; dependency data from `/docs/{registry}/{package}/stable/pkg.json`)
    - `jh project`: Project management (list with GraphQL, supports user filtering)
    - `jh user`: User information (info, list via GraphQL `public_users`)
    - `jh group`: Group information (list via GraphQL)
@@ -122,6 +122,10 @@ go run . package info Plots --registries General
 go run . package dependency DataFrames
 go run . package dependency DataFrames --indirect
 go run . package dependency CSV --registry General
+
+# Get package dependents (reverse dependencies)
+go run . package dependents JuMP
+go run . package dependents JuMP --indirect
 ```
 
 ### Test registry operations
@@ -327,7 +331,7 @@ The application uses OAuth2 device flow:
 - **User management**: `/app/config/features/manage` endpoint for listing all users
 - **Token management**: `/app/token/activelist` endpoint for listing all API tokens
 - **Registry credentials**: `GET /api/v1/sysconfig/credentials` to fetch (returns `CredentialsInfo` object directly); `POST` to add tokens/apps; `PUT` to update tokens/apps or replace all SSH credentials; `DELETE` with `{tokens:[...], githubApps:[...]}` to delete
-- **Package search/info primary**: `/packages/info` endpoint with `name`, `registries`, `tags`, `licenses`, `limit`, `offset` query params; returns `{packages: [...], meta: {total: N}}`
+- **Package search/info primary**: `/api/v1/ui/packages/info` (the web UI's package listing) with `name`, `registries` (comma-separated names), `tags`, `licenses`, `sorts[0]` (`-score` when searching by name) and page-based pagination `pagination[type]=offset&pagination[page]=N&pagination[per_page]=M` (M ≤ 100); returns `{packages: [...], meta: {total: N}}`. The CLI's `--limit`/`--offset` window is mapped onto pages by `planRESTPages`. (The older `/packages/info` path is not routed by current JuliaHub: it falls through to the git `/packages/` handler and 404s.)
 - **Package dependencies**: `/docs/{registry}/{package}/stable/pkg.json` for dependency information
 - **Authentication**: Bearer token with ID token
 - **Upload workflow**: 3-step process (request presigned URL, upload to URL, close upload)
@@ -507,7 +511,7 @@ jh run setup
 - Landing page commands (`jh admin landing-page`) use REST API: GET `/app/homepage` (show), POST `/app/config/homepage` (update), DELETE `/app/config/homepage` (remove); require appropriate permissions
 - Landing page `update` command accepts content inline as an argument, from a file via `--file`, or piped via stdin (priority: `--file` > arg > stdin)
 - Landing page response uses custom JSON unmarshaling (`homepageResponse`) to handle `message` being either an object or a string
-- Package search (`jh package search`) and info (`jh package info`) both try REST API (`/packages/info`) first, then fall back to GraphQL (`FilteredPackages` / `FilteredPackagesCount` via `/v1/graphql`) on failure; a warning is printed to stderr when the fallback is used
+- Package search (`jh package search`) and info (`jh package info`) both try REST API (`/api/v1/ui/packages/info`) first, then fall back to GraphQL (`FilteredPackages` / `FilteredPackagesCount` via `/v1/graphql`) on failure; a warning is printed to stderr when the fallback is used
 - REST API passes `--registries` as comma-separated registry names to the `registries` query param; GraphQL fallback passes registry IDs to the `registries` variable
 - `fetchRegistries` in `registries.go` is used by `listRegistries`, `packageSearchCmd`, `packageInfoCmd`, and `packageDependencyCmd` to resolve registry names to IDs (for GraphQL) and names (for REST)
 - Both REST and GraphQL package search/info paths produce identical output columns (Registry and Owner); GraphQL resolves registry names from the `registryIDs`/`registryNames` already in `PackageSearchParams` — no extra API call needed
@@ -515,7 +519,8 @@ jh run setup
 - GraphQL fallback uses `package_search.gql` (`FilteredPackages`) for the package list and `package_search_count.gql` (`FilteredPackagesCount`) for the aggregate count as separate requests
 - `executeGraphQL(server, token, req)` in `packages.go` is a shared helper for GraphQL POST requests (sets Authorization, Content-Type, Accept, X-Hasura-Role headers)
 - `getPackageInfo` in `packages.go` implements exact name-match lookup using REST-first (`getPackageInfoREST`), GraphQL fallback (`getPackageInfoGraphQL`); `packageInfoCmd` in `main.go` resolves registries via `fetchRegistries`
-- `getPackageDependencies` uses GraphQL (`fetchGraphQLPackages`) to locate the package, then fetches `/docs/{registry}/{package}/stable/pkg.json` for dependency data; no REST fallback (docs endpoint is authoritative)
+- `jh package dependents` reads `reversedeps` from the same `pkg.json` (`fetchPackageDocs`). Entries carry `version` (singular), and a dependent can appear once as direct and once as indirect; `splitDependents` collapses them to one per UUID (direct wins), sorted by name
+- `getPackageDependencies` locates the package's registry with `findPackageRegistry` (REST listing, GraphQL fallback), then fetches `/docs/{registry}/{package}/stable/pkg.json` for dependency data; no REST fallback (docs endpoint is authoritative)
 - `jh vuln` uses two REST endpoints: vulnerabilities at `/api/v1/ui/vulnerabilities/packages/{name}?version=<ver>` and latest version at `/docs/<registry>/<package>/versions.json` (first entry is latest); no GraphQL fallback
 - When no `--version` is given, `fetchLatestVersion` calls the versions.json endpoint (registry defaults to `General`, overridable with `--registry`)
 - By default only advisories where `is_affected == true` are shown; `--all` overrides this
