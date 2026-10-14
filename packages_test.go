@@ -206,3 +206,43 @@ func TestFetchRESTPackagesFromHTTPError(t *testing.T) {
 		t.Errorf("want a status 401 error, got %v", err)
 	}
 }
+
+func TestSplitDependents(t *testing.T) {
+	var docs PackageDocsResponse
+	body := `{"name":"JuMP","version":"1.32.1","reversedeps":[
+		{"direct":false,"name":"zeta","uuid":"u3","registry":"General","slug":"c","version":["1.0.0"]},
+		{"direct":true,"name":"Beta","uuid":"u2","registry":"General","slug":"b","version":["0.1.0"]},
+		{"direct":false,"name":"Beta","uuid":"u2","registry":"General","slug":"b","version":["0.1.0"]},
+		{"direct":false,"name":"alpha","uuid":"u1","registry":"General","slug":"a","version":["2.0.0"]},
+		{"direct":true,"name":"Alpha","uuid":"u0","registry":"DyadRegistry","slug":"d","version":["3.0.0"]}
+	]}`
+	if err := json.Unmarshal([]byte(body), &docs); err != nil {
+		t.Fatal(err)
+	}
+
+	direct, indirect := splitDependents(docs.Dependents)
+
+	names := func(ds []PackageDependent) []string {
+		var out []string
+		for _, d := range ds {
+			out = append(out, d.Name+"/"+d.UUID)
+		}
+		return out
+	}
+	if got, want := names(direct), []string{"Alpha/u0", "Beta/u2"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("direct = %v, want %v", got, want)
+	}
+	if got, want := names(indirect), []string{"alpha/u1", "zeta/u3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("indirect = %v, want %v", got, want)
+	}
+	if direct[0].Registry != "DyadRegistry" {
+		t.Errorf("direct[0].Registry = %q, want DyadRegistry", direct[0].Registry)
+	}
+}
+
+func TestSplitDependentsEmpty(t *testing.T) {
+	direct, indirect := splitDependents(nil)
+	if len(direct) != 0 || len(indirect) != 0 {
+		t.Errorf("splitDependents(nil) = %v, %v; want empty", direct, indirect)
+	}
+}

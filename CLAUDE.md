@@ -122,6 +122,10 @@ go run . package info Plots --registries General
 go run . package dependency DataFrames
 go run . package dependency DataFrames --indirect
 go run . package dependency CSV --registry General
+
+# Get package dependents (reverse dependencies)
+go run . package dependents JuMP
+go run . package dependents JuMP --indirect
 ```
 
 ### Test registry operations
@@ -515,7 +519,8 @@ jh run setup
 - GraphQL fallback uses `package_search.gql` (`FilteredPackages`) for the package list and `package_search_count.gql` (`FilteredPackagesCount`) for the aggregate count as separate requests
 - `executeGraphQL(server, token, req)` in `packages.go` is a shared helper for GraphQL POST requests (sets Authorization, Content-Type, Accept, X-Hasura-Role headers)
 - `getPackageInfo` in `packages.go` implements exact name-match lookup using REST-first (`getPackageInfoREST`), GraphQL fallback (`getPackageInfoGraphQL`); `packageInfoCmd` in `main.go` resolves registries via `fetchRegistries`
-- `getPackageDependencies` uses GraphQL (`fetchGraphQLPackages`) to locate the package, then fetches `/docs/{registry}/{package}/stable/pkg.json` for dependency data; no REST fallback (docs endpoint is authoritative)
+- `jh package dependents` reads `reversedeps` from the same `pkg.json` (`fetchPackageDocs`). Entries carry `version` (singular), and a dependent can appear once as direct and once as indirect; `splitDependents` collapses them to one per UUID (direct wins), sorted by name
+- `getPackageDependencies` locates the package's registry with `findPackageRegistry` (REST listing, GraphQL fallback), then fetches `/docs/{registry}/{package}/stable/pkg.json` for dependency data; no REST fallback (docs endpoint is authoritative)
 - `jh vuln` uses two REST endpoints: vulnerabilities at `/api/v1/ui/vulnerabilities/packages/{name}?version=<ver>` and latest version at `/docs/<registry>/<package>/versions.json` (first entry is latest); no GraphQL fallback
 - When no `--version` is given, `fetchLatestVersion` calls the versions.json endpoint (registry defaults to `General`, overridable with `--registry`)
 - By default only advisories where `is_affected == true` are shown; `--all` overrides this
