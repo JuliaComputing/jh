@@ -164,7 +164,7 @@ go build -o jh .
   - `--limit <n>` - Maximum results to return (default: 10)
   - `--offset <n>` - Number of results to skip
   - `--json` - Print only `{"results": [...], "total": N}` on stdout (also available as `jh search packages`)
-- `jh package info <package-name>` - Get detailed information about a specific package (exact name match, case-insensitive)
+- `jh package info <package-name>` - Get detailed information about a specific package (exact name match, case-insensitive): the listing fields (owner, stars, license, latest version, downloads over the last 30 days, app/Dyad type) plus the stable version's homepage, release date, dependency and dependent counts, contributors and docs build type
   - `jh package info --registries General` - Search in specific registries only
   - `jh package info --json` - Print only `{"results": [...], "total": N}` on stdout
 - `jh package dependency <package-name>` - List package dependencies
