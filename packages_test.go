@@ -345,3 +345,42 @@ func TestNewPackageDetails(t *testing.T) {
 		t.Errorf("without pkg.json, arrays must be non-nil: %+v", empty)
 	}
 }
+
+func TestSplitDependencies(t *testing.T) {
+	entries := []PackageDependency{
+		{Direct: false, Name: "Zed", UUID: "u1", Versions: []string{"2"}},
+		{Direct: true, Name: "Zed", UUID: "u1", Versions: []string{"1"}},
+		{Direct: false, Name: "beta", UUID: "u2"},
+		{Direct: false, Name: "beta", UUID: "u2"},
+		{Direct: true, Name: "Alpha", UUID: "u3"},
+	}
+	direct, indirect := splitDependencies(entries)
+	if len(direct) != 2 || direct[0].Name != "Alpha" || direct[1].Name != "Zed" {
+		t.Fatalf("direct = %+v, want Alpha, Zed", direct)
+	}
+	if !reflect.DeepEqual(direct[1].Versions, []string{"1"}) {
+		t.Errorf("Zed keeps its direct entry's versions, got %v", direct[1].Versions)
+	}
+	if len(indirect) != 1 || indirect[0].Name != "beta" {
+		t.Errorf("indirect = %+v, want beta once", indirect)
+	}
+}
+
+func TestPackagePageURL(t *testing.T) {
+	if got := packagePageURL("juliahub.com", "General", "JuMP"); got != "https://juliahub.com/ui/Packages/General/JuMP" {
+		t.Errorf("packagePageURL = %q", got)
+	}
+}
+
+func TestListTags(t *testing.T) {
+	if got := listTags(nil); got != "" {
+		t.Errorf("listTags(nil) = %q", got)
+	}
+	if got := listTags([]string{"a", "b"}); got != "a, b" {
+		t.Errorf("listTags short = %q", got)
+	}
+	long := strings.Repeat("x", 70)
+	if got := listTags([]string{long, "b", "c"}); got != long+", … (+2)" {
+		t.Errorf("listTags keeps at least one tag: %q", got)
+	}
+}

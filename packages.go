@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 //go:embed package_search.gql package_search_count.gql
@@ -224,94 +225,195 @@ func emitPackages(params PackageSearchParams, infos []packageInfo, total int) er
 	if params.JSON {
 		return writePackagesJSON(os.Stdout, infos, total)
 	}
-	printPackages(infos, total, params.Verbose)
+	printPackages(params.Server, infos, total, params.Verbose)
 	return nil
 }
 
-func printPackages(pkgs []packageInfo, total int, verbose bool) {
+func printPackages(server string, pkgs []packageInfo, total int, verbose bool) {
 	if len(pkgs) == 0 {
 		fmt.Println("No packages found")
 		return
 	}
 
 	if total > len(pkgs) {
-		fmt.Printf("Showing %d of %d package(s):\n\n", len(pkgs), total)
+		fmt.Printf("Showing %s of %s packages\n\n", formatCount(len(pkgs)), formatCount(total))
 	} else {
-		fmt.Printf("Found %d package(s):\n\n", len(pkgs))
+		fmt.Printf("Found %s %s\n\n", formatCount(len(pkgs)), plural(len(pkgs), "package", "packages"))
 	}
 
-	if !verbose {
-		fmt.Printf("%-30s %-20s %-20s %-12s %s\n", "NAME", "REGISTRY", "OWNER", "VERSION", "DESCRIPTION")
-		fmt.Printf("%-30s %-20s %-20s %-12s %s\n", strings.Repeat("-", 30), strings.Repeat("-", 20), strings.Repeat("-", 30), strings.Repeat("-", 12), strings.Repeat("-", 50))
+	if verbose {
+		printPackageCards(server, pkgs)
+		return
 	}
+	printPackageTable(pkgs)
+}
 
+const (
+	nameColWidth      = 28
+	registryColWidth  = 16
+	ownerColWidth     = 18
+	versionColWidth   = 11
+	starsColWidth     = 7
+	downloadsColWidth = 11
+	descColWidth      = 50
+)
+
+func printPackageTable(pkgs []packageInfo) {
+	header := pad("NAME", nameColWidth) + " " + pad("REGISTRY", registryColWidth) + " " + pad("OWNER", ownerColWidth) + " " +
+		pad("VERSION", versionColWidth) + " " + padLeft("STARS", starsColWidth) + " " + padLeft("DL/30 DAYS", downloadsColWidth) + "  DESCRIPTION"
+	fmt.Println(bold(header))
 	for _, pkg := range pkgs {
-		if verbose {
-			fmt.Printf("Name: %s\n", pkg.Name)
-			fmt.Printf("UUID: %s\n", pkg.UUID)
-			if pkg.Registry != "" {
-				fmt.Printf("Registry: %s\n", pkg.Registry)
-			}
-			if pkg.Owner != "" {
-				fmt.Printf("Owner: %s\n", pkg.Owner)
-			}
-			if pkg.Description != "" {
-				fmt.Printf("Description: %s\n", pkg.Description)
-			}
-			if pkg.SourceURL != "" {
-				fmt.Printf("Repository: %s\n", pkg.SourceURL)
-			}
-			if len(pkg.Tags) > 0 {
-				fmt.Printf("Tags: %s\n", strings.Join(pkg.Tags, ", "))
-			}
-			if pkg.Stars > 0 {
-				fmt.Printf("Stars: %d\n", pkg.Stars)
-			}
-			if pkg.DocsURL != "" {
-				fmt.Printf("Documentation: %s\n", pkg.DocsURL)
-			}
-			if pkg.License != "" {
-				fmt.Printf("License: %s\n", pkg.License)
-			}
-			if pkg.Version != "" {
-				fmt.Printf("Latest Version: %s\n", pkg.Version)
-			}
-			if pkg.Status != "" {
-				fmt.Printf("Status: %s\n", pkg.Status)
-			}
-			if pkg.IsApp {
-				fmt.Printf("Type: Application\n")
-			}
-			if pkg.IsDyad {
-				fmt.Printf("Type: Dyad library\n")
-			}
-			if pkg.Downloads30d != nil {
-				fmt.Printf("Downloads (last 30 days): %d\n", *pkg.Downloads30d)
-			}
-			if pkg.Score != 0 {
-				fmt.Printf("Score: %.2f\n", pkg.Score)
-			}
-			if pkg.Details != nil {
-				printPackageDetails(pkg.Details)
-			}
-		} else {
-			fmt.Printf("%-30s %-20s %-20s", pkg.Name, pkg.Registry, pkg.Owner)
-			if pkg.Version != "" {
-				fmt.Printf(" v%-10s", pkg.Version)
-			} else {
-				fmt.Printf(" %-12s", "N/A")
-			}
-			if pkg.Description != "" {
-				desc := pkg.Description
-				if len(desc) > 50 {
-					desc = desc[:50] + "..."
-				}
-				fmt.Printf("%s", desc)
-			}
-			fmt.Printf("\n")
+		version := "-"
+		if pkg.Version != "" {
+			version = "v" + pkg.Version
 		}
-		fmt.Println()
+		downloads := "-"
+		if pkg.Downloads30d != nil {
+			downloads = formatCount(*pkg.Downloads30d)
+		}
+		fmt.Printf("%s %s %s %s %s %s  %s\n",
+			bold(pad(truncate(pkg.Name, nameColWidth), nameColWidth)),
+			pad(truncate(pkg.Registry, registryColWidth), registryColWidth),
+			pad(truncate(pkg.Owner, ownerColWidth), ownerColWidth),
+			pad(truncate(version, versionColWidth), versionColWidth),
+			padLeft(formatCount(pkg.Stars), starsColWidth),
+			padLeft(downloads, downloadsColWidth),
+			dim(truncate(pkg.Description, descColWidth)))
 	}
+}
+
+// maxListedContributors caps the contributors a package card names and
+// maxTagsWidth the runes of its tag list; --json lists all of them.
+const (
+	maxListedContributors = 5
+	maxTagsWidth          = 64
+)
+
+func printPackageCards(server string, pkgs []packageInfo) {
+	for i, pkg := range pkgs {
+		if i > 0 {
+			fmt.Println()
+		}
+		printPackageCard(server, pkg)
+	}
+}
+
+// printPackageCard prints one package: a header line, the description, then
+// aligned fields grouped as numbers, links and install hint. Fields the
+// package lacks are skipped.
+func printPackageCard(server string, pkg packageInfo) {
+	header := []string{}
+	if pkg.Version != "" {
+		header = append(header, "v"+pkg.Version)
+	}
+	for _, part := range []string{pkg.Registry, pkg.Owner} {
+		if part != "" {
+			header = append(header, part)
+		}
+	}
+	fmt.Printf("%s  %s\n", bold(pkg.Name), dim(strings.Join(header, " · ")))
+	if pkg.Description != "" {
+		fmt.Println(pkg.Description)
+	}
+	fmt.Println()
+
+	d := pkg.Details
+	printField("Stars", formatCount(pkg.Stars))
+	if pkg.Downloads30d != nil {
+		downloads := formatCount(*pkg.Downloads30d) + " in the last 30 days"
+		if d != nil && len(d.DownloadsTimeseries) > 1 {
+			counts := make([]int, len(d.DownloadsTimeseries))
+			for i, c := range d.DownloadsTimeseries {
+				counts[i] = c.Count
+			}
+			downloads += "  " + sparkline(counts)
+		}
+		printField("Downloads", downloads)
+	}
+	if d != nil {
+		if d.Dependencies > 0 {
+			printField("Dependencies", fmt.Sprintf("%s direct · %s total", formatCount(d.DirectDependencies), formatCount(d.Dependencies)))
+		}
+		if d.Dependents > 0 {
+			printField("Dependents", fmt.Sprintf("%s direct · %s total", formatCount(d.DirectDependents), formatCount(d.Dependents)))
+		}
+		if n := len(d.Contributors); n > 0 {
+			var names []string
+			for i := 0; i < n && i < maxListedContributors; i++ {
+				names = append(names, d.Contributors[i].Name)
+			}
+			if n > maxListedContributors {
+				names = append(names, "…")
+			}
+			printField("Contributors", formatCount(n)+" · "+strings.Join(names, ", "))
+		}
+	}
+	printField("License", pkg.License)
+	if d != nil {
+		printField("Released", d.ReleaseDate)
+		docs := d.DocType
+		if docs != "" && d.DocsBuildErrored {
+			docs += " (build errored)"
+		}
+		printField("Docs build", docs)
+	}
+	var kinds []string
+	if pkg.IsApp {
+		kinds = append(kinds, "Application")
+	}
+	if pkg.IsDyad {
+		kinds = append(kinds, "Dyad library")
+	}
+	printField("Type", strings.Join(kinds, ", "))
+	printField("Tags", listTags(pkg.Tags))
+	printField("Status", pkg.Status)
+	if pkg.Score != 0 {
+		printField("Score", fmt.Sprintf("%.2f", pkg.Score))
+	}
+
+	fmt.Println()
+	printField("Repository", strings.TrimSuffix(pkg.SourceURL, ".git"))
+	if d != nil {
+		printField("Homepage", d.Homepage)
+	}
+	printField("Documentation", pkg.DocsURL)
+	if server != "" && pkg.Registry != "" {
+		printField("JuliaHub", packagePageURL(server, pkg.Registry, pkg.Name))
+	}
+	printField("UUID", pkg.UUID)
+
+	fmt.Println()
+	printField("Install", "] add "+pkg.Name)
+}
+
+// listTags joins as many tags as fit in maxTagsWidth runes (at least one)
+// and counts the rest.
+func listTags(tags []string) string {
+	shown, width := 0, 0
+	for _, t := range tags {
+		w := utf8.RuneCountInString(t) + 2
+		if shown > 0 && width+w > maxTagsWidth {
+			break
+		}
+		shown, width = shown+1, width+w
+	}
+	out := strings.Join(tags[:shown], ", ")
+	if extra := len(tags) - shown; extra > 0 {
+		out += fmt.Sprintf(", … (+%d)", extra)
+	}
+	return out
+}
+
+// packagePageURL is the package's page in the JuliaHub web UI.
+func packagePageURL(server, registry, name string) string {
+	return fmt.Sprintf("https://%s/ui/Packages/%s/%s", server, url.PathEscape(registry), url.PathEscape(name))
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 // restToInfo converts a RESTPackage to the common packageInfo display struct.
@@ -794,45 +896,12 @@ func getPackageInfo(server, packageName string, registryIDs []int, registryNames
 		fmt.Println("Package not found")
 		return nil
 	}
-	printPackages(matches, len(matches), true)
+	if len(matches) == 1 {
+		printPackageCard(server, matches[0])
+		return nil
+	}
+	printPackages(server, matches, len(matches), true)
 	return nil
-}
-
-// maxListedContributors caps the contributors `jh package info` names; --json
-// lists all of them.
-const maxListedContributors = 5
-
-func printPackageDetails(d *packageDetails) {
-	if d.Homepage != "" {
-		fmt.Printf("Homepage: %s\n", d.Homepage)
-	}
-	if d.ReleaseDate != "" {
-		fmt.Printf("Released: %s\n", d.ReleaseDate)
-	}
-	if d.Dependencies > 0 {
-		fmt.Printf("Dependencies: %d direct, %d total\n", d.DirectDependencies, d.Dependencies)
-	}
-	if d.Dependents > 0 {
-		fmt.Printf("Dependents: %d direct, %d total\n", d.DirectDependents, d.Dependents)
-	}
-	if n := len(d.Contributors); n > 0 {
-		var names []string
-		for i := 0; i < n && i < maxListedContributors; i++ {
-			names = append(names, d.Contributors[i].Name)
-		}
-		more := ""
-		if n > maxListedContributors {
-			more = ", ..."
-		}
-		fmt.Printf("Contributors: %d (%s%s)\n", n, strings.Join(names, ", "), more)
-	}
-	if d.DocType != "" {
-		status := d.DocType
-		if d.DocsBuildErrored {
-			status += " (build errored)"
-		}
-		fmt.Printf("Docs: %s\n", status)
-	}
 }
 
 func findPackageInfoREST(server, packageName string, registryNames []string) ([]packageInfo, error) {
@@ -966,72 +1035,90 @@ func getPackageDependencies(server string, packageName string, registryName stri
 		return err
 	}
 
-	var deps []PackageDependency
+	direct, indirect := splitDependencies(docsResp.Dependencies)
+	deps := append([]PackageDependency{}, direct...)
 	if showIndirect {
-		deps = docsResp.Dependencies
-	} else {
-		for _, dep := range docsResp.Dependencies {
-			if dep.Direct {
-				deps = append(deps, dep)
-			}
-		}
+		deps = append(deps, indirect...)
 	}
 
 	if asJSON {
-		if deps == nil {
-			deps = []PackageDependency{}
-		}
 		return writeJSON(os.Stdout, dependenciesDoc{docsResp.Name, docsResp.Version, targetRegistry, deps})
 	}
 
-	if len(deps) == 0 {
-		if showIndirect {
-			fmt.Printf("Package %s (v%s) has no dependencies\n", docsResp.Name, docsResp.Version)
-		} else {
-			fmt.Printf("Package %s (v%s) has no direct dependencies\n", docsResp.Name, docsResp.Version)
-		}
+	printPackageHeading(docsResp, targetRegistry)
+	if len(direct)+len(indirect) == 0 {
+		fmt.Println("No dependencies")
 		return nil
 	}
+	fmt.Printf("%s direct · %s indirect · %s total dependencies\n",
+		formatCount(len(direct)), formatCount(len(indirect)), formatCount(len(direct)+len(indirect)))
+	if len(direct) > 0 {
+		fmt.Println()
+		printDependencyTable("Direct dependencies", direct)
+	}
+	if showIndirect && len(indirect) > 0 {
+		fmt.Println()
+		printDependencyTable("Indirect dependencies", indirect)
+	} else if len(indirect) > 0 {
+		fmt.Printf("\n%s\n", dim(fmt.Sprintf("Use --indirect to list the %s indirect dependencies", formatCount(len(indirect)))))
+	}
+	return nil
+}
 
-	fmt.Printf("Dependencies for %s (v%s) from registry '%s':\n\n", docsResp.Name, docsResp.Version, targetRegistry)
-	if !showIndirect {
-		fmt.Printf("Showing %d direct dependencies (use --indirect to include indirect dependencies)\n\n", len(deps))
-		fmt.Printf("%-35s %-15s %-38s %s\n", "NAME", "REGISTRY", "UUID", "VERSIONS")
-		fmt.Printf("%-35s %-15s %-38s %s\n", strings.Repeat("-", 35), strings.Repeat("-", 15), strings.Repeat("-", 38), strings.Repeat("-", 20))
-		for _, dep := range deps {
-			fmt.Printf("%-35s %-15s %-38s %s\n", dep.Name, dep.Registry, dep.UUID, strings.Join(dep.Versions, ", "))
+// printPackageHeading prints "<name>  v<version> · <registry>" and a blank line.
+func printPackageHeading(docsResp *PackageDocsResponse, registry string) {
+	fmt.Printf("%s  %s\n\n", bold(docsResp.Name), dim("v"+docsResp.Version+" · "+registry))
+}
+
+// splitDependencies collapses entries to one per UUID, sorted by name. A
+// dependency listed as direct in any entry is direct and keeps that entry's
+// versions; the rest are indirect.
+func splitDependencies(entries []PackageDependency) (direct, indirect []PackageDependency) {
+	byUUID := make(map[string]PackageDependency)
+	for _, e := range entries {
+		if prev, ok := byUUID[e.UUID]; ok && (prev.Direct || !e.Direct) {
+			continue
 		}
-	} else {
-		var directDeps []PackageDependency
-		var indirectDeps []PackageDependency
-		for _, dep := range deps {
-			if dep.Direct {
-				directDeps = append(directDeps, dep)
-			} else {
-				indirectDeps = append(indirectDeps, dep)
-			}
-		}
-		fmt.Printf("Showing %d total dependencies (%d direct, %d indirect)\n\n", len(deps), len(directDeps), len(indirectDeps))
-		if len(directDeps) > 0 {
-			fmt.Printf("Direct Dependencies (%d):\n", len(directDeps))
-			fmt.Printf("%-35s %-15s %-38s %s\n", "NAME", "REGISTRY", "UUID", "VERSIONS")
-			fmt.Printf("%-35s %-15s %-38s %s\n", strings.Repeat("-", 35), strings.Repeat("-", 15), strings.Repeat("-", 38), strings.Repeat("-", 20))
-			for _, dep := range directDeps {
-				fmt.Printf("%-35s %-15s %-38s %s\n", dep.Name, dep.Registry, dep.UUID, strings.Join(dep.Versions, ", "))
-			}
-			fmt.Println()
-		}
-		if len(indirectDeps) > 0 {
-			fmt.Printf("Indirect Dependencies (%d):\n", len(indirectDeps))
-			fmt.Printf("%-35s %-15s %-38s %s\n", "NAME", "REGISTRY", "UUID", "VERSIONS")
-			fmt.Printf("%-35s %-15s %-38s %s\n", strings.Repeat("-", 35), strings.Repeat("-", 15), strings.Repeat("-", 38), strings.Repeat("-", 20))
-			for _, dep := range indirectDeps {
-				fmt.Printf("%-35s %-15s %-38s %s\n", dep.Name, dep.Registry, dep.UUID, strings.Join(dep.Versions, ", "))
-			}
+		byUUID[e.UUID] = e
+	}
+	for _, e := range byUUID {
+		if e.Direct {
+			direct = append(direct, e)
+		} else {
+			indirect = append(indirect, e)
 		}
 	}
+	byName := func(s []PackageDependency) {
+		sort.Slice(s, func(i, j int) bool {
+			if a, b := strings.ToLower(s[i].Name), strings.ToLower(s[j].Name); a != b {
+				return a < b
+			}
+			return s[i].UUID < s[j].UUID
+		})
+	}
+	byName(direct)
+	byName(indirect)
+	return direct, indirect
+}
 
-	return nil
+const uuidColWidth = 36
+
+// registryLabel shows standard libraries, which pkg.json lists without a
+// registry, as "stdlib".
+func registryLabel(registry string) string {
+	if registry == "" {
+		return dim(pad("stdlib", registryColWidth))
+	}
+	return pad(truncate(registry, registryColWidth), registryColWidth)
+}
+
+func printDependencyTable(title string, deps []PackageDependency) {
+	fmt.Printf("%s %s\n", bold(title), dim("("+formatCount(len(deps))+")"))
+	fmt.Println(bold(pad("NAME", nameColWidth+7) + " " + pad("REGISTRY", registryColWidth) + " " + pad("UUID", uuidColWidth) + "  VERSIONS"))
+	for _, dep := range deps {
+		fmt.Printf("%s %s %s  %s\n", pad(truncate(dep.Name, nameColWidth+7), nameColWidth+7), registryLabel(dep.Registry),
+			dim(pad(dep.UUID, uuidColWidth)), strings.Join(dep.Versions, ", "))
+	}
 }
 
 // splitDependents collapses entries to one per UUID, sorted by name. A
@@ -1065,11 +1152,10 @@ func splitDependents(entries []PackageDependent) (direct, indirect []PackageDepe
 }
 
 func printDependentsTable(title string, deps []PackageDependent) {
-	fmt.Printf("%s (%d):\n", title, len(deps))
-	fmt.Printf("%-35s %-15s %s\n", "NAME", "REGISTRY", "UUID")
-	fmt.Printf("%-35s %-15s %s\n", strings.Repeat("-", 35), strings.Repeat("-", 15), strings.Repeat("-", 36))
+	fmt.Printf("%s %s\n", bold(title), dim("("+formatCount(len(deps))+")"))
+	fmt.Println(bold(pad("NAME", nameColWidth+7) + " " + pad("REGISTRY", registryColWidth) + " UUID"))
 	for _, d := range deps {
-		fmt.Printf("%-35s %-15s %s\n", d.Name, d.Registry, d.UUID)
+		fmt.Printf("%s %s %s\n", pad(truncate(d.Name, nameColWidth+7), nameColWidth+7), registryLabel(d.Registry), dim(d.UUID))
 	}
 }
 
@@ -1112,23 +1198,22 @@ func getPackageDependents(server, packageName, registryName string, showIndirect
 	if asJSON {
 		return writeJSON(os.Stdout, newDependentsDoc(docsResp, targetRegistry, direct, indirect, showIndirect))
 	}
+	printPackageHeading(docsResp, targetRegistry)
 	if len(direct)+len(indirect) == 0 {
-		fmt.Printf("Package %s (v%s) has no dependents\n", docsResp.Name, docsResp.Version)
+		fmt.Println("No dependents")
 		return nil
 	}
-
-	fmt.Printf("Dependents of %s (v%s) from registry '%s':\n\n", docsResp.Name, docsResp.Version, targetRegistry)
-	fmt.Printf("%d direct, %d indirect, %d total\n\n", len(direct), len(indirect), len(direct)+len(indirect))
+	fmt.Printf("%s direct · %s indirect · %s total dependents\n",
+		formatCount(len(direct)), formatCount(len(indirect)), formatCount(len(direct)+len(indirect)))
 	if len(direct) > 0 {
+		fmt.Println()
 		printDependentsTable("Direct dependents", direct)
 	}
 	if showIndirect && len(indirect) > 0 {
-		if len(direct) > 0 {
-			fmt.Println()
-		}
+		fmt.Println()
 		printDependentsTable("Indirect dependents", indirect)
 	} else if len(indirect) > 0 {
-		fmt.Printf("\nUse --indirect to list the %d indirect dependents\n", len(indirect))
+		fmt.Printf("\n%s\n", dim(fmt.Sprintf("Use --indirect to list the %s indirect dependents", formatCount(len(indirect)))))
 	}
 	return nil
 }
