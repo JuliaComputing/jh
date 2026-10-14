@@ -126,6 +126,9 @@ go run . package dependency CSV --registry General
 # Get package dependents (reverse dependencies)
 go run . package dependents JuMP
 go run . package dependents JuMP --indirect
+go run . package dependents JuMP --json | jq .total
+go run . package dependency JuMP --json
+go run . package info JuMP --json
 ```
 
 ### Test registry operations
@@ -512,6 +515,7 @@ jh run setup
 - Landing page `update` command accepts content inline as an argument, from a file via `--file`, or piped via stdin (priority: `--file` > arg > stdin)
 - Landing page response uses custom JSON unmarshaling (`homepageResponse`) to handle `message` being either an object or a string
 - Package search (`jh package search`) and info (`jh package info`) both try REST API (`/api/v1/ui/packages/info`) first, then fall back to GraphQL (`FilteredPackages` / `FilteredPackagesCount` via `/v1/graphql`) on failure; a warning is printed to stderr when the fallback is used
+- `jh package info --json` prints the exact matches in the same `{"results": [...], "total": N}` document (`writePackagesJSON`; no match → empty `results`). `jh package dependency --json` prints `dependenciesDoc` and `jh package dependents --json` prints `dependentsDoc` (counts always cover every dependent; `dependents` lists indirect ones only with `--indirect`). All go through `writeJSON`; errors from these three commands go to stderr
 - REST API passes `--registries` as comma-separated registry names to the `registries` query param; GraphQL fallback passes registry IDs to the `registries` variable
 - `fetchRegistries` in `registries.go` is used by `listRegistries`, `packageSearchCmd`, `packageInfoCmd`, and `packageDependencyCmd` to resolve registry names to IDs (for GraphQL) and names (for REST)
 - Both REST and GraphQL package search/info paths produce identical output columns (Registry and Owner); GraphQL resolves registry names from the `registryIDs`/`registryNames` already in `PackageSearchParams` — no extra API call needed
