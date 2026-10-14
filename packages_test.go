@@ -248,3 +248,51 @@ func TestSplitDependentsEmpty(t *testing.T) {
 		t.Errorf("splitDependents(nil) = %v, %v; want empty", direct, indirect)
 	}
 }
+
+func TestNewDependentsDoc(t *testing.T) {
+	docs := &PackageDocsResponse{Name: "JuMP", Version: "1.32.1"}
+	direct := []PackageDependent{{Direct: true, Name: "A", UUID: "u1"}}
+	indirect := []PackageDependent{{Name: "B", UUID: "u2"}, {Name: "C", UUID: "u3"}}
+
+	got := newDependentsDoc(docs, "General", direct, indirect, false)
+	if got.Direct != 1 || got.Indirect != 2 || got.Total != 3 {
+		t.Errorf("counts = %d/%d/%d, want 1/2/3", got.Direct, got.Indirect, got.Total)
+	}
+	if len(got.Dependents) != 1 || got.Dependents[0].Name != "A" {
+		t.Errorf("without --indirect Dependents = %v, want only A", got.Dependents)
+	}
+
+	got = newDependentsDoc(docs, "General", direct, indirect, true)
+	if len(got.Dependents) != 3 {
+		t.Errorf("with --indirect len(Dependents) = %d, want 3", len(got.Dependents))
+	}
+	if got.Registry != "General" || got.Name != "JuMP" || got.Version != "1.32.1" {
+		t.Errorf("header = %q %q %q", got.Name, got.Version, got.Registry)
+	}
+}
+
+func TestPackageJSONDocsEmptyArrays(t *testing.T) {
+	var buf strings.Builder
+	doc := newDependentsDoc(&PackageDocsResponse{Name: "X", Version: "1.0.0"}, "General", nil, nil, true)
+	if err := writeJSON(&buf, doc); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `"dependents": []`) {
+		t.Errorf("dependents should encode as [], got:\n%s", buf.String())
+	}
+	if !strings.HasSuffix(buf.String(), "}\n") {
+		t.Errorf("output should end with a newline:\n%q", buf.String())
+	}
+
+	buf.Reset()
+	if err := writePackagesJSON(&buf, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Results []packageInfo `json:"results"`
+		Total   int           `json:"total"`
+	}
+	if err := json.Unmarshal([]byte(buf.String()), &decoded); err != nil || decoded.Results == nil || decoded.Total != 0 {
+		t.Errorf("empty info doc = %q (err %v), want results [] and total 0", buf.String(), err)
+	}
+}

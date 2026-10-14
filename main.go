@@ -1001,16 +1001,17 @@ Shows comprehensive package information including:
 - Documentation links
 
 The package name must match exactly (case-insensitive).`,
-	Example: "  jh package info DataFrames\n  jh package info Plots\n  jh package info CSV",
+	Example: "  jh package info DataFrames\n  jh package info Plots\n  jh package info --json CSV",
 	Args:    cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
 		if err != nil {
-			fmt.Printf("Failed to get server config: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Failed to get server config: %v\n", err)
 			os.Exit(1)
 		}
 
 		packageName := args[0]
+		asJSON, _ := cmd.Flags().GetBool("json")
 		registryNamesStr, _ := cmd.Flags().GetString("registries")
 
 		registryIDs, registryNames, err := resolveRegistries(server, registryNamesStr)
@@ -1019,8 +1020,8 @@ The package name must match exactly (case-insensitive).`,
 			os.Exit(1)
 		}
 
-		if err := getPackageInfo(server, packageName, registryIDs, registryNames); err != nil {
-			fmt.Printf("Failed to get package info: %v\n", err)
+		if err := getPackageInfo(server, packageName, registryIDs, registryNames, asJSON); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to get package info: %v\n", err)
 			os.Exit(1)
 		}
 	},
@@ -1038,21 +1039,22 @@ The command fetches dependency information from the package documentation
 JSON endpoint. If a package exists in multiple registries, it uses the
 first registry by default. You can specify a different registry using
 the --registry flag.`,
-	Example: "  jh package dependency DataFrames\n  jh package dependency --indirect Plots\n  jh package dependency --registry General CSV",
+	Example: "  jh package dependency DataFrames\n  jh package dependency --indirect Plots\n  jh package dependency --registry General CSV\n  jh package dependency --json JuMP",
 	Args:    cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
 		if err != nil {
-			fmt.Printf("Failed to get server config: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Failed to get server config: %v\n", err)
 			os.Exit(1)
 		}
 
 		packageName := args[0]
+		asJSON, _ := cmd.Flags().GetBool("json")
 		registryName, _ := cmd.Flags().GetString("registry")
 		showIndirect, _ := cmd.Flags().GetBool("indirect")
 
-		if err := getPackageDependencies(server, packageName, registryName, showIndirect); err != nil {
-			fmt.Printf("Failed to get package dependencies: %v\n", err)
+		if err := getPackageDependencies(server, packageName, registryName, showIndirect, asJSON); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to get package dependencies: %v\n", err)
 			os.Exit(1)
 		}
 	},
@@ -1071,21 +1073,22 @@ The data comes from the same package documentation JSON endpoint as
 jh package dependency, for the package's stable version. If a package
 exists in multiple registries, it uses the first registry by default.
 You can specify a different registry using the --registry flag.`,
-	Example: "  jh package dependents JuMP\n  jh package dependents --indirect DataFrames\n  jh package dependents --registry General CSV",
+	Example: "  jh package dependents JuMP\n  jh package dependents --indirect DataFrames\n  jh package dependents --registry General CSV\n  jh package dependents --json JuMP",
 	Args:    cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
 		if err != nil {
-			fmt.Printf("Failed to get server config: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Failed to get server config: %v\n", err)
 			os.Exit(1)
 		}
 
 		packageName := args[0]
+		asJSON, _ := cmd.Flags().GetBool("json")
 		registryName, _ := cmd.Flags().GetString("registry")
 		showIndirect, _ := cmd.Flags().GetBool("indirect")
 
-		if err := getPackageDependents(server, packageName, registryName, showIndirect); err != nil {
-			fmt.Printf("Failed to get package dependents: %v\n", err)
+		if err := getPackageDependents(server, packageName, registryName, showIndirect, asJSON); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to get package dependents: %v\n", err)
 			os.Exit(1)
 		}
 	},
@@ -2649,12 +2652,15 @@ func init() {
 	packageSearchCmd.Flags().Bool("json", false, "Print only a JSON document ({\"results\": [...], \"total\": N}) on stdout")
 	packageInfoCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	packageInfoCmd.Flags().String("registries", "", "Filter by registry names (comma-separated, e.g., 'General,CustomRegistry')")
+	packageInfoCmd.Flags().Bool("json", false, "Print only a JSON document ({\"results\": [...], \"total\": N}) on stdout")
 	packageDependencyCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	packageDependencyCmd.Flags().String("registry", "", "Specify registry name (uses first registry if not specified)")
 	packageDependencyCmd.Flags().Bool("indirect", false, "Include indirect dependencies")
+	packageDependencyCmd.Flags().Bool("json", false, "Print only a JSON document ({\"name\", \"version\", \"registry\", \"dependencies\": [...]}) on stdout")
 	packageDependentsCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	packageDependentsCmd.Flags().String("registry", "", "Specify registry name (uses first registry if not specified)")
 	packageDependentsCmd.Flags().Bool("indirect", false, "Also list indirect dependents")
+	packageDependentsCmd.Flags().Bool("json", false, "Print only a JSON document ({\"name\", \"version\", \"registry\", \"direct\", \"indirect\", \"total\", \"dependents\": [...]}) on stdout")
 	registryListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	registryListCmd.Flags().Bool("verbose", false, "Show detailed registry information")
 	projectListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
