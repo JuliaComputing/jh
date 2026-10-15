@@ -12,6 +12,7 @@ The application follows a command-line interface pattern using the Cobra library
 
 - **main.go**: Core CLI structure with command definitions and configuration management
 - **auth.go**: OAuth2 device flow authentication with JWT token handling
+- **jobs.go**: Job result operations (list and download job files) via the Hasura REST job endpoint and the job file download endpoint
 - **datasets.go**: Dataset operations (list, download, upload, status) with REST API integration
 - **registries.go**: Registry operations (list, config, add, update, registrator) with REST API integration
 - **packages.go**: Package operations (search, dependency) with REST API primary path (`/api/v1/ui/packages/info`), GraphQL fallback, and documentation API (`/docs/{registry}/{package}/stable/pkg.json`)
@@ -45,6 +46,7 @@ The application follows a command-line interface pattern using the Cobra library
 
 3. **Command Structure**:
    - `jh auth`: Authentication commands (login, refresh, status, env)
+   - `jh job result`: Job result files (list, download)
    - `jh dataset`: Dataset operations (list, download, upload, status)
    - `jh registry`: Registry operations (list, config — all via REST API)
    - `jh registry config`: Show registry JSON config by name; subcommands add/update accept JSON via stdin or `--file`
@@ -132,6 +134,16 @@ go run . package dependents JuMP --indirect
 go run . package dependents JuMP --json | jq .total
 go run . package dependency JuMP --json
 go run . package info JuMP --json
+```
+
+### Test job result operations
+```bash
+go run . job result list jr-abc123xyz
+go run . job result list --all jr-abc123xyz
+go run . job result list --json jr-abc123xyz
+go run . job result download jr-abc123xyz
+go run . job result download jr-abc123xyz results.tar.gz -o previous-run.tar.gz
+go run . job result download jr-abc123xyz code.jl --type source -o src/
 ```
 
 ### Test registry operations
@@ -561,6 +573,14 @@ jh run setup
 - `topSeverity` in `vuln.go` prefers CVSS_V3 scores; falls back to first available score; returns "N/A" if none
 
 ## Implementation Details
+
+### Job Results (`jobs.go`)
+
+- `fetchJobDetails` GETs `/api/rest/jobs/{jobname}` (Hasura REST, `X-Hasura-Role: jhuser`); the response is `{"details": [job]}`, an empty list meaning the job does not exist or is not visible. Each job's `files` entries have `name`, `type` (`input`, `source`, `project`, `result`), `size` and `hash` (both null while an upload is in progress) and `upload_timestamp`
+- `jh job result list` shows `result` files by default, `--all` for every type; `--json` prints `{"job", "status", "files"}`
+- `downloadJobFile` GETs `/jobs/{jobname}/files/{filename}?filetype=<type>`, which 302-redirects to a short-lived presigned object-store URL. `newJobHTTPClient` strips `Authorization` on every redirect: Go only strips it cross-domain, and the object store rejects a second auth mechanism
+- Downloads stream to a temp file in the destination directory, are verified against the recorded `sha2_256` hash (stored as hex; base64 also accepted), then renamed into place. Existing files are kept unless `--force`
+- Destination file names use only the base name of the server-supplied file name, so they cannot escape the output directory
 
 ### Registry Operations (`registries.go`)
 

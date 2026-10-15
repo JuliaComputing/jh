@@ -21,3 +21,18 @@ func TestJobList(t *testing.T) {
 		t.Error("job list produced no output")
 	}
 }
+
+// `jh job result list` against a job name that cannot exist: exercises the real
+// GET /api/rest/jobs/{jobname} response shape (an empty "details" list) without
+// depending on a job with results on the instance.
+func TestJobResultListUnknownJob(t *testing.T) {
+	requireCreds(t)
+	res := runJH(t, "job", "result", "list", "jr-jhe2enonexistent")
+	if res.exitCode == 0 {
+		t.Fatalf("job result list for an unknown job exited 0\nstdout: %s", res.stdout)
+	}
+	skipIfUnsupported(t, res)
+	if !strings.Contains(res.stderr, "not found") {
+		t.Errorf("want a not-found error, got stderr: %s", res.stderr)
+	}
+}

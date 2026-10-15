@@ -62,6 +62,10 @@ func TestCommandTreeWiring(t *testing.T) {
 		}
 	}
 
+	// job result list/download.
+	requirePath(t, "job", "result", "list")
+	requirePath(t, "job", "result", "download")
+
 	// admin landing-page update/remove.
 	requirePath(t, "admin", "landing-page", "update")
 	requirePath(t, "admin", "landing-page", "remove")

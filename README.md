@@ -6,6 +6,7 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 
 - **Authentication**: OAuth2 device flow authentication with JWT token handling
 - **Dataset Management**: List, download, upload, and check status of datasets
+- **Job Results**: List and download a job's result files (and its other input/source/project files)
 - **Package Management**: Search and explore Julia packages across registries via REST API (GraphQL fallback), with dependency analysis
 - **Registry Management**: List, add, and update Julia package registries
 - **Project Management**: List and filter projects using GraphQL API
@@ -154,6 +155,11 @@ go build -o jh .
 - `jh dataset download <dataset-id> [version] [local-path]` - Download a dataset
 - `jh dataset upload [dataset-id] <file-path>` - Upload a dataset
 - `jh dataset status <dataset-id> [version]` - Show dataset status
+
+### Job Results (`jh job result`)
+
+- `jh job result list <job-name>` - List a job's result files (`--all` for every job file, `--json` for scripts)
+- `jh job result download <job-name> [file-name]` - Download one or all result files (`-o` destination, `--force` to overwrite, `--type` for other job file types)
 
 ### Package Management (`jh package`)
 
@@ -358,6 +364,27 @@ jh dataset upload --new ./my-data.tar.gz
 
 # Upload new version to existing dataset
 jh dataset upload my-dataset ./updated-data.tar.gz
+```
+
+### Job Result Operations
+
+A job produces a result file by setting `ENV["RESULTS_FILE"]` to a file path; JuliaHub uploads it when the job finishes.
+
+```bash
+# List a job's result files
+jh job result list jr-abc123xyz
+
+# List every file attached to the job, with its type
+jh job result list --all jr-abc123xyz
+
+# Download all result files into the current directory
+jh job result download jr-abc123xyz
+
+# Download one result file to a specific path (e.g. to reuse a previous run's output)
+jh job result download jr-abc123xyz results.tar.gz -o previous-run.tar.gz
+
+# Download into a directory, overwriting existing files
+jh job result download jr-abc123xyz -o results/ --force
 ```
 
 ### Package Operations
