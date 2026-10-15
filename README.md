@@ -170,6 +170,10 @@ go build -o jh .
   - Default: Shows up to 10 direct dependencies (NAME, REGISTRY, UUID, VERSIONS)
   - `jh package dependency --indirect` - Include both direct and indirect dependencies
   - `jh package dependency --registry General` - Specify registry to use
+- `jh package dependents <package-name>` - List packages that depend on a package (reverse dependencies)
+  - Default: Prints direct/indirect/total counts and lists the direct dependents (NAME, REGISTRY, UUID)
+  - `jh package dependents --indirect` - Also list indirect dependents
+  - `jh package dependents --registry General` - Specify registry to use
 
 ### Registry Management (`jh registry`)
 
@@ -374,6 +378,10 @@ jh package info Plots --registries General
 jh package dependency DataFrames              # Shows up to 10 direct dependencies
 jh package dependency DataFrames --indirect   # Includes indirect dependencies
 jh package dependency CSV --registry General  # Use specific registry
+
+# List reverse dependencies (dependents)
+jh package dependents JuMP                    # Counts, plus the direct dependents
+jh package dependents JuMP --indirect         # Also lists indirect dependents
 ```
 
 ### Registry Operations

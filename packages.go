@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 )
@@ -62,10 +63,21 @@ type PackageDependency struct {
 	Slug     string   `json:"slug"`
 }
 
+// PackageDependent is one entry of pkg.json's `reversedeps`. A dependent can
+// appear twice, once with direct=true and once with direct=false.
+type PackageDependent struct {
+	Direct   bool   `json:"direct"`
+	Name     string `json:"name"`
+	UUID     string `json:"uuid"`
+	Registry string `json:"registry"`
+	Slug     string `json:"slug"`
+}
+
 type PackageDocsResponse struct {
 	Name         string              `json:"name"`
 	Version      string              `json:"version"`
 	Dependencies []PackageDependency `json:"deps"`
+	Dependents   []PackageDependent  `json:"reversedeps"`
 }
 
 type Package struct {
@@ -733,12 +745,14 @@ func findPackageRegistry(server, packageName string) (string, error) {
 	return "", fmt.Errorf("package not found: %s", packageName)
 }
 
-func getPackageDependencies(server string, packageName string, registryName string, showIndirect bool) error {
+// fetchPackageDocs returns the stable version's pkg.json of packageName in
+// registryName, or in the registry findPackageRegistry picks when it is empty.
+func fetchPackageDocs(server, packageName, registryName string) (*PackageDocsResponse, string, error) {
 	targetRegistry := registryName
 	if targetRegistry == "" {
 		var err error
 		if targetRegistry, err = findPackageRegistry(server, packageName); err != nil {
-			return err
+			return nil, "", err
 		}
 	}
 
@@ -746,12 +760,12 @@ func getPackageDependencies(server string, packageName string, registryName stri
 
 	token, err := ensureValidToken()
 	if err != nil {
-		return fmt.Errorf("authentication required: %w", err)
+		return nil, "", fmt.Errorf("authentication required: %w", err)
 	}
 
 	req, err := http.NewRequest("GET", docsURL, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return nil, "", fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
@@ -760,23 +774,31 @@ func getPackageDependencies(server string, packageName string, registryName stri
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to fetch package documentation: %w", err)
+		return nil, "", fmt.Errorf("failed to fetch package documentation: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API request failed (status %d): %s", resp.StatusCode, string(body))
+		return nil, "", fmt.Errorf("API request failed (status %d): %s", resp.StatusCode, string(body))
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("failed to read response: %w", err)
+		return nil, "", fmt.Errorf("failed to read response: %w", err)
 	}
 
 	var docsResp PackageDocsResponse
 	if err := json.Unmarshal(body, &docsResp); err != nil {
-		return fmt.Errorf("failed to parse response: %w", err)
+		return nil, "", fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &docsResp, targetRegistry, nil
+}
+
+func getPackageDependencies(server string, packageName string, registryName string, showIndirect bool) error {
+	docsResp, targetRegistry, err := fetchPackageDocs(server, packageName, registryName)
+	if err != nil {
+		return err
 	}
 
 	var deps []PackageDependency
@@ -837,5 +859,72 @@ func getPackageDependencies(server string, packageName string, registryName stri
 		}
 	}
 
+	return nil
+}
+
+// splitDependents collapses entries to one per UUID, sorted by name. A
+// dependent listed as direct in any entry is direct; the rest are indirect.
+func splitDependents(entries []PackageDependent) (direct, indirect []PackageDependent) {
+	byUUID := make(map[string]PackageDependent)
+	for _, e := range entries {
+		if prev, ok := byUUID[e.UUID]; ok {
+			e.Direct = e.Direct || prev.Direct
+		}
+		byUUID[e.UUID] = e
+	}
+	for _, e := range byUUID {
+		if e.Direct {
+			direct = append(direct, e)
+		} else {
+			indirect = append(indirect, e)
+		}
+	}
+	byName := func(s []PackageDependent) {
+		sort.Slice(s, func(i, j int) bool {
+			if a, b := strings.ToLower(s[i].Name), strings.ToLower(s[j].Name); a != b {
+				return a < b
+			}
+			return s[i].UUID < s[j].UUID
+		})
+	}
+	byName(direct)
+	byName(indirect)
+	return direct, indirect
+}
+
+func printDependentsTable(title string, deps []PackageDependent) {
+	fmt.Printf("%s (%d):\n", title, len(deps))
+	fmt.Printf("%-35s %-15s %s\n", "NAME", "REGISTRY", "UUID")
+	fmt.Printf("%-35s %-15s %s\n", strings.Repeat("-", 35), strings.Repeat("-", 15), strings.Repeat("-", 36))
+	for _, d := range deps {
+		fmt.Printf("%-35s %-15s %s\n", d.Name, d.Registry, d.UUID)
+	}
+}
+
+func getPackageDependents(server, packageName, registryName string, showIndirect bool) error {
+	docsResp, targetRegistry, err := fetchPackageDocs(server, packageName, registryName)
+	if err != nil {
+		return err
+	}
+
+	direct, indirect := splitDependents(docsResp.Dependents)
+	if len(direct)+len(indirect) == 0 {
+		fmt.Printf("Package %s (v%s) has no dependents\n", docsResp.Name, docsResp.Version)
+		return nil
+	}
+
+	fmt.Printf("Dependents of %s (v%s) from registry '%s':\n\n", docsResp.Name, docsResp.Version, targetRegistry)
+	fmt.Printf("%d direct, %d indirect, %d total\n\n", len(direct), len(indirect), len(direct)+len(indirect))
+	if len(direct) > 0 {
+		printDependentsTable("Direct dependents", direct)
+	}
+	if showIndirect && len(indirect) > 0 {
+		if len(direct) > 0 {
+			fmt.Println()
+		}
+		printDependentsTable("Indirect dependents", indirect)
+	} else if len(indirect) > 0 {
+		fmt.Printf("\nUse --indirect to list the %d indirect dependents\n", len(indirect))
+	}
 	return nil
 }
