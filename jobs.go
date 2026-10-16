@@ -8,18 +8,24 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // jobResultFileType is the file type the job runtime gives the file named by
 // the job's RESULTS_FILE environment variable.
 const jobResultFileType = "result"
+
+// jobFileTypes are the job file types JuliaHub records.
+var jobFileTypes = []string{"input", "source", "project", jobResultFileType}
 
 // JobFileHash is the hash JuliaHub records for an uploaded job file, e.g.
 // Algorithm "sha2_256" with a hex-encoded Value. Both may be null while the
@@ -149,7 +155,7 @@ func printJobFiles(w io.Writer, job *JobDetails, files []JobFile, showType bool)
 
 	nameWidth := len("NAME")
 	for _, f := range files {
-		if n := len(f.Name); n > nameWidth {
+		if n := utf8.RuneCountInString(f.Name); n > nameWidth {
 			nameWidth = n
 		}
 	}
@@ -163,7 +169,7 @@ func printJobFiles(w io.Writer, job *JobDetails, files []JobFile, showType bool)
 	}
 	fmt.Fprintln(w, bold(header))
 	for _, f := range files {
-		line := pad(truncate(f.Name, nameWidth), nameWidth) + "  " + padLeft(jobFileSizeLabel(f), 10) + "  " + dim(formatTokenDate(f.UploadTimestamp))
+		line := pad(truncate(f.Name, nameWidth), nameWidth) + "  " + padLeft(jobFileSizeLabel(f), 10) + "  " + dim(formatTimestamp(f.UploadTimestamp))
 		if showType {
 			line = pad(f.Type, 8) + "  " + line
 		}
@@ -177,18 +183,25 @@ func jobBaseURL(server string) string {
 }
 
 func newJobHTTPClient() *http.Client {
+	// No overall Client.Timeout: it would also bound reading the body, and abort
+	// large downloads over slow links. Only waiting for response headers, the
+	// phase that can hang silently, is bounded.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = 60 * time.Second
 	return &http.Client{
-		Timeout: 30 * time.Minute,
+		Transport: transport,
 		// The file endpoint 302-redirects to a presigned object-store URL.
 		// The signature is in the query string; also sending our bearer token
 		// would be a second auth mechanism the object store rejects, and it
 		// must not leak to the storage host. Go only strips Authorization on
-		// cross-domain redirects, so drop it unconditionally.
+		// cross-domain redirects, so drop it unconditionally. Referer would
+		// tell the storage host the job and file names, so drop that too.
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
 				return errors.New("stopped after 10 redirects")
 			}
 			req.Header.Del("Authorization")
+			req.Header.Del("Referer")
 			return nil
 		},
 	}
@@ -227,41 +240,59 @@ func listJobResults(server, jobName string, all, asJSON bool) error {
 	return nil
 }
 
+// jobFilePending reports whether a file's upload is still in progress; its
+// size (and hash) are null until it completes.
+func jobFilePending(f JobFile) bool {
+	return f.Size == nil
+}
+
 // selectJobFiles picks the files to download: the named file of fileType, or
-// every file of fileType when name is empty.
-func selectJobFiles(job *JobDetails, fileType, name string) ([]JobFile, error) {
+// every file of fileType when name is empty. Files still being uploaded are
+// returned separately as pending when no name is given, and are an error when
+// named explicitly.
+func selectJobFiles(job *JobDetails, fileType, name string) (files, pending []JobFile, err error) {
 	candidates := filterJobFiles(job.Files, fileType)
+	if len(candidates) == 0 {
+		return nil, nil, fmt.Errorf("job '%s' (%s) has no %s files", job.JobName, job.Status, fileType)
+	}
 	if name == "" {
-		if len(candidates) == 0 {
-			return nil, fmt.Errorf("job '%s' (%s) has no %s files", job.JobName, job.Status, fileType)
+		for _, f := range candidates {
+			if jobFilePending(f) {
+				pending = append(pending, f)
+			} else {
+				files = append(files, f)
+			}
 		}
-		return candidates, nil
+		if len(files) == 0 {
+			return nil, pending, fmt.Errorf("job '%s' (%s) has no completed %s files; %d still uploading", job.JobName, job.Status, fileType, len(pending))
+		}
+		return files, pending, nil
 	}
 	for _, f := range candidates {
 		if f.Name == name {
-			return []JobFile{f}, nil
+			if jobFilePending(f) {
+				return nil, nil, fmt.Errorf("'%s' of job '%s' (%s) is still being uploaded", name, job.JobName, job.Status)
+			}
+			return []JobFile{f}, nil, nil
 		}
 	}
 	var names []string
 	for _, f := range candidates {
 		names = append(names, f.Name)
 	}
-	if len(names) == 0 {
-		return nil, fmt.Errorf("job '%s' (%s) has no %s files", job.JobName, job.Status, fileType)
-	}
-	return nil, fmt.Errorf("job '%s' has no %s file named '%s' (available: %s)", job.JobName, fileType, name, strings.Join(names, ", "))
+	return nil, nil, fmt.Errorf("job '%s' has no %s file named '%s' (available: %s)", job.JobName, fileType, name, strings.Join(names, ", "))
 }
 
-// jobFileDestination resolves where a file is written. With several files,
-// output is a directory (created if needed). With one, an existing directory
-// or a path ending in a separator receives the file under its own name;
-// anything else is the destination file path. An empty output means the
-// current directory.
+// jobFileDestination resolves where a file is written. When downloading all
+// files (multiple), output is a directory (created if needed), however many
+// files there are. For a named file, an existing directory or a path ending in
+// a separator receives the file under its own name; anything else is the
+// destination file path. An empty output means the current directory.
 func jobFileDestination(output, fileName string, multiple bool) (string, error) {
 	// Job file names come from the server; never let one escape the target
-	// directory.
+	// directory. IsLocal also rejects Windows reserved names such as NUL.
 	base := filepath.Base(filepath.FromSlash(fileName))
-	if base == "." || base == ".." || base == string(filepath.Separator) {
+	if base == "." || !filepath.IsLocal(base) {
 		return "", fmt.Errorf("refusing to write file with unsafe name '%s'", fileName)
 	}
 	if output == "" {
@@ -278,8 +309,9 @@ func jobFileDestination(output, fileName string, multiple bool) (string, error) 
 
 // decodeJobFileHash decodes a recorded SHA-256 hash. JuliaHub stores job file
 // hashes as hex; base64 is accepted too since JuliaHub.jl documents FileHash
-// values as base64. A 64-character hex string is also valid base64, so hex is
-// tried first.
+// values as base64. The digest length keeps the two apart: a 64-character hex
+// string decodes as base64 to 48 bytes, not 32, and a 44-character base64
+// digest (with its "=" padding) is never valid hex.
 func decodeJobFileHash(value string) ([]byte, error) {
 	if b, err := hex.DecodeString(value); err == nil && len(b) == sha256.Size {
 		return b, nil
@@ -295,55 +327,91 @@ func decodeJobFileHash(value string) ([]byte, error) {
 }
 
 // verifyJobFileHash checks sum (a SHA-256 digest) against the recorded hash
-// when JuliaHub recorded a sha2_256 one; other or missing hashes are skipped.
-func verifyJobFileHash(f JobFile, sum []byte) error {
-	if f.Hash == nil || f.Hash.Algorithm == nil || f.Hash.Value == nil || *f.Hash.Algorithm != "sha2_256" {
-		return nil
+// when JuliaHub recorded a sha2_256 one, and reports whether it did. Other,
+// missing or empty hashes are skipped.
+func verifyJobFileHash(f JobFile, sum []byte) (verified bool, err error) {
+	if f.Hash == nil || f.Hash.Algorithm == nil || f.Hash.Value == nil || *f.Hash.Algorithm != "sha2_256" || *f.Hash.Value == "" {
+		return false, nil
 	}
 	want, err := decodeJobFileHash(*f.Hash.Value)
 	if err != nil {
-		return fmt.Errorf("invalid recorded hash for '%s': %w", f.Name, err)
+		return false, fmt.Errorf("invalid recorded hash for '%s': %w", f.Name, err)
 	}
 	if string(want) != string(sum) {
-		return fmt.Errorf("checksum mismatch for '%s': expected sha256 %x, got %x", f.Name, want, sum)
+		return false, fmt.Errorf("checksum mismatch for '%s': expected sha256 %x, got %x", f.Name, want, sum)
+	}
+	return true, nil
+}
+
+func errJobFileExists(dest string) error {
+	return fmt.Errorf("%s already exists (use --force to overwrite)", dest)
+}
+
+// moveJobFileIntoPlace moves a finished download from tmpName to dest. Without
+// force it never replaces a file, including one created during the download:
+// os.Link fails atomically when dest exists, unlike os.Rename. Where hard links
+// are unsupported it falls back to re-checking dest just before the rename.
+// The caller removes tmpName.
+func moveJobFileIntoPlace(tmpName, dest string, force bool) error {
+	if !force {
+		err := os.Link(tmpName, dest)
+		if err == nil {
+			return nil
+		}
+		if errors.Is(err, fs.ErrExist) {
+			return errJobFileExists(dest)
+		}
+		if _, err := os.Lstat(dest); err == nil {
+			return errJobFileExists(dest)
+		}
+	}
+	if err := os.Rename(tmpName, dest); err != nil {
+		return fmt.Errorf("failed to move download into place: %w", err)
 	}
 	return nil
 }
 
+// jobFileDownload is the outcome of downloading one job file.
+type jobFileDownload struct {
+	Bytes    int64
+	Verified bool // checked against a recorded SHA-256 hash
+}
+
 // downloadJobFile streams one job file to dest via a temporary file in the
-// same directory, verifying its hash before the final rename. It refuses to
-// overwrite dest unless force is set.
-func downloadJobFile(client *http.Client, baseURL, idToken, jobName string, f JobFile, dest string, force bool) (int64, error) {
+// same directory, checking its size and hash before moving it into place. It
+// refuses to overwrite dest unless force is set.
+func downloadJobFile(client *http.Client, baseURL, idToken, jobName string, f JobFile, dest string, force bool) (jobFileDownload, error) {
+	var res jobFileDownload
 	if !force {
 		if _, err := os.Stat(dest); err == nil {
-			return 0, fmt.Errorf("%s already exists (use --force to overwrite)", dest)
+			return res, errJobFileExists(dest)
 		}
 	}
 
 	u := fmt.Sprintf("%s/jobs/%s/files/%s?filetype=%s", baseURL, url.PathEscape(jobName), url.PathEscape(f.Name), url.QueryEscape(f.Type))
 	req, err := http.NewRequest("GET", u, nil)
 	if err != nil {
-		return 0, fmt.Errorf("failed to create request: %w", err)
+		return res, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+idToken)
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, fmt.Errorf("failed to download '%s': %w", f.Name, err)
+		return res, fmt.Errorf("failed to download '%s': %w", f.Name, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return 0, fmt.Errorf("download of '%s' failed (status %d): %s", f.Name, resp.StatusCode, strings.TrimSpace(string(body)))
+		return res, fmt.Errorf("download of '%s' failed (status %d): %s", f.Name, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	dir := filepath.Dir(dest)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return 0, fmt.Errorf("failed to create directory %s: %w", dir, err)
+		return res, fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(dest)+".*.tmp")
 	if err != nil {
-		return 0, fmt.Errorf("failed to create temporary file: %w", err)
+		return res, fmt.Errorf("failed to create temporary file: %w", err)
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName) // no-op after a successful rename
@@ -358,15 +426,55 @@ func downloadJobFile(client *http.Client, baseURL, idToken, jobName string, f Jo
 		err = cerr
 	}
 	if err != nil {
-		return 0, fmt.Errorf("failed to write '%s': %w", f.Name, err)
+		return res, fmt.Errorf("failed to write '%s': %w", f.Name, err)
 	}
-	if err := verifyJobFileHash(f, h.Sum(nil)); err != nil {
-		return 0, err
+	if f.Size != nil && n != *f.Size {
+		return res, fmt.Errorf("size mismatch for '%s': expected %d bytes, got %d", f.Name, *f.Size, n)
 	}
-	if err := os.Rename(tmpName, dest); err != nil {
-		return 0, fmt.Errorf("failed to move download into place: %w", err)
+	verified, err := verifyJobFileHash(f, h.Sum(nil))
+	if err != nil {
+		return res, err
 	}
-	return n, nil
+	if err := moveJobFileIntoPlace(tmpName, dest, force); err != nil {
+		return res, err
+	}
+	return jobFileDownload{Bytes: n, Verified: verified}, nil
+}
+
+// jobDownload is one planned file download.
+type jobDownload struct {
+	File JobFile
+	Dest string
+}
+
+// planJobDownloads selects the files to download and resolves each one's
+// destination before anything is written, so a bad request fails up front. It
+// also returns the pending files skipped when downloading all files.
+func planJobDownloads(job *JobDetails, fileType, fileName, output string) ([]jobDownload, []JobFile, error) {
+	if !slices.Contains(jobFileTypes, fileType) {
+		return nil, nil, fmt.Errorf("invalid file type '%s' (want one of: %s)", fileType, strings.Join(jobFileTypes, ", "))
+	}
+	files, pending, err := selectJobFiles(job, fileType, fileName)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Decide by the request, not by how many files the job has, so -o has the
+	// same meaning for every job.
+	multiple := fileName == ""
+	seen := map[string]string{}
+	var plan []jobDownload
+	for _, f := range files {
+		dest, err := jobFileDestination(output, f.Name, multiple)
+		if err != nil {
+			return nil, nil, err
+		}
+		if prev, ok := seen[dest]; ok {
+			return nil, nil, fmt.Errorf("'%s' and '%s' would both be saved as %s", prev, f.Name, dest)
+		}
+		seen[dest] = f.Name
+		plan = append(plan, jobDownload{File: f, Dest: dest})
+	}
+	return plan, pending, nil
 }
 
 func downloadJobResults(server, jobName, fileName, output, fileType string, force bool) error {
@@ -381,22 +489,24 @@ func downloadJobResults(server, jobName, fileName, output, fileType string, forc
 	if err != nil {
 		return err
 	}
-	files, err := selectJobFiles(job, fileType, fileName)
+	plan, pending, err := planJobDownloads(job, fileType, fileName, output)
 	if err != nil {
 		return err
 	}
+	for _, f := range pending {
+		fmt.Fprintf(os.Stderr, "Skipping %s: upload in progress\n", f.Name)
+	}
 
-	multiple := len(files) > 1
-	for _, f := range files {
-		dest, err := jobFileDestination(output, f.Name, multiple)
+	for _, d := range plan {
+		res, err := downloadJobFile(client, baseURL, token.IDToken, job.JobName, d.File, d.Dest, force)
 		if err != nil {
 			return err
 		}
-		n, err := downloadJobFile(client, baseURL, token.IDToken, job.JobName, f, dest, force)
-		if err != nil {
-			return err
+		note := ""
+		if !res.Verified {
+			note = " (not verified: no SHA-256 hash recorded)"
 		}
-		fmt.Fprintf(os.Stderr, "Downloaded %s (%s) to %s\n", f.Name, formatBytes(n), dest)
+		fmt.Fprintf(os.Stderr, "Downloaded %s (%s) to %s%s\n", d.File.Name, formatBytes(res.Bytes), d.Dest, note)
 	}
 	return nil
 }

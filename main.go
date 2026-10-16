@@ -341,9 +341,9 @@ var jobCmd = &cobra.Command{
 	Long: `Manage jobs on JuliaHub.
 
 Jobs are computational tasks that run on JuliaHub's infrastructure.
-You can submit, monitor, and manage jobs through these commands.
+Use "jh job result" to list and download a job's result files.
 
-Note: Job functionality is currently in development.`,
+Note: "jh job list" and "jh job start" are placeholders, still in development.`,
 }
 
 var jobListCmd = &cobra.Command{
@@ -429,13 +429,14 @@ var jobResultDownloadCmd = &cobra.Command{
 	Long: `Download result files of a job.
 
 With a file name, downloads that file; without one, downloads every result
-file of the job. Files are saved in the current directory under their own
-names unless --output is given: with a single file, --output is the
-destination path (or a directory to save into); with several files it is a
-directory, created if needed.
+file of the job (skipping files whose upload is still in progress). Files are
+saved in the current directory under their own names unless --output is given:
+with a file name, --output is the destination path (or a directory to save
+into); without one, --output is always a directory, created if needed.
 
-Existing files are not overwritten unless --force is given. When JuliaHub
-recorded a SHA-256 hash for a file, the download is verified against it.
+Existing files are not overwritten unless --force is given. Each download is
+checked against the size JuliaHub recorded and, when JuliaHub recorded a
+SHA-256 hash for the file, verified against it.
 
 Use --type to download another kind of job file (input, source, project).`,
 	Example: "  jh job result download jr-abc123xyz\n  jh job result download jr-abc123xyz results.tar.gz\n  jh job result download jr-abc123xyz results.tar.gz -o previous-run.tar.gz\n  jh job result download jr-abc123xyz -o results/",
@@ -2719,7 +2720,7 @@ func init() {
 	jobResultDownloadCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	jobResultDownloadCmd.Flags().StringP("output", "o", "", "Destination file or directory (default: current directory)")
 	jobResultDownloadCmd.Flags().String("type", jobResultFileType, "Job file type to download: result, input, source or project")
-	jobResultDownloadCmd.Flags().BoolP("force", "f", false, "Overwrite existing files")
+	jobResultDownloadCmd.Flags().Bool("force", false, "Overwrite existing files")
 	datasetListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	datasetDownloadCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	datasetUploadCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")

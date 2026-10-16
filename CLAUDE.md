@@ -578,9 +578,10 @@ jh run setup
 
 - `fetchJobDetails` GETs `/api/rest/jobs/{jobname}` (Hasura REST, `X-Hasura-Role: jhuser`); the response is `{"details": [job]}`, an empty list meaning the job does not exist or is not visible. Each job's `files` entries have `name`, `type` (`input`, `source`, `project`, `result`), `size` and `hash` (both null while an upload is in progress) and `upload_timestamp`
 - `jh job result list` shows `result` files by default, `--all` for every type; `--json` prints `{"job", "status", "files"}`
-- `downloadJobFile` GETs `/jobs/{jobname}/files/{filename}?filetype=<type>`, which 302-redirects to a short-lived presigned object-store URL. `newJobHTTPClient` strips `Authorization` on every redirect: Go only strips it cross-domain, and the object store rejects a second auth mechanism
-- Downloads stream to a temp file in the destination directory, are verified against the recorded `sha2_256` hash (stored as hex; base64 also accepted), then renamed into place. Existing files are kept unless `--force`
-- Destination file names use only the base name of the server-supplied file name, so they cannot escape the output directory
+- `planJobDownloads` validates `--type`, selects files (download-all skips pending files with a stderr notice; a named pending file is an error) and resolves every destination up front, rejecting two files that would land on the same path. Download-all always treats `-o` as a directory; a named download treats it as a file unless it is an existing directory or ends in a separator
+- `downloadJobFile` GETs `/jobs/{jobname}/files/{filename}?filetype=<type>`, which 302-redirects to a short-lived presigned object-store URL. `newJobHTTPClient` strips `Authorization` and `Referer` on every redirect: Go only strips Authorization cross-domain, and the object store rejects a second auth mechanism. It bounds only `ResponseHeaderTimeout`, not the whole request, so large downloads are not cut off
+- Downloads stream to a temp file in the destination directory, are checked against the recorded `size` and `sha2_256` hash (stored as hex; base64 also accepted), then moved into place. Files with no usable hash are reported as "(not verified)". Without `--force`, `moveJobFileIntoPlace` uses `os.Link` so a file created at the destination during the download is not replaced
+- Destination file names use only the base name of the server-supplied file name and must pass `filepath.IsLocal` (which also rejects Windows device names), so they cannot escape the output directory
 
 ### Registry Operations (`registries.go`)
 

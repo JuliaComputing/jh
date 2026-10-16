@@ -24,7 +24,7 @@ type TokensResponse struct {
 	Success bool    `json:"success"`
 }
 
-func formatTokenDate(dateStr string) string {
+func formatTimestamp(dateStr string) string {
 	// Try parsing as RFC3339 with fractional seconds
 	t, err := time.Parse(time.RFC3339, dateStr)
 	if err != nil {
@@ -86,8 +86,8 @@ func listTokens(server string, verbose bool) error {
 			fmt.Printf("Subject: %s\n", tok.Subject)
 			fmt.Printf("Signature: %s\n", tok.Signature)
 			fmt.Printf("Created By: %s\n", tok.CreatedBy)
-			fmt.Printf("Created At: %s\n", formatTokenDate(tok.CreatedAt))
-			fmt.Printf("Expires At: %s", formatTokenDate(tok.ExpiresAt))
+			fmt.Printf("Created At: %s\n", formatTimestamp(tok.CreatedAt))
+			fmt.Printf("Expires At: %s", formatTimestamp(tok.ExpiresAt))
 			if tok.ExpiresAtIsEstimate {
 				fmt.Printf(" (estimate)")
 			}
