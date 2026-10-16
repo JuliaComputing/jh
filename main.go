@@ -341,9 +341,9 @@ var jobCmd = &cobra.Command{
 	Long: `Manage jobs on JuliaHub.
 
 Jobs are computational tasks that run on JuliaHub's infrastructure.
-You can submit, monitor, and manage jobs through these commands.
+Use "jh job result" to list and download a job's result files.
 
-Note: Job functionality is currently in development.`,
+Note: "jh job list" and "jh job start" are placeholders, still in development.`,
 }
 
 var jobListCmd = &cobra.Command{
@@ -385,6 +385,79 @@ Note: This functionality is currently in development.`,
 		}
 		fmt.Printf("Starting job on %s...\n", server)
 		fmt.Println("This is a placeholder for the job start functionality")
+	},
+}
+
+var jobResultCmd = &cobra.Command{
+	Use:   "result",
+	Short: "List and download job result files",
+	Long: `List and download the result files of a JuliaHub job.
+
+A job produces a result file by setting the RESULTS_FILE environment variable
+to a file path (in Julia, ENV["RESULTS_FILE"] = "results.tar.gz"); JuliaHub
+uploads that file when the job finishes. Jobs are identified by their name,
+e.g. jr-abc123xyz.`,
+}
+
+var jobResultListCmd = &cobra.Command{
+	Use:   "list <job-name>",
+	Short: "List a job's result files",
+	Long: `List the result files of a job with their size and upload time.
+
+Use --all to list every file attached to the job (input, source, project and
+result files) with its type.`,
+	Example: "  jh job result list jr-abc123xyz\n  jh job result list --all jr-abc123xyz\n  jh job result list --json jr-abc123xyz",
+	Args:    cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		all, _ := cmd.Flags().GetBool("all")
+		asJSON, _ := cmd.Flags().GetBool("json")
+		if err := listJobResults(server, args[0], all, asJSON); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to list job results: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var jobResultDownloadCmd = &cobra.Command{
+	Use:   "download <job-name> [file-name]",
+	Short: "Download a job's result files",
+	Long: `Download result files of a job.
+
+With a file name, downloads that file; without one, downloads every result
+file of the job (skipping files whose upload is still in progress). Files are
+saved in the current directory under their own names unless --output is given:
+with a file name, --output is the destination path (or a directory to save
+into); without one, --output is always a directory, created if needed.
+
+Existing files are not overwritten unless --force is given. Each download is
+checked against the size JuliaHub recorded and, when JuliaHub recorded a
+SHA-256 hash for the file, verified against it.
+
+Use --type to download another kind of job file (input, source, project).`,
+	Example: "  jh job result download jr-abc123xyz\n  jh job result download jr-abc123xyz results.tar.gz\n  jh job result download jr-abc123xyz results.tar.gz -o previous-run.tar.gz\n  jh job result download jr-abc123xyz -o results/",
+	Args:    cobra.RangeArgs(1, 2),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		fileName := ""
+		if len(args) == 2 {
+			fileName = args[1]
+		}
+		output, _ := cmd.Flags().GetString("output")
+		fileType, _ := cmd.Flags().GetString("type")
+		force, _ := cmd.Flags().GetBool("force")
+		if err := downloadJobResults(server, args[0], fileName, output, fileType, force); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to download job results: %v\n", err)
+			os.Exit(1)
+		}
 	},
 }
 
@@ -2641,6 +2714,13 @@ func init() {
 	authLoginCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	jobListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	jobStartCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	jobResultListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	jobResultListCmd.Flags().Bool("all", false, "List all job files (input, source, project, result), not just results")
+	jobResultListCmd.Flags().Bool("json", false, "Print only a JSON document ({\"job\", \"status\", \"files\": [...]}) on stdout")
+	jobResultDownloadCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	jobResultDownloadCmd.Flags().StringP("output", "o", "", "Destination file or directory (default: current directory)")
+	jobResultDownloadCmd.Flags().String("type", jobResultFileType, "Job file type to download: result, input, source or project")
+	jobResultDownloadCmd.Flags().Bool("force", false, "Overwrite existing files")
 	datasetListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	datasetDownloadCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	datasetUploadCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
@@ -2727,7 +2807,8 @@ func init() {
 	searchPackagesCmd.Flags().Bool("json", false, "Print only a JSON document ({\"results\": [...], \"total\": N}) on stdout")
 
 	authCmd.AddCommand(authLoginCmd, authRefreshCmd, authStatusCmd, authEnvCmd)
-	jobCmd.AddCommand(jobListCmd, jobStartCmd)
+	jobResultCmd.AddCommand(jobResultListCmd, jobResultDownloadCmd)
+	jobCmd.AddCommand(jobListCmd, jobStartCmd, jobResultCmd)
 	datasetCmd.AddCommand(datasetListCmd, datasetDownloadCmd, datasetUploadCmd, datasetStatusCmd)
 	packageCmd.AddCommand(packageSearchCmd, packageInfoCmd, packageDependencyCmd, packageDependentsCmd)
 	registryConfigCmd.Flags().StringP("server", "s", "", "JuliaHub server")
