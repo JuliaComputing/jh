@@ -3,6 +3,7 @@
 package e2e
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -34,5 +35,36 @@ func TestJobResultListUnknownJob(t *testing.T) {
 	skipIfUnsupported(t, res)
 	if !strings.Contains(res.stderr, "not found") {
 		t.Errorf("want a not-found error, got stderr: %s", res.stderr)
+	}
+}
+
+// `jh job usage --json` — GET /api/v1/jobs/usage. Skips on instances that
+// predate the endpoint.
+func TestJobUsageJSON(t *testing.T) {
+	requireCreds(t)
+	res := runJH(t, "job", "usage", "--json")
+	if res.exitCode != 0 {
+		if strings.Contains(res.stderr, "does not report compute usage") {
+			t.Skipf("instance predates GET /api/v1/jobs/usage: %s", errorLine(res.stderr))
+		}
+		skipIfUnsupported(t, res)
+		t.Fatalf("job usage exited %d\nstderr: %s", res.exitCode, res.stderr)
+	}
+	var doc map[string]struct {
+		Used  *int64 `json:"used"`
+		Limit *int64 `json:"limit"`
+	}
+	if err := json.Unmarshal([]byte(res.stdout), &doc); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, res.stdout)
+	}
+	for _, k := range []string{"jobs", "vcpus", "gpus"} {
+		u, ok := doc[k]
+		if !ok || u.Used == nil || u.Limit == nil {
+			t.Errorf("missing %s.used/limit in %s", k, res.stdout)
+			continue
+		}
+		if *u.Used < 0 || *u.Limit < 0 {
+			t.Errorf("%s: negative values %d/%d", k, *u.Used, *u.Limit)
+		}
 	}
 }

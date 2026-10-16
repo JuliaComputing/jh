@@ -341,7 +341,8 @@ var jobCmd = &cobra.Command{
 	Long: `Manage jobs on JuliaHub.
 
 Jobs are computational tasks that run on JuliaHub's infrastructure.
-Use "jh job result" to list and download a job's result files.
+Use "jh job result" to list and download a job's result files, and
+"jh job usage" to see your compute usage against your limits.
 
 Note: "jh job list" and "jh job start" are placeholders, still in development.`,
 }
@@ -385,6 +386,34 @@ Note: This functionality is currently in development.`,
 		}
 		fmt.Printf("Starting job on %s...\n", server)
 		fmt.Println("This is a placeholder for the job start functionality")
+	},
+}
+
+var jobUsageCmd = &cobra.Command{
+	Use:   "usage",
+	Short: "Show your compute usage against your limits",
+	Long: `Show how many jobs you have active, and the vCPUs and GPUs allocated to
+them, against the per-user limits set by your JuliaHub administrator.
+
+A job counts from submission until it finishes; its vCPUs and GPUs are the
+per-node counts times its number of nodes. JuliaHub rejects a job submission
+that would take any of these above its limit, so scripts can use this to check
+whether a job fits before submitting it (use --json).
+
+Requires a JuliaHub version that reports compute usage.`,
+	Example: "  jh job usage\n  jh job usage --json",
+	Args:    cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		asJSON, _ := cmd.Flags().GetBool("json")
+		if err := showJobUsage(server, asJSON); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to get compute usage: %v\n", err)
+			os.Exit(1)
+		}
 	},
 }
 
@@ -2714,6 +2743,8 @@ func init() {
 	authLoginCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	jobListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	jobStartCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	jobUsageCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	jobUsageCmd.Flags().Bool("json", false, "Print only a JSON document ({\"jobs\", \"vcpus\", \"gpus\"}, each {\"used\", \"limit\"}) on stdout")
 	jobResultListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	jobResultListCmd.Flags().Bool("all", false, "List all job files (input, source, project, result), not just results")
 	jobResultListCmd.Flags().Bool("json", false, "Print only a JSON document ({\"job\", \"status\", \"files\": [...]}) on stdout")
@@ -2808,7 +2839,7 @@ func init() {
 
 	authCmd.AddCommand(authLoginCmd, authRefreshCmd, authStatusCmd, authEnvCmd)
 	jobResultCmd.AddCommand(jobResultListCmd, jobResultDownloadCmd)
-	jobCmd.AddCommand(jobListCmd, jobStartCmd, jobResultCmd)
+	jobCmd.AddCommand(jobListCmd, jobStartCmd, jobUsageCmd, jobResultCmd)
 	datasetCmd.AddCommand(datasetListCmd, datasetDownloadCmd, datasetUploadCmd, datasetStatusCmd)
 	packageCmd.AddCommand(packageSearchCmd, packageInfoCmd, packageDependencyCmd, packageDependentsCmd)
 	registryConfigCmd.Flags().StringP("server", "s", "", "JuliaHub server")

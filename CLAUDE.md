@@ -13,6 +13,7 @@ The application follows a command-line interface pattern using the Cobra library
 - **main.go**: Core CLI structure with command definitions and configuration management
 - **auth.go**: OAuth2 device flow authentication with JWT token handling
 - **jobs.go**: Job result operations (list and download job files) via the Hasura REST job endpoint and the job file download endpoint
+- **usage.go**: `jh job usage` — the user's concurrent jobs, vCPUs and GPUs against their per-user compute limits via `GET /api/v1/jobs/usage` (`{"jobs","vcpus","gpus"}`, each `{"used","limit"}`). Servers without the endpoint route the request to `GET /api/v1/jobs/{job_name}` and 404, reported as `errJobUsageUnsupported`
 - **datasets.go**: Dataset operations (list, download, upload, status) with REST API integration
 - **registries.go**: Registry operations (list, config, add, update, registrator) with REST API integration
 - **packages.go**: Package operations (search, dependency) with REST API primary path (`/api/v1/ui/packages/info`), GraphQL fallback, and documentation API (`/docs/{registry}/{package}/stable/pkg.json`)
@@ -46,6 +47,7 @@ The application follows a command-line interface pattern using the Cobra library
 
 3. **Command Structure**:
    - `jh auth`: Authentication commands (login, refresh, status, env)
+   - `jh job usage`: Compute usage against per-user limits (`--json`)
    - `jh job result`: Job result files (list, download)
    - `jh dataset`: Dataset operations (list, download, upload, status)
    - `jh registry`: Registry operations (list, config — all via REST API)
@@ -136,8 +138,10 @@ go run . package dependency JuMP --json
 go run . package info JuMP --json
 ```
 
-### Test job result operations
+### Test job usage and result operations
 ```bash
+go run . job usage
+go run . job usage --json
 go run . job result list jr-abc123xyz
 go run . job result list --all jr-abc123xyz
 go run . job result list --json jr-abc123xyz
