@@ -156,8 +156,9 @@ go build -o jh .
 - `jh dataset upload [dataset-id] <file-path>` - Upload a dataset
 - `jh dataset status <dataset-id> [version]` - Show dataset status
 
-### Job Results (`jh job result`)
+### Jobs (`jh job`)
 
+- `jh job usage` - Show your active jobs, and the vCPUs and GPUs allocated to them, against your compute limits (`--json` for scripts; needs a JuliaHub version that reports compute usage)
 - `jh job result list <job-name>` - List a job's result files (`--all` for every job file, `--json` for scripts)
 - `jh job result download <job-name> [file-name]` - Download one or all result files (`-o` destination, `--force` to overwrite, `--type` for other job file types)
 
@@ -371,6 +372,10 @@ jh dataset upload my-dataset ./updated-data.tar.gz
 A job produces a result file by setting `ENV["RESULTS_FILE"]` to a file path; JuliaHub uploads it when the job finishes.
 
 ```bash
+# Check your compute usage against your limits (e.g. before submitting a job)
+jh job usage
+jh job usage --json | jq '.vcpus.limit - .vcpus.used'
+
 # List a job's result files
 jh job result list jr-abc123xyz
 
