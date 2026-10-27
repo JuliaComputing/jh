@@ -22,6 +22,7 @@ func TestSubcommandHelp(t *testing.T) {
 		{[]string{"dataset", "--help"}, []string{"list", "download", "upload", "status"}},
 		{[]string{"registry", "--help"}, []string{"list", "config", "permission", "registrator"}},
 		{[]string{"package", "--help"}, []string{"search", "info", "dependency"}},
+		{[]string{"project", "--help"}, []string{"list", "create"}},
 		{[]string{"admin", "--help"}, []string{"user", "token", "group", "credential", "landing-page"}},
 		{[]string{"admin", "credential", "--help"}, []string{"list", "add", "update", "delete"}},
 		{[]string{"scan", "--help"}, []string{"status", "results"}},
@@ -43,6 +44,7 @@ func TestArgValidation(t *testing.T) {
 	cases := [][]string{
 		{"vuln"},
 		{"package", "info"},
+		{"project", "create"},
 		{"package", "dependency"},
 		{"registry", "config"},
 		{"scan", "status"},

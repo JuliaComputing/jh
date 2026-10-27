@@ -17,7 +17,7 @@ The application follows a command-line interface pattern using the Cobra library
 - **datasets.go**: Dataset operations (list, download, upload, status) with REST API integration
 - **registries.go**: Registry operations (list, config, add, update, registrator) with REST API integration
 - **packages.go**: Package operations (search, dependency) with REST API primary path (`/api/v1/ui/packages/info`), GraphQL fallback, and documentation API (`/docs/{registry}/{package}/stable/pkg.json`)
-- **projects.go**: Project management using GraphQL API. `jh project list` is paginated (`projectsPageSize` = 100 per page, one page per invocation, selected with `--page=N`, default 1) and filters by owner **server-side** (`buildProjectsFilter`). Never request the whole projects table: the Projects query costs the server several aggregates and permission checks per row, and an unpaginated request against a large install ran for hours after the 30 s client timeout fired
+- **projects.go**: Project management using GraphQL API. `jh project list` is paginated (`projectsPageSize` = 100 per page, one page per invocation, selected with `--page=N`, default 1) and filters by owner **server-side** (`buildProjectsFilter`). Never request the whole projects table: the Projects query costs the server several aggregates and permission checks per row, and an unpaginated request against a large install ran for hours after the 30 s client timeout fired. `jh project create` makes the same calls as the web UI: `POST /api/v1/projects/add` returns the project ID, then `initializeProject` calls `POST /api/v1/projects/create/{id}` (sets up the repository, cloning the upstream for `--import`) and `POST /api/v1/projects/pull/{id}` (409 is fine). If setup fails, the project already exists; `--resume <id>` reruns only the setup. Projects are always private (`instance_default_role: "No Access"`) and not deployable. The product list is `products.gql`
 - **user.go**: User information retrieval using GraphQL API and REST API for listing users
 - **tokens.go**: Token management operations (list) with REST API integration
 - **credentials.go**: Registry credential management (list, add, update, delete) with REST API integration
@@ -41,7 +41,7 @@ The application follows a command-line interface pattern using the Cobra library
 
 2. **API Integration**:
    - **REST API**: Used for dataset operations (`/api/v1/datasets`, `/datasets/{uuid}/url/{version}`), registry operations (`/api/v1/registry/registries/descriptions`, `/api/v1/registry/config/registry/{name}`, `/api/v1/registry/config/registrator/{name}`), package search/info primary path (`/api/v1/ui/packages/info`), token management (`/app/token/activelist`), user management (`/app/config/features/manage`), admin group management (`/app/config/groups`), registry credential management (old API tried first, new API fallback), landing page management (`/api/v1/ui/layout/homepage` GET/POST — the landing page is the `greeter` widget of the homepage layout array; the CLI rewrites only that widget and POSTs the whole layout back), and vulnerability scanning (`/api/v1/ui/vulnerabilities/packages/{name}`)
-   - **GraphQL API**: Used for projects, user info, user list (`public_users`), group list, and package search/info fallback (`/v1/graphql`)
+   - **GraphQL API**: Used for projects (and the product list for `project create`), user info, user list (`public_users`), group list, and package search/info fallback (`/v1/graphql`)
    - **Headers**: All GraphQL requests require `Authorization: Bearer <id_token>`, `X-Hasura-Role: jhuser`, and `X-Juliahub-Ensure-JS: true`
    - **Authentication**: Uses ID tokens (`token.IDToken`) for API calls
 
@@ -55,7 +55,7 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh registry permission`: Registry permission management (list, set, remove)
    - `jh registry registrator`: Show registrator config by name; subcommand update accepts JSON via stdin or `--file`
    - `jh package`: Package search and dependency (REST primary via `/api/v1/ui/packages/info`, GraphQL fallback; dependency data from `/docs/{registry}/{package}/stable/pkg.json`)
-   - `jh project`: Project management (list with GraphQL, paginated, supports user filtering via `--user` and page selection via `--page`)
+   - `jh project`: Project management (list with GraphQL, paginated, supports user filtering via `--user` and page selection via `--page`; create via the FsView REST API with `--description`, `--tag`, `--product`, `--exclusive`, `--import`/`--provider`, `--resume` and `--json`)
    - `jh user`: User information (info, list via GraphQL `public_users`)
    - `jh group`: Group information (list via GraphQL)
    - `jh admin`: Administrative commands (user management, token management, group management, credential management, landing page)
@@ -201,6 +201,9 @@ go run . project list
 go run . project list --page 2
 go run . project list --user
 go run . project list --user john
+go run . project create my-analysis --description "Q3 study" --tag finance
+go run . project create MyPkg.jl --import https://github.com/me/MyPkg.jl
+go run . project create --resume <project-id>
 go run . user info
 go run . user list
 go run . group list
@@ -503,7 +506,7 @@ jh run setup
 ## Development Notes
 
 - All ID fields in GraphQL responses should be typed correctly (string for UUIDs, int64 for user IDs)
-- GraphQL queries are embedded at compile time using `go:embed` from `.gql` files (`userinfo.gql`, `users.gql`, `groups.gql`, `projects.gql`)
+- GraphQL queries are embedded at compile time using `go:embed` from `.gql` files (`userinfo.gql`, `users.gql`, `groups.gql`, `projects.gql`, `products.gql`)
 - Error handling includes both HTTP and GraphQL error responses
 - Token refresh is automatic via `ensureValidToken()`
 - File uploads use multipart form data with proper content types

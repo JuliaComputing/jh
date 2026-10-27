@@ -1,0 +1,15 @@
+query Products {
+  products(
+    where: {
+      _or: [
+        { compute_type_name: { _in: ["cloudstation-ide", "cloudstation-desktop", "ide"] } }
+        { name: { _in: ["winworkstation", "rstudio"] } }
+      ]
+    }
+    order_by: [{ ordering: asc_nulls_last }, { display_name: asc }]
+  ) {
+    id
+    name
+    displayName: display_name
+  }
+}
