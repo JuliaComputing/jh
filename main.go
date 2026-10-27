@@ -175,7 +175,7 @@ Available command categories:
   dataset   - Dataset operations (list, download, upload, status)
   package   - Package search and exploration
   registry  - Registry management (list registries)
-  project   - Project management (list, filter by user)
+  project   - Project management (list, create)
   user      - User information and profile
   admin     - Administrative commands (user management, token management)
   clone     - Clone projects with automatic authentication
@@ -1724,8 +1724,65 @@ Projects are collections of code, data, and configurations that define
 a computational environment. They can include Julia packages, datasets,
 and job configurations.
 
-Project listing functionality is fully implemented using GraphQL API with
-support for filtering by user (--user flag).`,
+Use 'jh project list' to list projects (filter by owner with --user) and
+'jh project create' to create one.`,
+}
+
+var projectCreateCmd = &cobra.Command{
+	Use:   "create <name>",
+	Short: "Create a project",
+	Long: `Create a project owned by you.
+
+New projects are private and not deployable; share them and set up
+deployments in the web UI. --product takes a product name, display name or ID
+and defaults to the first product the web UI offers.
+
+--import creates the project from an existing git repository. The provider is
+recognized for github.com, gitlab.com and bitbucket.org, and detected for
+self-hosted GitLab and GitHub Enterprise servers; --provider overrides it.
+Private repositories need JuliaHub to be authorized with your git provider,
+which is done in the web UI.
+
+If the project is created but its repository cannot be set up, the error
+gives the project ID; retry with --resume <project-id> rather than creating
+the project again.`,
+	Example: "  jh project create my-analysis\n" +
+		"  jh project create my-analysis --description \"Q3 study\" --tag finance --tag q3\n" +
+		"  jh project create my-analysis --product \"Julia IDE\" --workflow exclusive\n" +
+		"  jh project create MyPkg.jl --import https://github.com/me/MyPkg.jl\n" +
+		"  jh project create --resume 7b1c10b6-cdfc-480d-8595-8ef3a123f66b\n" +
+		"  jh project create my-analysis --json | jq -r .project_id",
+	Args: func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("resume") {
+			return cobra.NoArgs(cmd, args)
+		}
+		return cobra.ExactArgs(1)(cmd, args)
+	},
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		asJSON, _ := cmd.Flags().GetBool("json")
+		if cmd.Flags().Changed("resume") {
+			resumeID, _ := cmd.Flags().GetString("resume")
+			err = resumeProjectSetup(server, resumeID, asJSON)
+		} else {
+			opts := projectCreateOptions{Name: args[0]}
+			opts.Description, _ = cmd.Flags().GetString("description")
+			opts.Tags, _ = cmd.Flags().GetStringArray("tag")
+			opts.Product, _ = cmd.Flags().GetString("product")
+			opts.Workflow, _ = cmd.Flags().GetString("workflow")
+			opts.ImportURL, _ = cmd.Flags().GetString("import")
+			opts.Provider, _ = cmd.Flags().GetString("provider")
+			err = createProject(server, opts, asJSON)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to create project: %v\n", err)
+			os.Exit(1)
+		}
+	},
 }
 
 var projectListCmd = &cobra.Command{
@@ -2783,6 +2840,18 @@ func init() {
 	projectListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	projectListCmd.Flags().String("user", "", "Filter projects by user (leave empty to show only your own projects)")
 	projectListCmd.Flags().Int("page", 1, "Page of projects to list (100 per page, most recently created first)")
+	projectCreateCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	projectCreateCmd.Flags().String("description", "", "Project description")
+	projectCreateCmd.Flags().StringArray("tag", nil, "Tag to add to the project (repeatable)")
+	projectCreateCmd.Flags().String("product", "", "Product name, display name or ID (default: the first available)")
+	projectCreateCmd.Flags().String("workflow", "group", "Editing workflow: group (several contributors at once) or exclusive (one editor at a time)")
+	projectCreateCmd.Flags().String("import", "", "Import the project's code from this git repository URL")
+	projectCreateCmd.Flags().String("provider", "", "Git provider for --import: github, gitlab or bitbucket (detected by default)")
+	projectCreateCmd.Flags().String("resume", "", "Retry the repository setup of a partly created project, by ID")
+	projectCreateCmd.Flags().Bool("json", false, "Print only a JSON document ({\"project_id\", \"name\", \"owner\", \"product\", \"git_upstream_url\"}) on stdout")
+	for _, f := range []string{"description", "tag", "product", "workflow", "import", "provider"} {
+		projectCreateCmd.MarkFlagsMutuallyExclusive("resume", f)
+	}
 	userInfoCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	userListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	userListCmd.Flags().Bool("verbose", false, "Show detailed user information")
@@ -2862,7 +2931,7 @@ func init() {
 	registryRegistratorUpdateCmd.Flags().StringP("file", "f", "", "Path to JSON config file (reads from stdin if omitted)")
 	registryRegistratorCmd.AddCommand(registryRegistratorUpdateCmd)
 	registryCmd.AddCommand(registryListCmd, registryConfigCmd, registryPermissionCmd, registryRegistratorCmd)
-	projectCmd.AddCommand(projectListCmd)
+	projectCmd.AddCommand(projectListCmd, projectCreateCmd)
 	userListGQLCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	userCmd.AddCommand(userInfoCmd, userListGQLCmd)
 	groupListGQLCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")

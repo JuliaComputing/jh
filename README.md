@@ -9,7 +9,7 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 - **Job Results**: List and download a job's result files (and its other input/source/project files)
 - **Package Management**: Search and explore Julia packages across registries via REST API (GraphQL fallback), with dependency analysis
 - **Registry Management**: List, add, and update Julia package registries
-- **Project Management**: List and filter projects using GraphQL API
+- **Project Management**: List and filter projects using GraphQL API; create projects, optionally importing a git repository
 - **Git Integration**: Clone, push, fetch, and pull with automatic JuliaHub authentication
 - **Julia Integration**: Install Julia and run with JuliaHub package server configuration
 - **User Management**: Display user information, list users and groups
@@ -205,6 +205,13 @@ go build -o jh .
 - `jh project list` - List all accessible projects
 - `jh project list --user` - List only your projects
 - `jh project list --user <username>` - List specific user's projects
+- `jh project create <name>` - Create a private project owned by you
+  - `--description <text>`, `--tag <tag>` (repeatable) - Project details
+  - `--product <name|id>` - Product the project opens in (default: the first available)
+  - `--workflow group|exclusive` - Group editing (the default) or exclusive editing (one editor at a time)
+  - `--import <url>` - Import the code from a git repository. The git provider is detected (self-hosted GitLab and GitHub Enterprise included); `--provider github|gitlab|bitbucket` overrides it
+  - `--resume <project-id>` - Retry the repository setup of a project whose creation failed part-way
+  - `--json` - Print `{"project_id", "name", "owner", "product", "git_upstream_url"}`
 
 ### Git Credential Helper (Recommended)
 
@@ -470,6 +477,13 @@ jh project list --user
 
 # List projects by specific user
 jh project list --user alice
+
+# Create a project, then clone it
+jh project create my-analysis --description "Q3 study" --tag finance
+jh clone my-analysis
+
+# Create a project from an existing GitHub repository
+jh project create MyPkg.jl --import https://github.com/me/MyPkg.jl
 ```
 
 ### User and Group Operations
