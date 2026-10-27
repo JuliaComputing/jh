@@ -139,6 +139,16 @@ func shellQuote(args []string) string {
 	return strings.Join(quoted, " ")
 }
 
+func forwardTerminalEnv(env map[string]string) {
+	for _, name := range []string{"TERM", "COLORTERM"} {
+		if _, overridden := env[name]; !overridden {
+			if value := os.Getenv(name); value != "" {
+				env[name] = value
+			}
+		}
+	}
+}
+
 func demuxOutput(frame []byte, stdout, stderr io.Writer) error {
 	if len(frame) < 1 {
 		return errors.New("empty output frame")
@@ -294,6 +304,9 @@ func jobExecCommand(resolved *shellClient) *cobra.Command {
 		in, inOK := cmd.InOrStdin().(*os.File)
 		out, outOK := cmd.OutOrStdout().(*os.File)
 		tty := !noTTY && (forceTTY || (inOK && outOK && term.IsTerminal(int(in.Fd())) && term.IsTerminal(int(out.Fd()))))
+		if tty {
+			forwardTerminalEnv(envs)
+		}
 		body := map[string]any{"command": "julia", "cwd": cwd, "env": envs, "timeout_seconds": int(math.Ceil(timeout.Seconds())), "tty": tty, "stdin": true}
 		if len(args) > 1 {
 			body["command"] = shellQuote(args[1:])

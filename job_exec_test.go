@@ -57,12 +57,18 @@ func TestFetchAppLink(t *testing.T) {
 }
 
 func TestExecDefaultAndTTY(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("COLORTERM", "truecolor")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/commands" {
 			var body map[string]any
 			json.NewDecoder(r.Body).Decode(&body)
 			if body["command"] != "julia" || body["tty"] != true {
 				t.Error(body)
+			}
+			env := body["env"].(map[string]any)
+			if env["TERM"] != "xterm-256color" || env["COLORTERM"] != "truecolor" {
+				t.Error(env)
 			}
 			w.WriteHeader(201)
 			io.WriteString(w, `{"id":"c"}`)
@@ -85,6 +91,34 @@ func TestExecDefaultAndTTY(t *testing.T) {
 	cmd.SetArgs([]string{"--url", srv.URL, "x", "-t"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestForwardTerminalEnv(t *testing.T) {
+	for _, tc := range []struct {
+		name, term, color string
+		override          bool
+	}{
+		{"local", "xterm-256color", "truecolor", false},
+		{"empty", "", "", false},
+		{"override", "xterm-256color", "truecolor", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("TERM", tc.term)
+			t.Setenv("COLORTERM", tc.color)
+			env := map[string]string{}
+			if tc.override {
+				env["TERM"], env["COLORTERM"] = "vt100", ""
+			}
+			forwardTerminalEnv(env)
+			if tc.override {
+				if env["TERM"] != "vt100" || env["COLORTERM"] != "" {
+					t.Fatal(env)
+				}
+			} else if env["TERM"] != tc.term || env["COLORTERM"] != tc.color || (tc.term == "" && len(env) != 0) {
+				t.Fatal(env)
+			}
+		})
 	}
 }
 
