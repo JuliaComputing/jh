@@ -131,6 +131,16 @@ func TestBuildAddProjectRequest(t *testing.T) {
 		}
 	})
 
+	t.Run("import from another host leaves the provider to detectGitProvider", func(t *testing.T) {
+		got, err := buildAddProjectRequest(projectCreateOptions{Name: "p", ImportURL: "https://git.example.com/me/repo"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.GitUpstreamURL == "" || got.GitProviderType != "" {
+			t.Errorf("got url=%q provider=%q, want the URL and no provider", got.GitUpstreamURL, got.GitProviderType)
+		}
+	})
+
 	t.Run("import from another host takes --provider", func(t *testing.T) {
 		got, err := buildAddProjectRequest(projectCreateOptions{Name: "p", ImportURL: "https://git.example.com/me/repo", Provider: "GitLab"})
 		if err != nil {
@@ -150,7 +160,6 @@ func TestBuildAddProjectRequest(t *testing.T) {
 		{"unknown workflow", projectCreateOptions{Name: "p", Workflow: "branch"}, "unknown --workflow"},
 		{"provider without import", projectCreateOptions{Name: "p", Provider: "github"}, "only applies with --import"},
 		{"not a URL", projectCreateOptions{Name: "p", ImportURL: "git@github.com:me/repo.git"}, "invalid --import URL"},
-		{"unknown host", projectCreateOptions{Name: "p", ImportURL: "https://git.example.com/me/repo"}, "pass --provider"},
 		{"unknown provider", projectCreateOptions{Name: "p", ImportURL: "https://git.example.com/me/repo", Provider: "gitea"}, "unknown --provider"},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
@@ -309,4 +318,35 @@ func TestProjectAPIErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDetectGitProvider(t *testing.T) {
+	for _, tc := range []struct {
+		desc, path, header, want string
+	}{
+		{"GitLab", "/api/v4/version", "X-Gitlab-Meta", "gitlab"},
+		{"GitHub Enterprise", "/api/v3/meta", "X-GitHub-Request-Id", "github"},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == tc.path {
+					w.Header().Set(tc.header, "x")
+				}
+				w.WriteHeader(http.StatusUnauthorized)
+			}))
+			defer srv.Close()
+			got, err := detectGitProvider(srv.Client(), srv.URL)
+			if err != nil || got != tc.want {
+				t.Errorf("got %q, %v; want %q", got, err, tc.want)
+			}
+		})
+	}
+
+	t.Run("anything else", func(t *testing.T) {
+		srv := httptest.NewServer(http.NotFoundHandler())
+		defer srv.Close()
+		if _, err := detectGitProvider(srv.Client(), srv.URL); err == nil || !strings.Contains(err.Error(), "pass --provider") {
+			t.Errorf("err = %v, want it to ask for --provider", err)
+		}
+	})
 }

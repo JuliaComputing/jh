@@ -1738,9 +1738,10 @@ deployments in the web UI. --product takes a product name, display name or ID
 and defaults to the first product the web UI offers.
 
 --import creates the project from an existing git repository. The provider is
-inferred for github.com, gitlab.com and bitbucket.org; pass --provider for
-other hosts. Private repositories need JuliaHub to be authorized with your git
-provider, which is done in the web UI.
+recognized for github.com, gitlab.com and bitbucket.org, and detected for
+self-hosted GitLab and GitHub Enterprise servers; --provider overrides it.
+Private repositories need JuliaHub to be authorized with your git provider,
+which is done in the web UI.
 
 If the project is created but its repository cannot be set up, the error
 gives the project ID; retry with --resume <project-id> rather than creating
@@ -2845,7 +2846,7 @@ func init() {
 	projectCreateCmd.Flags().String("product", "", "Product name, display name or ID (default: the first available)")
 	projectCreateCmd.Flags().String("workflow", "group", "Editing workflow: group (several contributors at once) or exclusive (one editor at a time)")
 	projectCreateCmd.Flags().String("import", "", "Import the project's code from this git repository URL")
-	projectCreateCmd.Flags().String("provider", "", "Git provider for --import: github, gitlab or bitbucket (inferred for their public hosts)")
+	projectCreateCmd.Flags().String("provider", "", "Git provider for --import: github, gitlab or bitbucket (detected by default)")
 	projectCreateCmd.Flags().String("resume", "", "Retry the repository setup of a partly created project, by ID")
 	projectCreateCmd.Flags().Bool("json", false, "Print only a JSON document ({\"project_id\", \"name\", \"owner\", \"product\", \"git_upstream_url\"}) on stdout")
 	for _, f := range []string{"description", "tag", "product", "workflow", "import", "provider"} {

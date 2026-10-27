@@ -209,7 +209,7 @@ go build -o jh .
   - `--description <text>`, `--tag <tag>` (repeatable) - Project details
   - `--product <name|id>` - Product the project opens in (default: the first available)
   - `--workflow group|exclusive` - Group editing (the default) or exclusive editing (one editor at a time)
-  - `--import <url>` - Import the code from a git repository; `--provider github|gitlab|bitbucket` for hosts other than github.com, gitlab.com and bitbucket.org
+  - `--import <url>` - Import the code from a git repository. The git provider is detected (self-hosted GitLab and GitHub Enterprise included); `--provider github|gitlab|bitbucket` overrides it
   - `--resume <project-id>` - Retry the repository setup of a project whose creation failed part-way
   - `--json` - Print `{"project_id", "name", "owner", "product", "git_upstream_url"}`
 

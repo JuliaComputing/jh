@@ -360,17 +360,36 @@ func buildAddProjectRequest(opts projectCreateOptions) (AddProjectRequest, error
 	if err != nil || !importURLPattern.MatchString(opts.ImportURL) {
 		return AddProjectRequest{}, fmt.Errorf("invalid --import URL %q: expected an http(s) git repository URL", opts.ImportURL)
 	}
+	// For other hosts the caller probes the host (detectGitProvider).
 	provider := strings.ToLower(opts.Provider)
 	if provider == "" {
-		if provider = gitProviderForHost(u.Hostname()); provider == "" {
-			return AddProjectRequest{}, fmt.Errorf("cannot tell the git provider of %s; pass --provider (%s)", u.Hostname(), strings.Join(gitProviders, ", "))
-		}
+		provider = gitProviderForHost(u.Hostname())
 	} else if !slices.Contains(gitProviders, provider) {
 		return AddProjectRequest{}, fmt.Errorf("unknown --provider %q; expected one of %s", opts.Provider, strings.Join(gitProviders, ", "))
 	}
 	req.GitUpstreamURL = opts.ImportURL
 	req.GitProviderType = provider
 	return req, nil
+}
+
+// detectGitProvider identifies a self-hosted GitLab or GitHub Enterprise
+// server at origin (scheme://host) by a header its API sends even to
+// unauthenticated requests. Bitbucket is only supported on bitbucket.org.
+func detectGitProvider(client *http.Client, origin string) (string, error) {
+	for _, probe := range []struct{ provider, path, header string }{
+		{"gitlab", "/api/v4/version", "X-Gitlab-Meta"},
+		{"github", "/api/v3/meta", "X-GitHub-Request-Id"},
+	} {
+		resp, err := client.Get(origin + probe.path)
+		if err != nil {
+			return "", fmt.Errorf("could not reach %s to detect its git provider (pass --provider to skip this): %w", origin, err)
+		}
+		resp.Body.Close()
+		if resp.Header.Get(probe.header) != "" {
+			return probe.provider, nil
+		}
+	}
+	return "", fmt.Errorf("%s does not look like GitLab or GitHub Enterprise, and JuliaHub imports only from GitHub, GitLab and Bitbucket; if it is one of those, pass --provider", origin)
 }
 
 // resolveProduct matches flag against product IDs, names and display names
@@ -520,6 +539,12 @@ func createProject(server string, opts projectCreateOptions, asJSON bool) error 
 	req, err := buildAddProjectRequest(opts)
 	if err != nil {
 		return err
+	}
+	if req.GitUpstreamURL != "" && req.GitProviderType == "" {
+		u, _ := url.Parse(req.GitUpstreamURL) // validated by buildAddProjectRequest
+		if req.GitProviderType, err = detectGitProvider(&http.Client{Timeout: 10 * time.Second}, u.Scheme+"://"+u.Host); err != nil {
+			return err
+		}
 	}
 	token, err := ensureValidToken()
 	if err != nil {
