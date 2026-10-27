@@ -285,7 +285,7 @@ type projectCreateOptions struct {
 	Description string
 	Tags        []string
 	Product     string
-	Exclusive   bool
+	Workflow    string
 	ImportURL   string
 	Provider    string
 }
@@ -331,9 +331,15 @@ func buildAddProjectRequest(opts projectCreateOptions) (AddProjectRequest, error
 			tags = append(tags, t)
 		}
 	}
-	editingMode := "collaborative"
-	if opts.Exclusive {
+	// The web UI calls collaborative editing "group editing".
+	var editingMode string
+	switch strings.ToLower(opts.Workflow) {
+	case "", "group":
+		editingMode = "collaborative"
+	case "exclusive":
 		editingMode = "exclusive"
+	default:
+		return AddProjectRequest{}, fmt.Errorf("unknown --workflow %q; expected group or exclusive", opts.Workflow)
 	}
 	req := AddProjectRequest{
 		Name:                name,

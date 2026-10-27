@@ -96,7 +96,7 @@ func TestBuildAddProjectRequest(t *testing.T) {
 	})
 
 	t.Run("JSON field names match the server's AddProjectRequest", func(t *testing.T) {
-		req, err := buildAddProjectRequest(projectCreateOptions{Name: "p", Exclusive: true})
+		req, err := buildAddProjectRequest(projectCreateOptions{Name: "p", Workflow: "exclusive"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -147,6 +147,7 @@ func TestBuildAddProjectRequest(t *testing.T) {
 		want string
 	}{
 		{"empty name", projectCreateOptions{Name: "  "}, "must not be empty"},
+		{"unknown workflow", projectCreateOptions{Name: "p", Workflow: "branch"}, "unknown --workflow"},
 		{"provider without import", projectCreateOptions{Name: "p", Provider: "github"}, "only applies with --import"},
 		{"not a URL", projectCreateOptions{Name: "p", ImportURL: "git@github.com:me/repo.git"}, "invalid --import URL"},
 		{"unknown host", projectCreateOptions{Name: "p", ImportURL: "https://git.example.com/me/repo"}, "pass --provider"},

@@ -55,7 +55,7 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh registry permission`: Registry permission management (list, set, remove)
    - `jh registry registrator`: Show registrator config by name; subcommand update accepts JSON via stdin or `--file`
    - `jh package`: Package search and dependency (REST primary via `/api/v1/ui/packages/info`, GraphQL fallback; dependency data from `/docs/{registry}/{package}/stable/pkg.json`)
-   - `jh project`: Project management (list with GraphQL, paginated, supports user filtering via `--user` and page selection via `--page`; create via the FsView REST API with `--description`, `--tag`, `--product`, `--exclusive`, `--import`/`--provider`, `--resume` and `--json`)
+   - `jh project`: Project management (list with GraphQL, paginated, supports user filtering via `--user` and page selection via `--page`; create via the FsView REST API with `--description`, `--tag`, `--product`, `--workflow group|exclusive`, `--import`/`--provider`, `--resume` and `--json`)
    - `jh user`: User information (info, list via GraphQL `public_users`)
    - `jh group`: Group information (list via GraphQL)
    - `jh admin`: Administrative commands (user management, token management, group management, credential management, landing page)

@@ -1747,7 +1747,7 @@ gives the project ID; retry with --resume <project-id> rather than creating
 the project again.`,
 	Example: "  jh project create my-analysis\n" +
 		"  jh project create my-analysis --description \"Q3 study\" --tag finance --tag q3\n" +
-		"  jh project create my-analysis --product \"Julia IDE\" --exclusive\n" +
+		"  jh project create my-analysis --product \"Julia IDE\" --workflow exclusive\n" +
 		"  jh project create MyPkg.jl --import https://github.com/me/MyPkg.jl\n" +
 		"  jh project create --resume 7b1c10b6-cdfc-480d-8595-8ef3a123f66b\n" +
 		"  jh project create my-analysis --json | jq -r .project_id",
@@ -1772,7 +1772,7 @@ the project again.`,
 			opts.Description, _ = cmd.Flags().GetString("description")
 			opts.Tags, _ = cmd.Flags().GetStringArray("tag")
 			opts.Product, _ = cmd.Flags().GetString("product")
-			opts.Exclusive, _ = cmd.Flags().GetBool("exclusive")
+			opts.Workflow, _ = cmd.Flags().GetString("workflow")
 			opts.ImportURL, _ = cmd.Flags().GetString("import")
 			opts.Provider, _ = cmd.Flags().GetString("provider")
 			err = createProject(server, opts, asJSON)
@@ -2843,12 +2843,12 @@ func init() {
 	projectCreateCmd.Flags().String("description", "", "Project description")
 	projectCreateCmd.Flags().StringArray("tag", nil, "Tag to add to the project (repeatable)")
 	projectCreateCmd.Flags().String("product", "", "Product name, display name or ID (default: the first available)")
-	projectCreateCmd.Flags().Bool("exclusive", false, "Use exclusive editing (one editor at a time) instead of group editing")
+	projectCreateCmd.Flags().String("workflow", "group", "Editing workflow: group (several contributors at once) or exclusive (one editor at a time)")
 	projectCreateCmd.Flags().String("import", "", "Import the project's code from this git repository URL")
 	projectCreateCmd.Flags().String("provider", "", "Git provider for --import: github, gitlab or bitbucket (inferred for their public hosts)")
 	projectCreateCmd.Flags().String("resume", "", "Retry the repository setup of a partly created project, by ID")
 	projectCreateCmd.Flags().Bool("json", false, "Print only a JSON document ({\"project_id\", \"name\", \"owner\", \"product\", \"git_upstream_url\"}) on stdout")
-	for _, f := range []string{"description", "tag", "product", "exclusive", "import", "provider"} {
+	for _, f := range []string{"description", "tag", "product", "workflow", "import", "provider"} {
 		projectCreateCmd.MarkFlagsMutuallyExclusive("resume", f)
 	}
 	userInfoCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")

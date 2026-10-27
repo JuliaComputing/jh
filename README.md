@@ -208,7 +208,7 @@ go build -o jh .
 - `jh project create <name>` - Create a private project owned by you
   - `--description <text>`, `--tag <tag>` (repeatable) - Project details
   - `--product <name|id>` - Product the project opens in (default: the first available)
-  - `--exclusive` - Exclusive editing (one editor at a time) instead of group editing
+  - `--workflow group|exclusive` - Group editing (the default) or exclusive editing (one editor at a time)
   - `--import <url>` - Import the code from a git repository; `--provider github|gitlab|bitbucket` for hosts other than github.com, gitlab.com and bitbucket.org
   - `--resume <project-id>` - Retry the repository setup of a project whose creation failed part-way
   - `--json` - Print `{"project_id", "name", "owner", "product", "git_upstream_url"}`
