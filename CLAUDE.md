@@ -13,6 +13,7 @@ The application follows a command-line interface pattern using the Cobra library
 - **main.go**: Core CLI structure with command definitions and configuration management
 - **auth.go**: OAuth2 device flow authentication with JWT token handling
 - **jobs.go**: Job result operations (list and download job files) via the Hasura REST job endpoint and the job file download endpoint
+- **job_exec.go**: Agentshell `job exec`, `job commands`, and `job output`. JobDetails.proxy_link is already a full app URL (JuliaHub's job_details_vw exposes jobs2.proxy_link, built by submitsvc.getProxyLink); do not guess the apps hostname from the main server. HTTP localhost `--url` overrides skip login and bearer headers. WebSocket binary frames always have a one-byte stream prefix (1 stdout/PTY, 2 stderr); text exit frames drive remote exit status. `job_exec_unix.go` forwards SIGWINCH, with a Windows no-op resize watcher. PTY raw-mode restoration runs before main handles remoteExitError. Uses coder/websocket and x/term.
 - **usage.go**: `jh job usage` — the user's concurrent jobs, vCPUs and GPUs against their per-user compute limits via `GET /api/v1/jobs/usage` (`{"jobs","vcpus","gpus"}`, each `{"used","limit"}`). Servers without the endpoint route the request to `GET /api/v1/jobs/{job_name}` and 404, reported as `errJobUsageUnsupported`
 - **datasets.go**: Dataset operations (list, download, upload, status) with REST API integration
 - **registries.go**: Registry operations (list, config, add, update, registrator) with REST API integration
@@ -49,6 +50,8 @@ The application follows a command-line interface pattern using the Cobra library
    - `jh auth`: Authentication commands (login, refresh, status, env)
    - `jh job usage`: Compute usage against per-user limits (`--json`)
    - `jh job result`: Job result files (list, download)
+   - `jh job exec <job-name> [flags] -- <command...>`: Run in an agentshell image (default `julia`), auto-PTY for terminal stdin/stdout, `-t` force / `-T` disable, `--cwd`, repeatable `--env K=V`, `--timeout 30s`, and `--url` for development
+   - `jh job commands <job-name> [--json]` and `jh job output <job-name> <command-id> [--follow]`: Agentshell history and persisted output (both support `--url`)
    - `jh dataset`: Dataset operations (list, download, upload, status)
    - `jh registry`: Registry operations (list, config — all via REST API)
    - `jh registry config`: Show registry JSON config by name; subcommands add/update accept JSON via stdin or `--file`

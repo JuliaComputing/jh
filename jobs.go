@@ -47,10 +47,11 @@ type JobFile struct {
 
 // JobDetails is the subset of GET /api/rest/jobs/{jobname} the CLI uses.
 type JobDetails struct {
-	JobName string    `json:"jobname"`
-	Alias   *string   `json:"jobname_alias"`
-	Status  string    `json:"status"`
-	Files   []JobFile `json:"files"`
+	ProxyLink *string   `json:"proxy_link"`
+	JobName   string    `json:"jobname"`
+	Alias     *string   `json:"jobname_alias"`
+	Status    string    `json:"status"`
+	Files     []JobFile `json:"files"`
 }
 
 type jobDetailsResponse struct {

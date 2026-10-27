@@ -158,9 +158,31 @@ go build -o jh .
 
 ### Jobs (`jh job`)
 
+- `jh job exec <job-name> [flags] -- <command...>` - Run a command in an agentshell job (default command: `julia`). Automatically uses a PTY when stdin/stdout are terminals; `-t/--tty` forces a PTY and `-T/--no-tty` preserves separate stdout/stderr. Supports `--cwd`, repeatable `--env K=V`, and `--timeout 30s`. Arguments are shell-quoted; use `-- sh -c '...'` for shell syntax. Exits with the remote command's exit code.
+- `jh job commands <job-name> [--json]` - List recent agentshell commands, newest first.
+- `jh job output <job-name> <command-id> [--follow]` - Read persisted combined output; `--follow` long-polls until completion.
 - `jh job usage` - Show your active jobs, and the vCPUs and GPUs allocated to them, against your compute limits (`--json` for scripts; needs a JuliaHub version that reports compute usage)
 - `jh job result list <job-name>` - List a job's result files (`--all` for every job file, `--json` for scripts)
 - `jh job result download <job-name> [file-name]` - Download one or all result files (`-o` destination, `--force` to overwrite, `--type` for other job file types)
+
+Agentshell commands resolve a running job's full `proxy_link` URL and authenticate
+with the JuliaHub ID token. They require an agentshell job image, not a regular
+batch image. All three accept `--url` to override discovery; an HTTP localhost
+URL (also 127.0.0.1 / ::1) skips login and does not send a bearer token:
+
+```bash
+jh job exec jr-example -- julia
+jh job exec jr-example -T --env MODE=test --timeout 30s -- sh -c 'echo out; echo err >&2'
+jh job exec --url http://localhost:8080 x -T -- sh -c 'exit 4'
+```
+
+In PTY mode the local terminal is restored on return, and terminal resizes are
+forwarded to the job. Ctrl+C is sent as terminal input; disconnecting does not
+terminate the remote command. Remote signal exits map to conventional local
+statuses (INT=130, TERM=143, KILL=137). Non-local HTTP URLs are refused to avoid
+sending credentials over plaintext. A local server must disable owner-header
+checks for this direct-connection development mode (approuter supplies that
+header in production).
 
 ### Package Management (`jh package`)
 
