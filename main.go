@@ -2839,7 +2839,7 @@ func init() {
 
 	authCmd.AddCommand(authLoginCmd, authRefreshCmd, authStatusCmd, authEnvCmd)
 	jobResultCmd.AddCommand(jobResultListCmd, jobResultDownloadCmd)
-	jobCmd.AddCommand(jobListCmd, jobStartCmd, jobUsageCmd, jobResultCmd, newJobExecCmd(), newJobCommandsCmd(), newJobOutputCmd())
+	jobCmd.AddCommand(jobListCmd, jobStartCmd, jobUsageCmd, jobResultCmd, newJobExecCmd(), newJobCommandsCmd(), newJobOutputCmd(), newJobShellCmd())
 	datasetCmd.AddCommand(datasetListCmd, datasetDownloadCmd, datasetUploadCmd, datasetStatusCmd)
 	packageCmd.AddCommand(packageSearchCmd, packageInfoCmd, packageDependencyCmd, packageDependentsCmd)
 	registryConfigCmd.Flags().StringP("server", "s", "", "JuliaHub server")

@@ -267,6 +267,10 @@ func (c *shellClient) attach(ctx context.Context, id string, stdin io.Reader, st
 }
 
 func newJobExecCmd() *cobra.Command {
+	return jobExecCommand(nil)
+}
+
+func jobExecCommand(resolved *shellClient) *cobra.Command {
 	var forceTTY, noTTY bool
 	var cwd, override string
 	var env []string
@@ -304,9 +308,13 @@ func newJobExecCmd() *cobra.Command {
 			body["rows"] = rows
 			body["cols"] = cols
 		}
-		client, err := shellTarget(cmd, args[0])
-		if err != nil {
-			return err
+		client := resolved
+		if client == nil {
+			var err error
+			client, err = shellTarget(cmd, args[0])
+			if err != nil {
+				return err
+			}
 		}
 		var created struct {
 			ID string `json:"id"`

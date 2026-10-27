@@ -158,6 +158,7 @@ go build -o jh .
 
 ### Jobs (`jh job`)
 
+- `jh job shell [flags] [-- command...]` - Start an `agent-shell` product job, wait for its app, and attach (default `julia`). Stops the job on exit or Ctrl+C during startup; `--keep` leaves it running and prints reattachment instructions. Requires the product/image configuration to exist on the server.
 - `jh job exec <job-name> [flags] -- <command...>` - Run a command in an agentshell job (default command: `julia`). Automatically uses a PTY when stdin/stdout are terminals; `-t/--tty` forces a PTY and `-T/--no-tty` preserves separate stdout/stderr. Supports `--cwd`, repeatable `--env K=V`, and `--timeout 30s`. Arguments are shell-quoted; use `-- sh -c '...'` for shell syntax. Exits with the remote command's exit code.
 - `jh job commands <job-name> [--json]` - List recent agentshell commands, newest first.
 - `jh job output <job-name> <command-id> [--follow]` - Read persisted combined output; `--follow` long-polls until completion.
@@ -183,6 +184,26 @@ statuses (INT=130, TERM=143, KILL=137). Non-local HTTP URLs are refused to avoid
 sending credentials over plaintext. A local server must disable owner-header
 checks for this direct-connection development mode (approuter supplies that
 header in production).
+
+`job shell` uses the app-default submission endpoint unless job overrides are
+provided. `--product` selects another product; `--project-id` selects a project.
+Overrides `--node`, `--image-name`, `--image-tag`, `--alias`, `--env K=V`,
+`--timeout`, or `--port` use multipart submission. **Jobmanagement requires an
+explicit `--node` with any of these overrides**; otherwise node/time defaults
+come from the user's app settings. Multipart jobs default to a 2-hour lifetime;
+`--timeout 90m` sets a job lifetime rounded up to 2 hours, not a command timeout.
+`--env` sets the job environment. `--wait-timeout` bounds startup (default 10m).
+`-t`, `-T`, and `--cwd` apply to the attached command just as with `job exec`.
+
+```bash
+jh job shell
+jh job shell --keep -- julia
+jh job shell --node <node-name> --timeout 1h --env MODE=test -- sh -c 'echo "$MODE"'
+```
+
+Cleanup uses a separate bounded request even if startup was cancelled. If cleanup
+fails, the CLI warns with the job name so it can be stopped manually. If submission
+is interrupted before a job name is received, check JuliaHub for a submitted job.
 
 ### Package Management (`jh package`)
 
