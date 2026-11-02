@@ -180,9 +180,14 @@ func ownerUsernameFilter(username string) map[string]interface{} {
 // fetchProjectsPage requests one page of projects matching filter. It returns
 // the page's projects and the total number of matching projects on the server.
 func fetchProjectsPage(server string, token *StoredToken, ownerID int64, filter map[string]interface{}, page int) ([]Project, int, error) {
-	return fetchProjectsPageWith(func(req GraphQLRequest) ([]byte, error) {
+	return fetchProjectsPageWith(graphQLExecutor(server, token), ownerID, filter, page)
+}
+
+// graphQLExecutor sends GraphQL requests to server with token.
+func graphQLExecutor(server string, token *StoredToken) func(GraphQLRequest) ([]byte, error) {
+	return func(req GraphQLRequest) ([]byte, error) {
 		return executeGraphQL(server, token, req)
-	}, ownerID, filter, page)
+	}
 }
 
 // fetchProjectsPageWith is fetchProjectsPage with the GraphQL transport passed
@@ -200,28 +205,24 @@ func lookupProjectsWith(execute func(GraphQLRequest) ([]byte, error), ownerID in
 
 // fetchProjectsWith sends docs in order until the server accepts one, and moves
 // to the next only when the server rejects the document itself (see
-// queryProjects). When none is accepted, every document's error is reported.
+// queryProjects). When none is accepted, every document's error is reported,
+// labelled with the document.
 func fetchProjectsWith(execute func(GraphQLRequest) ([]byte, error), docs []projectsDocument, ownerID int64, filter map[string]interface{}, limit, offset int) ([]Project, int, error) {
 	var errs []error
+	var msgs []string
 	for _, d := range docs {
 		projects, total, rejected, err := queryProjects(execute, d.query, ownerID, filter, limit, offset)
 		if err == nil {
 			return projects, total, nil
 		}
-		if len(errs) > 0 {
-			err = fmt.Errorf("with the %s document: %w", d.name, err)
-		}
 		errs = append(errs, err)
+		msgs = append(msgs, fmt.Sprintf("%s document: %v", d.name, err))
 		if !rejected {
 			break
 		}
 	}
 	if len(errs) == 1 {
 		return nil, 0, errs[0]
-	}
-	msgs := make([]string, len(errs))
-	for i, e := range errs {
-		msgs[i] = e.Error()
 	}
 	return nil, 0, errors.New(strings.Join(msgs, "; "))
 }

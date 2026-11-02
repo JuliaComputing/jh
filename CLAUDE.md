@@ -503,7 +503,7 @@ jh run setup
 ## Development Notes
 
 - All ID fields in GraphQL responses should be typed correctly (string for UUIDs, int64 for user IDs)
-- GraphQL queries are embedded at compile time using `go:embed` from `.gql` files (`userinfo.gql`, `users.gql`, `groups.gql`, `projects.gql`)
+- GraphQL queries are embedded at compile time using `go:embed` from `.gql` files (`userinfo.gql`, `users.gql`, `groups.gql`, `projects.gql`, `projects_pre264.gql`, `projects_juliasim.gql`)
 - Error handling includes both HTTP and GraphQL error responses
 - Token refresh is automatic via `ensureValidToken()`
 - File uploads use multipart form data with proper content types
@@ -514,7 +514,7 @@ jh run setup
 - Git commands use `http.extraHeader` for authentication and pass through all arguments
 - Git credential helper provides seamless authentication for standard Git commands
 - Multi-server authentication handled automatically via credential helper
-- Project filtering supports `--user` parameter for showing specific user's projects or own projects; `jh project list --page N` fetches the Nth page of 100 (a single GraphQL request per invocation)
+- Project filtering supports `--user` parameter for showing specific user's projects or own projects; `jh project list --page N` fetches the Nth page of 100 (one page per invocation: a single Projects request, or two on a server that rejects the 26.4+ document)
 - Clone command automatically resolves `username/project` format to project UUIDs
 - Clone command supports `project` (without username) and defaults to the logged-in user's username
 - Folder naming conflicts are resolved with automatic numbering (project-1, project-2, etc.)

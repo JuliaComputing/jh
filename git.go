@@ -18,12 +18,13 @@ func projectLookupFilter(username, projectName string) map[string]interface{} {
 }
 
 // pickProject chooses the requested project among the rows the server matched
-// with ILIKE: an exact match wins, then the only case-insensitive one. Several
-// case-insensitive matches without an exact one are ambiguous, and rows that
-// match neither are not the requested project.
+// with ILIKE. Usernames compare case-insensitively. A project name typed exactly
+// wins (names are unique per owner), then the only case-insensitive match.
+// Several case-insensitive matches without an exact one are ambiguous, and rows
+// that match neither are not the requested project.
 func pickProject(projects []Project, username, projectName string) (*Project, error) {
 	for i := range projects {
-		if projects[i].Owner.Username == username && projects[i].Name == projectName {
+		if strings.EqualFold(projects[i].Owner.Username, username) && projects[i].Name == projectName {
 			return &projects[i], nil
 		}
 	}
@@ -48,9 +49,7 @@ func pickProject(projects []Project, username, projectName string) (*Project, er
 
 // findProjectByUserAndName finds a project by username and project name
 func findProjectByUserAndName(server string, token *StoredToken, userID int64, username, projectName string) (string, error) {
-	projects, err := lookupProjectsWith(func(req GraphQLRequest) ([]byte, error) {
-		return executeGraphQL(server, token, req)
-	}, userID, projectLookupFilter(username, projectName))
+	projects, err := lookupProjectsWith(graphQLExecutor(server, token), userID, projectLookupFilter(username, projectName))
 	if err != nil {
 		return "", fmt.Errorf("failed to query projects: %w", err)
 	}

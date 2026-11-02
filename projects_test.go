@@ -199,7 +199,7 @@ func TestFetchProjectsPageKeepsTheFirstErrorWhenTheFallbackFails(t *testing.T) {
 		"projects.gql":        `{"errors":[{"message":"field 'requires_publish_request' not found in type: 'projects'","extensions":{"code":"validation-failed"}}]}`,
 		"projects_pre264.gql": notAllowedBody,
 	}, &sent), 1, map[string]interface{}{}, 1)
-	want := "GraphQL errors: [{field 'requires_publish_request' not found in type: 'projects'}]; with the 6.9–26.3 document: GraphQL errors: [{query is not allowed}]"
+	want := "26.4+ document: GraphQL errors: [{field 'requires_publish_request' not found in type: 'projects'}]; 6.9–26.3 document: GraphQL errors: [{query is not allowed}]"
 	if err == nil || err.Error() != want {
 		t.Fatalf("err = %v\nwant  %s", err, want)
 	}
@@ -251,7 +251,7 @@ func TestLookupProjectsReportsEveryRejection(t *testing.T) {
 		"projects_pre264.gql":   notAllowedBody,
 		"projects_juliasim.gql": notAllowedBody,
 	}, &sent), 1, projectLookupFilter("alice", "proj"))
-	want := "GraphQL errors: [{query is not allowed}]; with the 6.9–26.3 document: GraphQL errors: [{query is not allowed}]; with the JuliaSim document: GraphQL errors: [{query is not allowed}]"
+	want := "26.4+ document: GraphQL errors: [{query is not allowed}]; 6.9–26.3 document: GraphQL errors: [{query is not allowed}]; JuliaSim document: GraphQL errors: [{query is not allowed}]"
 	if err == nil || err.Error() != want {
 		t.Fatalf("err = %v\nwant  %s", err, want)
 	}
@@ -269,6 +269,9 @@ func TestPickProject(t *testing.T) {
 	}
 	if got, err := pickProject([]Project{p("alice", "Proj"), p("alice", "proj")}, "alice", "proj"); err != nil || got.ID != "alice/proj" {
 		t.Fatalf("exact match should beat a case-insensitive one: got %v, %v", got, err)
+	}
+	if got, err := pickProject([]Project{p("alice", "Proj"), p("alice", "proj")}, "Alice", "proj"); err != nil || got.ID != "alice/proj" {
+		t.Fatalf("an exactly typed name should win whatever the owner's case: got %v, %v", got, err)
 	}
 	if got, err := pickProject([]Project{p("alice", "Proj"), p("alice", "PROJ")}, "alice", "proj"); err == nil || !strings.Contains(err.Error(), "alice/Proj, alice/PROJ") {
 		t.Fatalf("several case-insensitive matches without an exact one should be ambiguous: got %v, %v", got, err)
