@@ -46,8 +46,11 @@ var (
 		{"26.4+", projectsQuery},
 		{"6.9–26.3", projectsPre264Query},
 	}
-	lookupDocuments = append(listDocuments[:len(listDocuments):len(listDocuments)],
-		projectsDocument{"JuliaSim", projectsJuliaSimQuery})
+	lookupDocuments = []projectsDocument{
+		{"26.4+", projectsQuery},
+		{"6.9–26.3", projectsPre264Query},
+		{"JuliaSim", projectsJuliaSimQuery},
+	}
 )
 
 // projectLookupLimit bounds the owner/name lookup. The filter matches only the
@@ -208,23 +211,31 @@ func lookupProjectsWith(execute func(GraphQLRequest) ([]byte, error), ownerID in
 // queryProjects). When none is accepted, every document's error is reported,
 // labelled with the document.
 func fetchProjectsWith(execute func(GraphQLRequest) ([]byte, error), docs []projectsDocument, ownerID int64, filter map[string]interface{}, limit, offset int) ([]Project, int, error) {
-	var errs []error
+	var firstErr error
 	var msgs []string
+	rejected := false
 	for _, d := range docs {
-		projects, total, rejected, err := queryProjects(execute, d.query, ownerID, filter, limit, offset)
+		projects, total, docRejected, err := queryProjects(execute, d.query, ownerID, filter, limit, offset)
 		if err == nil {
 			return projects, total, nil
 		}
-		errs = append(errs, err)
+		if firstErr == nil {
+			firstErr = err
+		}
 		msgs = append(msgs, fmt.Sprintf("%s document: %v", d.name, err))
+		rejected = docRejected
 		if !rejected {
 			break
 		}
 	}
-	if len(errs) == 1 {
-		return nil, 0, errs[0]
+	if len(msgs) == 1 {
+		return nil, 0, firstErr
 	}
-	return nil, 0, errors.New(strings.Join(msgs, "; "))
+	msg := strings.Join(msgs, "; ")
+	if rejected {
+		msg = "this server rejects every Projects document this jh version knows (" + msg + ")"
+	}
+	return nil, 0, errors.New(msg)
 }
 
 // queryProjects sends one Projects document. rejected reports that the server

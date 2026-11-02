@@ -199,7 +199,7 @@ func TestFetchProjectsPageKeepsTheFirstErrorWhenTheFallbackFails(t *testing.T) {
 		"projects.gql":        `{"errors":[{"message":"field 'requires_publish_request' not found in type: 'projects'","extensions":{"code":"validation-failed"}}]}`,
 		"projects_pre264.gql": notAllowedBody,
 	}, &sent), 1, map[string]interface{}{}, 1)
-	want := "26.4+ document: GraphQL errors: [{field 'requires_publish_request' not found in type: 'projects'}]; 6.9–26.3 document: GraphQL errors: [{query is not allowed}]"
+	want := "this server rejects every Projects document this jh version knows (26.4+ document: GraphQL errors: [{field 'requires_publish_request' not found in type: 'projects'}]; 6.9–26.3 document: GraphQL errors: [{query is not allowed}])"
 	if err == nil || err.Error() != want {
 		t.Fatalf("err = %v\nwant  %s", err, want)
 	}
@@ -251,7 +251,7 @@ func TestLookupProjectsReportsEveryRejection(t *testing.T) {
 		"projects_pre264.gql":   notAllowedBody,
 		"projects_juliasim.gql": notAllowedBody,
 	}, &sent), 1, projectLookupFilter("alice", "proj"))
-	want := "26.4+ document: GraphQL errors: [{query is not allowed}]; 6.9–26.3 document: GraphQL errors: [{query is not allowed}]; JuliaSim document: GraphQL errors: [{query is not allowed}]"
+	want := "this server rejects every Projects document this jh version knows (26.4+ document: GraphQL errors: [{query is not allowed}]; 6.9–26.3 document: GraphQL errors: [{query is not allowed}]; JuliaSim document: GraphQL errors: [{query is not allowed}])"
 	if err == nil || err.Error() != want {
 		t.Fatalf("err = %v\nwant  %s", err, want)
 	}
