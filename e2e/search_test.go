@@ -66,6 +66,7 @@ func TestSearchPackagesJSON(t *testing.T) {
 	requireCreds(t)
 	res := runJH(t, "search", "packages", canaryPackage, "--json")
 	if res.exitCode != 0 || backendGap(res.combined()) {
+		skipIfPackageFallbackDisallowed(t, res.combined())
 		skipIfUnsupported(t, res)
 		t.Skipf("package search unavailable on this instance: %s", errorLine(res.combined()))
 	}

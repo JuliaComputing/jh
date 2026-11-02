@@ -27,9 +27,6 @@ var projectsQuery string
 //go:embed projects_juliasim.gql
 var projectsJuliaSimQuery string
 
-// projectsDocuments are tried in order until the server accepts one.
-var projectsDocuments = []string{projectsQuery, projectsJuliaSimQuery}
-
 type Project struct {
 	ID                          string       `json:"id"`
 	ProjectID                   string       `json:"project_id"`
@@ -101,7 +98,10 @@ type ProjectsResponse struct {
 		} `json:"aggregate"`
 	} `json:"data"`
 	Errors []struct {
-		Message string `json:"message"`
+		Message    string `json:"message"`
+		Extensions struct {
+			Code string `json:"code"`
+		} `json:"extensions"`
 	} `json:"errors"`
 }
 
@@ -153,48 +153,73 @@ func fetchProjectsPage(server string, token *StoredToken, ownerID int64, filter 
 	}, ownerID, filter, page)
 }
 
+// projectsFallbackChunk is how many rows each request for the JuliaSim document
+// asks for. Its `resources` field costs the server about a second per row, so a
+// whole page in one request would run past the 30 s client timeout.
+const projectsFallbackChunk = 10
+
 // fetchProjectsPageWith is fetchProjectsPage with the GraphQL transport passed
-// in. It sends each of projectsDocuments in turn, moving on only when the server
-// rejects one as not allowlisted.
+// in. It sends the web UI's document and, when the server rejects that one,
+// JuliaSim's, fetched in projectsFallbackChunk-row requests so the page is the
+// same projectsPageSize rows either way.
 func fetchProjectsPageWith(execute func(GraphQLRequest) ([]byte, error), ownerID int64, filter map[string]interface{}, page int) ([]Project, int, error) {
-	var lastErr error
-	for _, query := range projectsDocuments {
-		body, err := execute(GraphQLRequest{
-			OperationName: "Projects",
-			Query:         query,
-			Variables: map[string]interface{}{
-				"ownerId": ownerID,
-				"filter":  filter,
-				"limit":   projectsPageSize,
-				"offset":  (page - 1) * projectsPageSize,
-				"orderBy": map[string]interface{}{"created_at": "desc_nulls_last"},
-			},
-		})
+	offset := (page - 1) * projectsPageSize
+	projects, total, rejected, err := queryProjects(execute, projectsQuery, ownerID, filter, projectsPageSize, offset)
+	if !rejected {
+		return projects, total, err
+	}
+
+	projects = nil
+	for got := 0; got < projectsPageSize; got += projectsFallbackChunk {
+		chunk, chunkTotal, _, err := queryProjects(execute, projectsJuliaSimQuery, ownerID, filter, projectsFallbackChunk, offset+got)
 		if err != nil {
 			return nil, 0, err
 		}
-
-		var response ProjectsResponse
-		if err := json.Unmarshal(body, &response); err != nil {
-			return nil, 0, fmt.Errorf("failed to parse response: %w", err)
+		projects = append(projects, chunk...)
+		total = chunkTotal
+		if len(chunk) < projectsFallbackChunk {
+			break
 		}
-		if len(response.Errors) > 0 {
-			lastErr = fmt.Errorf("GraphQL errors: %v", response.Errors)
-			if response.notAllowlisted() {
-				continue
-			}
-			return nil, 0, lastErr
-		}
-		return response.Data.Projects, response.Data.Aggregate.Aggregate.Count, nil
 	}
-	return nil, 0, lastErr
+	return projects, total, nil
 }
 
-// notAllowlisted reports whether the server rejected the document itself
-// (it is not on the server's allowlist) rather than failing to run it.
-func (r ProjectsResponse) notAllowlisted() bool {
+// queryProjects sends one Projects document. rejected reports that the server
+// refused the document itself rather than failed to run it: it is not on the
+// allowlist ("query is not allowed"), or, on a server running without an
+// allowlist, it names fields that server's schema lacks (both are
+// "validation-failed"). Only then is another document worth trying.
+func queryProjects(execute func(GraphQLRequest) ([]byte, error), query string, ownerID int64, filter map[string]interface{}, limit, offset int) (projects []Project, total int, rejected bool, err error) {
+	body, err := execute(GraphQLRequest{
+		OperationName: "Projects",
+		Query:         query,
+		Variables: map[string]interface{}{
+			"ownerId": ownerID,
+			"filter":  filter,
+			"limit":   limit,
+			"offset":  offset,
+			"orderBy": map[string]interface{}{"created_at": "desc_nulls_last"},
+		},
+	})
+	if err != nil {
+		return nil, 0, false, err
+	}
+
+	var response ProjectsResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, 0, false, fmt.Errorf("failed to parse response: %w", err)
+	}
+	if len(response.Errors) > 0 {
+		return nil, 0, response.documentRejected(), fmt.Errorf("GraphQL errors: %v", response.Errors)
+	}
+	return response.Data.Projects, response.Data.Aggregate.Aggregate.Count, false, nil
+}
+
+// documentRejected reports whether the server refused the document itself
+// (see queryProjects) rather than failing to run it.
+func (r ProjectsResponse) documentRejected() bool {
 	for _, e := range r.Errors {
-		if e.Message == "query is not allowed" {
+		if e.Message == "query is not allowed" || e.Extensions.Code == "validation-failed" {
 			return true
 		}
 	}

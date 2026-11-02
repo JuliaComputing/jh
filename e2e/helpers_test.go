@@ -279,6 +279,18 @@ func disallowedQuery(out string) bool {
 	return strings.Contains(strings.ToLower(out), "query is not allowed")
 }
 
+// skipIfPackageFallbackDisallowed skips a `jh package` test whose output ends in
+// the GraphQL fallback being rejected. Those fallback documents are allowlisted
+// up to JuliaHub 26.3 and not from 26.4 on, so there a failed REST package call
+// surfaces as "query is not allowed": a known dead fallback, not a defect in the
+// command under test. Call it before skipIfUnsupported in the package tests.
+func skipIfPackageFallbackDisallowed(t *testing.T, out string) {
+	t.Helper()
+	if disallowedQuery(out) {
+		t.Skipf("REST package endpoint unavailable and the GraphQL fallback is not allowlisted on this server (JuliaHub 26.4+): %s", errorLine(out))
+	}
+}
+
 // backendGap reports whether output indicates the relevant service/endpoint is
 // unavailable on this instance (absent endpoint, a GraphQL error other than a
 // disallowed document, or 5xx) — i.e. a reason to skip rather than fail. Used by

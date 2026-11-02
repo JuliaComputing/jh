@@ -102,8 +102,8 @@ func TestProjectsDocumentsUnchanged(t *testing.T) {
 	}
 }
 
-// fakeProjectsServer answers each document from bodies by its position in
-// projectsDocuments and records which documents were sent.
+// fakeProjectsServer answers each Projects document from bodies by file name
+// and records which documents were sent.
 func fakeProjectsServer(bodies map[string]string, sent *[]string) func(GraphQLRequest) ([]byte, error) {
 	return func(req GraphQLRequest) ([]byte, error) {
 		name := "projects.gql"
@@ -166,6 +166,61 @@ func TestFetchProjectsPageReportsWhenNoDocumentIsAllowlisted(t *testing.T) {
 	}, &sent), 1, map[string]interface{}{}, 1)
 	if err == nil || !strings.Contains(err.Error(), "query is not allowed") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestFetchProjectsPageFallsBackOnSchemaValidationFailure(t *testing.T) {
+	var sent []string
+	projects, _, err := fetchProjectsPageWith(fakeProjectsServer(map[string]string{
+		"projects.gql":          `{"errors":[{"message":"field 'editing_mode' not found in type: 'projects'","extensions":{"code":"validation-failed"}}]}`,
+		"projects_juliasim.gql": oneProjectBody,
+	}, &sent), 1, map[string]interface{}{}, 1)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("got %v, %v", projects, err)
+	}
+}
+
+// The JuliaSim fallback is fetched in projectsFallbackChunk-row requests that
+// together cover the same page as one web UI request.
+func TestFetchProjectsPageFallbackChunks(t *testing.T) {
+	type call struct{ limit, offset int }
+	var calls []call
+	rows := func(n int) string {
+		items := make([]string, n)
+		for i := range items {
+			items[i] = `{"id":"p","name":"n","owner":{"username":"u"}}`
+		}
+		return `{"data":{"aggregate":{"aggregate":{"count":225}},"projects":[` + strings.Join(items, ",") + `]}}`
+	}
+	execute := func(req GraphQLRequest) ([]byte, error) {
+		if req.Query == projectsQuery {
+			return []byte(notAllowedBody), nil
+		}
+		c := call{req.Variables["limit"].(int), req.Variables["offset"].(int)}
+		calls = append(calls, c)
+		// 225 projects in all: page 3 (offset 200) has 25.
+		left := 225 - c.offset
+		if left > c.limit {
+			left = c.limit
+		}
+		return []byte(rows(left)), nil
+	}
+
+	projects, total, err := fetchProjectsPageWith(execute, 1, map[string]interface{}{}, 2)
+	if err != nil || total != 225 || len(projects) != projectsPageSize {
+		t.Fatalf("page 2: %d rows, total %d, err %v", len(projects), total, err)
+	}
+	if len(calls) != projectsPageSize/projectsFallbackChunk || calls[0] != (call{projectsFallbackChunk, 100}) || calls[len(calls)-1] != (call{projectsFallbackChunk, 190}) {
+		t.Fatalf("page 2 requests: %v", calls)
+	}
+
+	calls = nil
+	projects, _, err = fetchProjectsPageWith(execute, 1, map[string]interface{}{}, 3)
+	if err != nil || len(projects) != 25 {
+		t.Fatalf("page 3: %d rows, err %v", len(projects), err)
+	}
+	if len(calls) != 3 {
+		t.Fatalf("page 3 should stop after the short chunk: %v", calls)
 	}
 }
 
