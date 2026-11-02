@@ -21,8 +21,9 @@ func runVerbose(t *testing.T, args ...string) {
 	if res.exitCode != 0 {
 		if args[0] == "package" || (args[0] == "search" && len(args) > 1 && args[1] == "packages") {
 			skipIfPackageUnsupported(t, res)
+		} else {
+			skipIfUnsupported(t, res)
 		}
-		skipIfUnsupported(t, res)
 		t.Fatalf("jh %s exited %d\nstderr: %s", strings.Join(args, " "), res.exitCode, res.stderr)
 	}
 	if strings.TrimSpace(res.combined()) == "" {

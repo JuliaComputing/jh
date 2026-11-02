@@ -175,6 +175,19 @@ func TestFetchProjectsPageReportsWhenNoDocumentIsAllowlisted(t *testing.T) {
 	}
 }
 
+func TestFetchProjectsPageDoesNotFallBackOnFilterValidationErrors(t *testing.T) {
+	var sent []string
+	_, _, err := fetchProjectsPageWith(fakeProjectsServer(map[string]string{
+		"projects.gql": `{"errors":[{"message":"field 'nope' not found in type: 'projects_bool_exp'","extensions":{"code":"validation-failed"}}]}`,
+	}, &sent), 1, map[string]interface{}{}, 1)
+	if err == nil || !strings.Contains(err.Error(), "projects_bool_exp") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(sent) != 1 {
+		t.Fatalf("sent %v, want one request", sent)
+	}
+}
+
 func TestFetchProjectsPageKeepsTheFirstErrorWhenTheFallbackFails(t *testing.T) {
 	var sent []string
 	_, _, err := fetchProjectsPageWith(fakeProjectsServer(map[string]string{
@@ -208,19 +221,22 @@ func TestPickProject(t *testing.T) {
 		return pr
 	}
 	rows := []Project{p("alice", "projX"), p("alice", "proj")}
-	if got := pickProject(rows, "ALICE", "PROJ"); got == nil || got.ID != "alice/proj" {
-		t.Fatalf("exact case-insensitive match: got %v", got)
+	if got, err := pickProject(rows, "ALICE", "PROJ"); err != nil || got.ID != "alice/proj" {
+		t.Fatalf("case-insensitive match: got %v, %v", got, err)
 	}
-	if got := pickProject([]Project{p("alice", "Proj"), p("alice", "proj")}, "alice", "proj"); got == nil || got.ID != "alice/proj" {
-		t.Fatalf("exact match should beat an earlier case-insensitive one: got %v", got)
+	if got, err := pickProject([]Project{p("alice", "Proj"), p("alice", "proj")}, "alice", "proj"); err != nil || got.ID != "alice/proj" {
+		t.Fatalf("exact match should beat a case-insensitive one: got %v, %v", got, err)
 	}
-	if got := pickProject([]Project{p("bob", "other")}, "alice", "proj"); got != nil {
-		t.Fatalf("a single row that does not match must not be picked: got %v", got)
+	if got, err := pickProject([]Project{p("alice", "Proj"), p("alice", "PROJ")}, "alice", "proj"); err == nil || !strings.Contains(err.Error(), "alice/Proj, alice/PROJ") {
+		t.Fatalf("several case-insensitive matches without an exact one should be ambiguous: got %v, %v", got, err)
 	}
-	if got := pickProject(rows, "bob", "proj"); got != nil {
+	if got, err := pickProject([]Project{p("bob", "other")}, "alice", "proj"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("a single row that does not match must not be picked: got %v, %v", got, err)
+	}
+	if got, err := pickProject(rows, "bob", "proj"); err == nil {
 		t.Fatalf("no match among several rows: got %v", got)
 	}
-	if got := pickProject(nil, "alice", "proj"); got != nil {
+	if got, err := pickProject(nil, "alice", "proj"); err == nil {
 		t.Fatalf("empty: got %v", got)
 	}
 }

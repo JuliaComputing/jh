@@ -18,20 +18,32 @@ func projectLookupFilter(username, projectName string) map[string]interface{} {
 }
 
 // pickProject chooses the requested project among the rows the server matched
-// with ILIKE: an exact match wins, then a case-insensitive one. Rows that match
-// neither are not the requested project.
-func pickProject(projects []Project, username, projectName string) *Project {
+// with ILIKE: an exact match wins, then the only case-insensitive one. Several
+// case-insensitive matches without an exact one are ambiguous, and rows that
+// match neither are not the requested project.
+func pickProject(projects []Project, username, projectName string) (*Project, error) {
 	for i := range projects {
 		if projects[i].Owner.Username == username && projects[i].Name == projectName {
-			return &projects[i]
+			return &projects[i], nil
 		}
 	}
+	var matches []*Project
 	for i := range projects {
 		if strings.EqualFold(projects[i].Owner.Username, username) && strings.EqualFold(projects[i].Name, projectName) {
-			return &projects[i]
+			matches = append(matches, &projects[i])
 		}
 	}
-	return nil
+	switch len(matches) {
+	case 0:
+		return nil, fmt.Errorf("project '%s' not found for user '%s'", projectName, username)
+	case 1:
+		return matches[0], nil
+	}
+	names := make([]string, len(matches))
+	for i, p := range matches {
+		names[i] = p.Owner.Username + "/" + p.Name
+	}
+	return nil, fmt.Errorf("'%s/%s' matches several projects that differ only in case (%s); give the exact owner and project name", username, projectName, strings.Join(names, ", "))
 }
 
 // findProjectByUserAndName finds a project by username and project name
@@ -41,9 +53,9 @@ func findProjectByUserAndName(server string, token *StoredToken, userID int64, u
 		return "", fmt.Errorf("failed to query projects: %w", err)
 	}
 
-	matchedProject := pickProject(projects, username, projectName)
-	if matchedProject == nil {
-		return "", fmt.Errorf("project '%s' not found for user '%s'", projectName, username)
+	matchedProject, err := pickProject(projects, username, projectName)
+	if err != nil {
+		return "", err
 	}
 
 	fmt.Printf("Found project: %s by %s (ID: %s)\n", matchedProject.Name, matchedProject.Owner.Username, matchedProject.ID)
