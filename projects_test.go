@@ -1,7 +1,11 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"reflect"
+	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -64,5 +68,43 @@ func TestTotalPages(t *testing.T) {
 		if got := totalPages(total); got != want {
 			t.Errorf("totalPages(%d) = %d, want %d", total, got, want)
 		}
+	}
+}
+
+// normalizeGraphQL drops comments and insignificant whitespace, so the hash below
+// changes only when the document itself does.
+func normalizeGraphQL(doc string) string {
+	doc = regexp.MustCompile(`(?m)#.*$`).ReplaceAllString(doc, "")
+	doc = strings.Join(strings.Fields(doc), " ")
+	return regexp.MustCompile(` ?([{}():,!\[\]=$]) ?`).ReplaceAllString(doc, "$1")
+}
+
+// projects.gql is sent verbatim and the server answers only allowlisted
+// documents. This hash pins it to the JuliaHub web UI's Projects document
+// (frontend/src/components/Projects/queries/projects.gql). Change it only
+// together with that file, after checking the new text is on the server's
+// allowlist; an edit here alone breaks `jh project list` and `jh clone`.
+const projectsQuerySHA256 = "3c5c5d098cbe397de6fe6247e229a0cc7b0ed914ce1fdcc1b6c10876812fa0e3"
+
+func TestProjectsQueryIsTheAllowlistedDocument(t *testing.T) {
+	sum := sha256.Sum256([]byte(normalizeGraphQL(projectsQuery)))
+	if got := hex.EncodeToString(sum[:]); got != projectsQuerySHA256 {
+		t.Fatalf("projects.gql changed (normalized sha256 %s, pinned %s); it must stay the server's allowlisted Projects document", got, projectsQuerySHA256)
+	}
+	if strings.Contains(projectsQuery, "resources") {
+		t.Fatal("projects.gql selects `resources`, which costs the server about a second per row")
+	}
+}
+
+func TestProjectLookupFilter(t *testing.T) {
+	got := projectLookupFilter("al_ice", "my%proj")
+	want := map[string]interface{}{
+		"owner": map[string]interface{}{
+			"username": map[string]interface{}{"_ilike": `al\_ice`},
+		},
+		"name": map[string]interface{}{"_ilike": `my\%proj`},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("projectLookupFilter = %#v, want %#v", got, want)
 	}
 }

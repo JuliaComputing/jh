@@ -8,10 +8,11 @@ import (
 )
 
 // `jh package` — search/info/dependency. These depend on the REST `/api/v1/ui/packages/info`
-// endpoint with a GraphQL fallback; on some instances those are unavailable or
-// the GraphQL role is not permitted ("query is not allowed"). Such cases are
-// treated as backend gaps and skipped; when the commands work, real structure
-// is asserted. DataFrames is used as a well-known canary.
+// endpoint with a GraphQL fallback; on some instances those are unavailable, and
+// such cases are treated as backend gaps and skipped. A "query is not allowed"
+// from the GraphQL fallback is a CLI defect (the document is not on the server's
+// allowlist) and fails. When the commands work, real structure is asserted.
+// DataFrames is used as a well-known canary.
 
 const canaryPackage = "DataFrames"
 

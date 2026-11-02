@@ -2,16 +2,23 @@ package main
 
 import (
 	"bufio"
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 )
+
+// projectLookupFilter matches a project by owner username and project name,
+// case-insensitively and literally, so the server returns at most a handful of
+// rows instead of every project the caller can see.
+func projectLookupFilter(username, projectName string) map[string]interface{} {
+	return map[string]interface{}{
+		"owner": map[string]interface{}{
+			"username": map[string]interface{}{"_ilike": escapeLikePattern(username)},
+		},
+		"name": map[string]interface{}{"_ilike": escapeLikePattern(projectName)},
+	}
+}
 
 // findProjectByUserAndName finds a project by username and project name
 func findProjectByUserAndName(server, username, projectName string) (string, error) {
@@ -26,119 +33,16 @@ func findProjectByUserAndName(server, username, projectName string) (string, err
 		return "", fmt.Errorf("authentication required: %w", err)
 	}
 
-	// Get all projects using the same GraphQL query as listProjects
-	query := `query Projects(
-  $limit: Int
-    $offset: Int
-      $orderBy: [projects_order_by!]
-        $ownerId: bigint
-          $filter: projects_bool_exp
-            ) {
-              aggregate: projects_aggregate(where: $filter) {
-                aggregate {
-                  count
-                }
-              }
-              projects(limit: $limit, offset: $offset, order_by: $orderBy, where: $filter) {
-                id: project_id
-                project_id
-                name
-                owner {
-                  username
-                  name
-                }
-                created_at
-                product_id
-                finished
-                is_archived
-                instance_default_role
-                deployable
-                project_deployments_aggregate {
-                  aggregate {
-                    count
-                  }
-                }
-                running_deployments: project_deployments_aggregate(
-                  where: {
-                    status: { _eq: "JobQueued" }
-                    job: { status: { _eq: "Running" } }
-                  }
-                ) {
-                  aggregate {
-                    count
-                  }
-                }
-                pending_deployments: project_deployments_aggregate(
-                  where: {
-                    status: { _eq: "JobQueued" }
-                    job: { status: { _in: ["SubmitInitialized", "Submitted", "Pending"] } }
-                  }
-                ) {
-                  aggregate {
-                    count
-                  }
-                }
-                resources(order_by: [{ sorting_order: asc_nulls_last }]) {
-                  sorting_order
-                  instance_default_role
-                  giturl
-                  name
-                  resource_id
-                  resource_type
-                }
-                product {
-                  id
-                  displayName: display_name
-                  name
-                }
-                visibility
-                description
-                users: groups(where: { group_id: { _is_null: true } }) {
-                  user {
-                    name
-                  }
-                  id
-                  assigned_role
-                }
-                groups(where: { group_id: { _is_null: false } }) {
-                  group {
-                    name
-                    group_id
-                  }
-                  id: group_id
-                  group_id
-                  project_id
-                  assigned_role
-                }
-                tags
-                userRole: access_control_users_aggregate(
-                  where: { user_id: { _eq: $ownerId } }
-                ) {
-                  aggregate {
-                    max {
-                      assigned_role
-                    }
-                  }
-                }
-                is_simple_mode
-                projects_current_editor_user_id {
-                  name
-                  id
-                }
-              }
-            }`
-
-	// Execute the GraphQL query
-	response, err := executeProjectsQuery(server, token, query, userInfo.ID)
+	projects, _, err := fetchProjectsPage(server, token, userInfo.ID, projectLookupFilter(username, projectName), 1)
 	if err != nil {
 		return "", fmt.Errorf("failed to query projects: %w", err)
 	}
 
 	// Search for the project
 	var matchedProject *Project
-	for _, project := range response.Data.Projects {
-		if strings.EqualFold(project.Owner.Username, username) && strings.EqualFold(project.Name, projectName) {
-			matchedProject = &project
+	for i := range projects {
+		if strings.EqualFold(projects[i].Owner.Username, username) && strings.EqualFold(projects[i].Name, projectName) {
+			matchedProject = &projects[i]
 			break
 		}
 	}
@@ -149,63 +53,6 @@ func findProjectByUserAndName(server, username, projectName string) (string, err
 
 	fmt.Printf("Found project: %s by %s (ID: %s)\n", matchedProject.Name, matchedProject.Owner.Username, matchedProject.ID)
 	return matchedProject.ID, nil
-}
-
-// executeProjectsQuery executes the GraphQL query for projects
-func executeProjectsQuery(server string, token *StoredToken, query string, userID int64) (*ProjectsResponse, error) {
-	// This is similar to the code in listProjects but returns the response for reuse
-	graphqlReq := GraphQLRequest{
-		OperationName: "Projects",
-		Query:         query,
-		Variables: map[string]interface{}{
-			"ownerId": userID,
-		},
-	}
-
-	jsonData, err := json.Marshal(graphqlReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal GraphQL request: %w", err)
-	}
-
-	url := fmt.Sprintf("https://%s/v1/graphql", server)
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("X-Hasura-Role", "jhuser")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("GraphQL request failed (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	var response ProjectsResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	// Check for GraphQL errors
-	if len(response.Errors) > 0 {
-		return nil, fmt.Errorf("GraphQL errors: %v", response.Errors)
-	}
-
-	return &response, nil
 }
 
 // cloneProject clones a project using git with authorization

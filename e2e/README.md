@@ -47,10 +47,13 @@ One file per command category, plus shared infrastructure:
   download URL, a registry config `"name"`, a UUID, etc.).
 - **Graceful skips on backend gaps, not CLI defects**: when a command is
   unavailable or unauthorized on the instance — missing admin permissions, an
-  absent endpoint (404), a disallowed GraphQL query, or a transient timeout —
-  the test **skips** via `skipIfUnsupported`. Genuine CLI defects (e.g. a
-  response that fails to parse) are deliberately **not** matched by that helper,
-  so they still fail.
+  absent endpoint (404), or a transient timeout — the test **skips** via
+  `skipIfUnsupported`. Genuine CLI defects (e.g. a response that fails to parse)
+  are deliberately **not** matched by that helper, so they still fail. A GraphQL
+  `query is not allowed` is one of them: the server answers only allowlisted
+  documents, so it means the CLI sent the wrong document text, and the test
+  fails. The suite therefore targets servers whose allowlist carries the CLI's
+  current documents (JuliaHub master and the matching release).
 - **Admin commands** require elevated permissions: under a standard test user
   they skip; run under an admin credential they execute. (See
   [Running in CI](#running-in-ci) about credential selection.)
@@ -65,7 +68,8 @@ One file per command category, plus shared infrastructure:
   submits a manifest scan with `--no-wait` (no long poll, nothing to delete).
 - **Adapts to the instance.** Tests assert real data/structure when the relevant
   endpoint is available and **skip** when it is not (absent endpoint, missing
-  permissions, disallowed query, timeout). Genuine CLI defects still fail.
+  permissions, timeout). Genuine CLI defects, including a disallowed GraphQL
+  document, still fail.
 - **Skips without credentials.** If no credentials are available, the suite
   skips rather than fails.
 
