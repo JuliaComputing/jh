@@ -85,20 +85,23 @@ func normalizeGraphQL(doc string) string {
 // only detect such an edit; this repo can't see the server's allowlist. Update
 // them only after checking the new text against JuliaHub's allowlist
 // (graphqlsrvr/internal/allowlist Lookup) for every release the CLI supports.
+// Neither may select `resources`, which costs the server about a second per row.
 var projectsDocumentSHA256 = map[string]string{
-	"projects.gql":          "3c5c5d098cbe397de6fe6247e229a0cc7b0ed914ce1fdcc1b6c10876812fa0e3",
-	"projects_juliasim.gql": "187e0b35c14cd505720d20fa3f07d34cae4951a2184379507a8a96037cf01ead",
+	"projects.gql":        "3c5c5d098cbe397de6fe6247e229a0cc7b0ed914ce1fdcc1b6c10876812fa0e3",
+	"projects_pre264.gql": "185121c1abf0e32c1f6a75d7dbda7ad4013e46cf7464b9e3d37e0acd2a8f3604",
 }
 
 func TestProjectsDocumentsUnchanged(t *testing.T) {
-	for name, doc := range map[string]string{"projects.gql": projectsQuery, "projects_juliasim.gql": projectsJuliaSimQuery} {
+	for name, doc := range map[string]string{"projects.gql": projectsQuery, "projects_pre264.gql": projectsPre264Query} {
 		sum := sha256.Sum256([]byte(normalizeGraphQL(doc)))
 		if got := hex.EncodeToString(sum[:]); got != projectsDocumentSHA256[name] {
 			t.Errorf("%s changed (normalized sha256 %s, pinned %s); it must stay the server's allowlisted document", name, got, projectsDocumentSHA256[name])
 		}
 	}
-	if strings.Contains(projectsQuery, "resources") {
-		t.Error("projects.gql selects `resources`, which costs the server about a second per row")
+	for name, doc := range map[string]string{"projects.gql": projectsQuery, "projects_pre264.gql": projectsPre264Query} {
+		if strings.Contains(doc, "resources") {
+			t.Errorf("%s selects `resources`, which costs the server about a second per row", name)
+		}
 	}
 }
 
@@ -107,8 +110,8 @@ func TestProjectsDocumentsUnchanged(t *testing.T) {
 func fakeProjectsServer(bodies map[string]string, sent *[]string) func(GraphQLRequest) ([]byte, error) {
 	return func(req GraphQLRequest) ([]byte, error) {
 		name := "projects.gql"
-		if req.Query == projectsJuliaSimQuery {
-			name = "projects_juliasim.gql"
+		if req.Query == projectsPre264Query {
+			name = "projects_pre264.gql"
 		}
 		*sent = append(*sent, name)
 		return []byte(bodies[name]), nil
@@ -120,7 +123,7 @@ const (
 	oneProjectBody = `{"data":{"aggregate":{"aggregate":{"count":1}},"projects":[{"id":"p1","name":"proj","owner":{"username":"alice"}}]}}`
 )
 
-func TestFetchProjectsPagePrefersTheWebUIDocument(t *testing.T) {
+func TestFetchProjectsPagePrefersThe264Document(t *testing.T) {
 	var sent []string
 	projects, total, err := fetchProjectsPageWith(fakeProjectsServer(map[string]string{"projects.gql": oneProjectBody}, &sent), 1, map[string]interface{}{}, 1)
 	if err != nil || total != 1 || len(projects) != 1 {
@@ -134,13 +137,13 @@ func TestFetchProjectsPagePrefersTheWebUIDocument(t *testing.T) {
 func TestFetchProjectsPageFallsBackWhenNotAllowlisted(t *testing.T) {
 	var sent []string
 	projects, _, err := fetchProjectsPageWith(fakeProjectsServer(map[string]string{
-		"projects.gql":          notAllowedBody,
-		"projects_juliasim.gql": oneProjectBody,
+		"projects.gql":        notAllowedBody,
+		"projects_pre264.gql": oneProjectBody,
 	}, &sent), 1, map[string]interface{}{}, 1)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("got %v, %v", projects, err)
 	}
-	if !reflect.DeepEqual(sent, []string{"projects.gql", "projects_juliasim.gql"}) {
+	if !reflect.DeepEqual(sent, []string{"projects.gql", "projects_pre264.gql"}) {
 		t.Fatalf("sent %v", sent)
 	}
 }
@@ -161,8 +164,8 @@ func TestFetchProjectsPageDoesNotFallBackOnOtherErrors(t *testing.T) {
 func TestFetchProjectsPageReportsWhenNoDocumentIsAllowlisted(t *testing.T) {
 	var sent []string
 	_, _, err := fetchProjectsPageWith(fakeProjectsServer(map[string]string{
-		"projects.gql":          notAllowedBody,
-		"projects_juliasim.gql": notAllowedBody,
+		"projects.gql":        notAllowedBody,
+		"projects_pre264.gql": notAllowedBody,
 	}, &sent), 1, map[string]interface{}{}, 1)
 	if err == nil || !strings.Contains(err.Error(), "query is not allowed") {
 		t.Fatalf("err = %v", err)
@@ -172,55 +175,11 @@ func TestFetchProjectsPageReportsWhenNoDocumentIsAllowlisted(t *testing.T) {
 func TestFetchProjectsPageFallsBackOnSchemaValidationFailure(t *testing.T) {
 	var sent []string
 	projects, _, err := fetchProjectsPageWith(fakeProjectsServer(map[string]string{
-		"projects.gql":          `{"errors":[{"message":"field 'editing_mode' not found in type: 'projects'","extensions":{"code":"validation-failed"}}]}`,
-		"projects_juliasim.gql": oneProjectBody,
+		"projects.gql":        `{"errors":[{"message":"field 'editing_mode' not found in type: 'projects'","extensions":{"code":"validation-failed"}}]}`,
+		"projects_pre264.gql": oneProjectBody,
 	}, &sent), 1, map[string]interface{}{}, 1)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("got %v, %v", projects, err)
-	}
-}
-
-// The JuliaSim fallback is fetched in projectsFallbackChunk-row requests that
-// together cover the same page as one web UI request.
-func TestFetchProjectsPageFallbackChunks(t *testing.T) {
-	type call struct{ limit, offset int }
-	var calls []call
-	rows := func(n int) string {
-		items := make([]string, n)
-		for i := range items {
-			items[i] = `{"id":"p","name":"n","owner":{"username":"u"}}`
-		}
-		return `{"data":{"aggregate":{"aggregate":{"count":225}},"projects":[` + strings.Join(items, ",") + `]}}`
-	}
-	execute := func(req GraphQLRequest) ([]byte, error) {
-		if req.Query == projectsQuery {
-			return []byte(notAllowedBody), nil
-		}
-		c := call{req.Variables["limit"].(int), req.Variables["offset"].(int)}
-		calls = append(calls, c)
-		// 225 projects in all: page 3 (offset 200) has 25.
-		left := 225 - c.offset
-		if left > c.limit {
-			left = c.limit
-		}
-		return []byte(rows(left)), nil
-	}
-
-	projects, total, err := fetchProjectsPageWith(execute, 1, map[string]interface{}{}, 2)
-	if err != nil || total != 225 || len(projects) != projectsPageSize {
-		t.Fatalf("page 2: %d rows, total %d, err %v", len(projects), total, err)
-	}
-	if len(calls) != projectsPageSize/projectsFallbackChunk || calls[0] != (call{projectsFallbackChunk, 100}) || calls[len(calls)-1] != (call{projectsFallbackChunk, 190}) {
-		t.Fatalf("page 2 requests: %v", calls)
-	}
-
-	calls = nil
-	projects, _, err = fetchProjectsPageWith(execute, 1, map[string]interface{}{}, 3)
-	if err != nil || len(projects) != 25 {
-		t.Fatalf("page 3: %d rows, err %v", len(projects), err)
-	}
-	if len(calls) != 3 {
-		t.Fatalf("page 3 should stop after the short chunk: %v", calls)
 	}
 }
 

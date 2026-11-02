@@ -9,23 +9,22 @@ import (
 
 // The server answers only allowlisted GraphQL documents and rejects any other
 // text with "query is not allowed", so these two files must stay, field for
-// field, the server's documents. Page and filter only through the variables both
-// declare ($limit, $offset, $orderBy, $ownerId, $filter); never edit the text.
+// field, the JuliaHub web UI's Projects document
+// (frontend/src/components/Projects/queries/projects.gql) as two server releases
+// ship it. Page and filter only through the variables both declare ($limit,
+// $offset, $orderBy, $ownerId, $filter); never edit the text.
 //
-// projects.gql is the JuliaHub web UI's Projects document
-// (frontend/src/components/Projects/queries/projects.gql), allowlisted from
-// JuliaHub 26.4 on. It is cheap: 100 rows in about half a second.
-//
-// projects_juliasim.gql is JuliaSim's (graphqlsrvr/external-queries/
-// juliasim-projects.gql), allowlisted on every release and kept stable as an
-// external query. Its `resources` field costs the server about a second per row,
-// so it is only the fallback for servers that don't allowlist the first one.
+// projects.gql is the document from JuliaHub 26.4 on; projects_pre264.gql is the
+// one from 25.7 through 26.3, which lacks `editing_mode` and
+// `requires_publish_request`. Every release from 25.7 allowlists exactly one of
+// them. Don't fall back to JuliaSim's allowlisted Projects document: its
+// `resources` field costs the server about a second per row.
 //
 //go:embed projects.gql
 var projectsQuery string
 
-//go:embed projects_juliasim.gql
-var projectsJuliaSimQuery string
+//go:embed projects_pre264.gql
+var projectsPre264Query string
 
 type Project struct {
 	ID                          string       `json:"id"`
@@ -153,35 +152,16 @@ func fetchProjectsPage(server string, token *StoredToken, ownerID int64, filter 
 	}, ownerID, filter, page)
 }
 
-// projectsFallbackChunk is how many rows each request for the JuliaSim document
-// asks for. Its `resources` field costs the server about a second per row, so a
-// whole page in one request would run past the 30 s client timeout.
-const projectsFallbackChunk = 10
-
 // fetchProjectsPageWith is fetchProjectsPage with the GraphQL transport passed
-// in. It sends the web UI's document and, when the server rejects that one,
-// JuliaSim's, fetched in projectsFallbackChunk-row requests so the page is the
-// same projectsPageSize rows either way.
+// in. It sends the 26.4+ document and, when the server rejects that one, the
+// 25.7–26.3 document.
 func fetchProjectsPageWith(execute func(GraphQLRequest) ([]byte, error), ownerID int64, filter map[string]interface{}, page int) ([]Project, int, error) {
 	offset := (page - 1) * projectsPageSize
 	projects, total, rejected, err := queryProjects(execute, projectsQuery, ownerID, filter, projectsPageSize, offset)
-	if !rejected {
-		return projects, total, err
+	if rejected {
+		projects, total, _, err = queryProjects(execute, projectsPre264Query, ownerID, filter, projectsPageSize, offset)
 	}
-
-	projects = nil
-	for got := 0; got < projectsPageSize; got += projectsFallbackChunk {
-		chunk, chunkTotal, _, err := queryProjects(execute, projectsJuliaSimQuery, ownerID, filter, projectsFallbackChunk, offset+got)
-		if err != nil {
-			return nil, 0, err
-		}
-		projects = append(projects, chunk...)
-		total = chunkTotal
-		if len(chunk) < projectsFallbackChunk {
-			break
-		}
-	}
-	return projects, total, nil
+	return projects, total, err
 }
 
 // queryProjects sends one Projects document. rejected reports that the server
