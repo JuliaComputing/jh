@@ -214,8 +214,8 @@ func TestPickProject(t *testing.T) {
 	if got := pickProject([]Project{p("alice", "Proj"), p("alice", "proj")}, "alice", "proj"); got == nil || got.ID != "alice/proj" {
 		t.Fatalf("exact match should beat an earlier case-insensitive one: got %v", got)
 	}
-	if got := pickProject([]Project{p("Łukasz", "p")}, "łukasz", "P"); got == nil {
-		t.Fatal("a single server-side match should be used even when EqualFold disagrees")
+	if got := pickProject([]Project{p("bob", "other")}, "alice", "proj"); got != nil {
+		t.Fatalf("a single row that does not match must not be picked: got %v", got)
 	}
 	if got := pickProject(rows, "bob", "proj"); got != nil {
 		t.Fatalf("no match among several rows: got %v", got)

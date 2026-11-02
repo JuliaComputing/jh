@@ -55,7 +55,10 @@ One file per command category, plus shared infrastructure:
   fails. One known exception: the GraphQL fallback of `jh package` is
   allowlisted only up to JuliaHub 26.3, so from 26.4 a failed REST package call
   ends in "query is not allowed". The package tests skip that case by name
-  (`skipIfPackageFallbackDisallowed`) instead of failing.
+  (`skipIfPackageFallbackDisallowed`) instead of failing. Because a disallowed
+  document fails, the suite targets servers whose allowlist has the CLI's
+  current documents: JuliaHub 25.10 and later (`jh group list` and
+  `jh user list` send web UI documents that 25.7 and 25.8 don't allowlist).
 - **Admin commands** require elevated permissions: under a standard test user
   they skip; run under an admin credential they execute. (See
   [Running in CI](#running-in-ci) about credential selection.)

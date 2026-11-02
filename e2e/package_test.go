@@ -21,8 +21,7 @@ func TestPackageSearch(t *testing.T) {
 	requireCreds(t)
 	res := runJH(t, "package", "search", canaryPackage)
 	if res.exitCode != 0 || backendGap(res.combined()) {
-		skipIfPackageFallbackDisallowed(t, res.combined())
-		skipIfUnsupported(t, res)
+		skipIfPackageUnsupported(t, res)
 		t.Skipf("package search unavailable on this instance: %s", errorLine(res.combined()))
 	}
 	if strings.Contains(strings.ToLower(res.combined()), "no packages found") {
@@ -36,8 +35,7 @@ func TestPackageInfo(t *testing.T) {
 	res := runJH(t, "package", "info", canaryPackage)
 	out := res.combined()
 	if res.exitCode != 0 || backendGap(out) {
-		skipIfPackageFallbackDisallowed(t, res.combined())
-		skipIfUnsupported(t, res)
+		skipIfPackageUnsupported(t, res)
 		t.Skipf("package info unavailable on this instance: %s", errorLine(out))
 	}
 	if strings.Contains(strings.ToLower(out), "not found") {
@@ -54,8 +52,7 @@ func TestPackageDependency(t *testing.T) {
 	res := runJH(t, "package", "dependency", canaryPackage)
 	out := res.combined()
 	if res.exitCode != 0 || backendGap(out) {
-		skipIfPackageFallbackDisallowed(t, res.combined())
-		skipIfUnsupported(t, res)
+		skipIfPackageUnsupported(t, res)
 		if strings.Contains(strings.ToLower(out), "not found") {
 			t.Skipf("%s not indexed on this instance", canaryPackage)
 		}

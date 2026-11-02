@@ -176,8 +176,8 @@ func fetchProjectsPageWith(execute func(GraphQLRequest) ([]byte, error), ownerID
 // queryProjects sends one Projects document. rejected reports that the server
 // refused the document itself rather than failed to run it: it is not on the
 // allowlist ("query is not allowed"), or, on a server running without an
-// allowlist, it names fields that server's schema lacks (both are
-// "validation-failed"). Only then is another document worth trying.
+// allowlist, it names a field that server's schema lacks ("field ... not found
+// in type"). Only then is another document worth trying.
 func queryProjects(execute func(GraphQLRequest) ([]byte, error), query string, ownerID int64, filter map[string]interface{}, limit, offset int) (projects []Project, total int, rejected bool, err error) {
 	body, err := execute(GraphQLRequest{
 		OperationName: "Projects",
@@ -208,7 +208,10 @@ func queryProjects(execute func(GraphQLRequest) ([]byte, error), query string, o
 // (see queryProjects) rather than failing to run it.
 func (r ProjectsResponse) documentRejected() bool {
 	for _, e := range r.Errors {
-		if e.Message == "query is not allowed" || e.Extensions.Code == "validation-failed" {
+		if e.Message == "query is not allowed" {
+			return true
+		}
+		if e.Extensions.Code == "validation-failed" && strings.Contains(e.Message, "not found in type") {
 			return true
 		}
 	}
