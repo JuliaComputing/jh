@@ -80,27 +80,29 @@ func normalizeGraphQL(doc string) string {
 }
 
 // The Projects documents are sent verbatim and the server answers only
-// allowlisted text, so an edit to either file breaks `jh project list` and
+// allowlisted text, so an edit to any of them breaks `jh project list` and
 // `jh clone` on every server that doesn't carry the edited text. These hashes
 // only detect such an edit; this repo can't see the server's allowlist. Update
 // them only after checking the new text against JuliaHub's allowlist
 // (graphqlsrvr/internal/allowlist Lookup) for every release the CLI supports.
-// Neither may select `resources`, which costs the server about a second per row.
+// The listing documents may not select `resources`, which costs the server about
+// a second per row.
 var projectsDocumentSHA256 = map[string]string{
-	"projects.gql":        "3c5c5d098cbe397de6fe6247e229a0cc7b0ed914ce1fdcc1b6c10876812fa0e3",
-	"projects_pre264.gql": "185121c1abf0e32c1f6a75d7dbda7ad4013e46cf7464b9e3d37e0acd2a8f3604",
+	"projects.gql":          "3c5c5d098cbe397de6fe6247e229a0cc7b0ed914ce1fdcc1b6c10876812fa0e3",
+	"projects_pre264.gql":   "185121c1abf0e32c1f6a75d7dbda7ad4013e46cf7464b9e3d37e0acd2a8f3604",
+	"projects_juliasim.gql": "187e0b35c14cd505720d20fa3f07d34cae4951a2184379507a8a96037cf01ead",
 }
 
 func TestProjectsDocumentsUnchanged(t *testing.T) {
-	for name, doc := range map[string]string{"projects.gql": projectsQuery, "projects_pre264.gql": projectsPre264Query} {
+	for name, doc := range map[string]string{"projects.gql": projectsQuery, "projects_pre264.gql": projectsPre264Query, "projects_juliasim.gql": projectsJuliaSimQuery} {
 		sum := sha256.Sum256([]byte(normalizeGraphQL(doc)))
 		if got := hex.EncodeToString(sum[:]); got != projectsDocumentSHA256[name] {
 			t.Errorf("%s changed (normalized sha256 %s, pinned %s); it must stay the server's allowlisted document", name, got, projectsDocumentSHA256[name])
 		}
 	}
-	for name, doc := range map[string]string{"projects.gql": projectsQuery, "projects_pre264.gql": projectsPre264Query} {
-		if strings.Contains(doc, "resources") {
-			t.Errorf("%s selects `resources`, which costs the server about a second per row", name)
+	for _, d := range listDocuments {
+		if strings.Contains(d.query, "resources") {
+			t.Errorf("the %s listing document selects `resources`, which costs the server about a second per row", d.name)
 		}
 	}
 }
@@ -110,8 +112,11 @@ func TestProjectsDocumentsUnchanged(t *testing.T) {
 func fakeProjectsServer(bodies map[string]string, sent *[]string) func(GraphQLRequest) ([]byte, error) {
 	return func(req GraphQLRequest) ([]byte, error) {
 		name := "projects.gql"
-		if req.Query == projectsPre264Query {
+		switch req.Query {
+		case projectsPre264Query:
 			name = "projects_pre264.gql"
+		case projectsJuliaSimQuery:
+			name = "projects_juliasim.gql"
 		}
 		*sent = append(*sent, name)
 		return []byte(bodies[name]), nil
@@ -194,7 +199,7 @@ func TestFetchProjectsPageKeepsTheFirstErrorWhenTheFallbackFails(t *testing.T) {
 		"projects.gql":        `{"errors":[{"message":"field 'requires_publish_request' not found in type: 'projects'","extensions":{"code":"validation-failed"}}]}`,
 		"projects_pre264.gql": notAllowedBody,
 	}, &sent), 1, map[string]interface{}{}, 1)
-	want := "GraphQL errors: [{field 'requires_publish_request' not found in type: 'projects'}]; with the 25.7–26.3 document: GraphQL errors: [{query is not allowed}]"
+	want := "GraphQL errors: [{field 'requires_publish_request' not found in type: 'projects'}]; with the 6.9–26.3 document: GraphQL errors: [{query is not allowed}]"
 	if err == nil || err.Error() != want {
 		t.Fatalf("err = %v\nwant  %s", err, want)
 	}
@@ -211,6 +216,44 @@ func TestFetchProjectsPageFallsBackOnSchemaValidationFailure(t *testing.T) {
 	}
 	if !reflect.DeepEqual(sent, []string{"projects.gql", "projects_pre264.gql"}) {
 		t.Fatalf("sent %v", sent)
+	}
+}
+
+func TestLookupProjectsFallsBackToJuliaSim(t *testing.T) {
+	var sent []string
+	var limits []interface{}
+	execute := fakeProjectsServer(map[string]string{
+		"projects.gql":          notAllowedBody,
+		"projects_pre264.gql":   notAllowedBody,
+		"projects_juliasim.gql": oneProjectBody,
+	}, &sent)
+	projects, err := lookupProjectsWith(func(req GraphQLRequest) ([]byte, error) {
+		limits = append(limits, req.Variables["limit"])
+		return execute(req)
+	}, 1, projectLookupFilter("alice", "proj"))
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("got %v, %v", projects, err)
+	}
+	if !reflect.DeepEqual(sent, []string{"projects.gql", "projects_pre264.gql", "projects_juliasim.gql"}) {
+		t.Fatalf("sent %v", sent)
+	}
+	for _, l := range limits {
+		if l != projectLookupLimit {
+			t.Fatalf("lookup sent limit %v, want %d", l, projectLookupLimit)
+		}
+	}
+}
+
+func TestLookupProjectsReportsEveryRejection(t *testing.T) {
+	var sent []string
+	_, err := lookupProjectsWith(fakeProjectsServer(map[string]string{
+		"projects.gql":          notAllowedBody,
+		"projects_pre264.gql":   notAllowedBody,
+		"projects_juliasim.gql": notAllowedBody,
+	}, &sent), 1, projectLookupFilter("alice", "proj"))
+	want := "GraphQL errors: [{query is not allowed}]; with the 6.9–26.3 document: GraphQL errors: [{query is not allowed}]; with the JuliaSim document: GraphQL errors: [{query is not allowed}]"
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v\nwant  %s", err, want)
 	}
 }
 

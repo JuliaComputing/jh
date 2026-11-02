@@ -3,28 +3,56 @@ package main
 import (
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 )
 
 // The server answers only allowlisted GraphQL documents and rejects any other
-// text with "query is not allowed", so these two files must stay, field for
-// field, the JuliaHub web UI's Projects document
-// (frontend/src/components/Projects/queries/projects.gql) as two server releases
-// ship it. Page and filter only through the variables both declare ($limit,
-// $offset, $orderBy, $ownerId, $filter); never edit the text.
+// text with "query is not allowed", so these files must stay, field for field,
+// documents the server allowlists. Page and filter only through the variables
+// they all declare ($limit, $offset, $orderBy, $ownerId, $filter); never edit
+// the text.
 //
-// projects.gql is the document from JuliaHub 26.4 on; projects_pre264.gql is the
-// one from 25.7 through 26.3, which lacks `editing_mode` and
-// `requires_publish_request`. Every release from 25.7 allowlists exactly one of
-// them. Don't fall back to JuliaSim's allowlisted Projects document: its
-// `resources` field costs the server about a second per row.
+// projects.gql and projects_pre264.gql are the JuliaHub web UI's Projects
+// document (frontend/src/components/Projects/queries/projects.gql) from 26.4 on
+// and from 6.9 through 26.3 (without `editing_mode` and
+// `requires_publish_request`).
+//
+// projects_juliasim.gql is JuliaSim's Projects document
+// (graphqlsrvr/external-queries/juliasim-projects.gql), allowlisted from 6.7 on.
+// Its `resources` field costs the server about a second per row, so only the
+// owner/name lookup of `jh clone`, which matches a row or two, falls back to it;
+// project listings never do.
 //
 //go:embed projects.gql
 var projectsQuery string
 
 //go:embed projects_pre264.gql
 var projectsPre264Query string
+
+//go:embed projects_juliasim.gql
+var projectsJuliaSimQuery string
+
+type projectsDocument struct {
+	name  string
+	query string
+}
+
+// listDocuments are tried in order for project listings, lookupDocuments for
+// the `jh clone` owner/name lookup.
+var (
+	listDocuments = []projectsDocument{
+		{"26.4+", projectsQuery},
+		{"6.9–26.3", projectsPre264Query},
+	}
+	lookupDocuments = append(listDocuments[:len(listDocuments):len(listDocuments)],
+		projectsDocument{"JuliaSim", projectsJuliaSimQuery})
+)
+
+// projectLookupLimit bounds the owner/name lookup. The filter matches only the
+// case variants of one name, and the JuliaSim document is slow per row.
+const projectLookupLimit = 10
 
 type Project struct {
 	ID                          string       `json:"id"`
@@ -158,19 +186,44 @@ func fetchProjectsPage(server string, token *StoredToken, ownerID int64, filter 
 }
 
 // fetchProjectsPageWith is fetchProjectsPage with the GraphQL transport passed
-// in. It sends the 26.4+ document and, when the server rejects that one, the
-// 25.7–26.3 document.
+// in.
 func fetchProjectsPageWith(execute func(GraphQLRequest) ([]byte, error), ownerID int64, filter map[string]interface{}, page int) ([]Project, int, error) {
-	offset := (page - 1) * projectsPageSize
-	projects, total, rejected, err := queryProjects(execute, projectsQuery, ownerID, filter, projectsPageSize, offset)
-	if !rejected {
-		return projects, total, err
+	return fetchProjectsWith(execute, listDocuments, ownerID, filter, projectsPageSize, (page-1)*projectsPageSize)
+}
+
+// lookupProjectsWith runs the `jh clone` owner/name lookup filter with the
+// GraphQL transport passed in.
+func lookupProjectsWith(execute func(GraphQLRequest) ([]byte, error), ownerID int64, filter map[string]interface{}) ([]Project, error) {
+	projects, _, err := fetchProjectsWith(execute, lookupDocuments, ownerID, filter, projectLookupLimit, 0)
+	return projects, err
+}
+
+// fetchProjectsWith sends docs in order until the server accepts one, and moves
+// to the next only when the server rejects the document itself (see
+// queryProjects). When none is accepted, every document's error is reported.
+func fetchProjectsWith(execute func(GraphQLRequest) ([]byte, error), docs []projectsDocument, ownerID int64, filter map[string]interface{}, limit, offset int) ([]Project, int, error) {
+	var errs []error
+	for _, d := range docs {
+		projects, total, rejected, err := queryProjects(execute, d.query, ownerID, filter, limit, offset)
+		if err == nil {
+			return projects, total, nil
+		}
+		if len(errs) > 0 {
+			err = fmt.Errorf("with the %s document: %w", d.name, err)
+		}
+		errs = append(errs, err)
+		if !rejected {
+			break
+		}
 	}
-	projects, total, _, fallbackErr := queryProjects(execute, projectsPre264Query, ownerID, filter, projectsPageSize, offset)
-	if fallbackErr != nil {
-		return nil, 0, fmt.Errorf("%v; with the 25.7–26.3 document: %w", err, fallbackErr)
+	if len(errs) == 1 {
+		return nil, 0, errs[0]
 	}
-	return projects, total, nil
+	msgs := make([]string, len(errs))
+	for i, e := range errs {
+		msgs[i] = e.Error()
+	}
+	return nil, 0, errors.New(strings.Join(msgs, "; "))
 }
 
 // queryProjects sends one Projects document. rejected reports that the server
@@ -208,7 +261,7 @@ func queryProjects(execute func(GraphQLRequest) ([]byte, error), query string, o
 // (see queryProjects) rather than failing to run it.
 func (r ProjectsResponse) documentRejected() bool {
 	for _, e := range r.Errors {
-		if e.Message == "query is not allowed" {
+		if strings.Contains(strings.ToLower(e.Message), "query is not allowed") {
 			return true
 		}
 		if e.Extensions.Code == "validation-failed" && strings.HasSuffix(e.Message, "not found in type: 'projects'") {

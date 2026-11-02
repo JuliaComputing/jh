@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -42,5 +43,21 @@ func TestProjectListByUser(t *testing.T) {
 	}
 	if !regexp.MustCompile(`(?i)Found \d+ project|No projects found`).MatchString(res.combined()) {
 		t.Errorf("project list --user output not a recognizable listing:\n%s", truncate(res.combined()))
+	}
+}
+
+// TestCloneNotFound runs the `jh clone` owner/name lookup against the live
+// server with a project that doesn't exist, so the server must accept the
+// lookup's document and filter and the command ends in "not found" before any
+// git clone starts.
+func TestCloneNotFound(t *testing.T) {
+	requireCreds(t)
+	res := runJH(t, "clone", "zz-jh-e2e-no-such-user/zz_jh_e2e_no_such_project_0xDEADBEEF", t.TempDir())
+	if res.exitCode == 0 {
+		t.Fatalf("clone of a nonexistent project succeeded:\n%s", truncate(res.combined()))
+	}
+	if !strings.Contains(res.combined(), "not found") {
+		skipIfUnsupported(t, res)
+		t.Fatalf("clone lookup did not end in 'not found':\n%s", truncate(res.combined()))
 	}
 }

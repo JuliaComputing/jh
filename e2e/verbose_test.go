@@ -16,14 +16,16 @@ import (
 // usual backend gaps. It is a thin wrapper to keep the variants below compact.
 func runVerbose(t *testing.T, args ...string) {
 	t.Helper()
+	runVerboseSkipping(t, skipIfUnsupported, args...)
+}
+
+// runVerboseSkipping is runVerbose with the skip helper passed in.
+func runVerboseSkipping(t *testing.T, skip func(*testing.T, result), args ...string) {
+	t.Helper()
 	requireCreds(t)
 	res := runJH(t, args...)
 	if res.exitCode != 0 {
-		if args[0] == "package" || (args[0] == "search" && len(args) > 1 && args[1] == "packages") {
-			skipIfPackageUnsupported(t, res)
-		} else {
-			skipIfUnsupported(t, res)
-		}
+		skip(t, res)
 		t.Fatalf("jh %s exited %d\nstderr: %s", strings.Join(args, " "), res.exitCode, res.stderr)
 	}
 	if strings.TrimSpace(res.combined()) == "" {
@@ -40,7 +42,7 @@ func TestAdminCredListVerbose(t *testing.T) {
 	runVerbose(t, "admin", "credential", "list", "--verbose")
 }
 func TestPackageSearchVerbose(t *testing.T) {
-	runVerbose(t, "package", "search", "DataFrames", "--verbose")
+	runVerboseSkipping(t, skipIfPackageUnsupported, "package", "search", "DataFrames", "--verbose")
 }
 
 // TestVulnFlags exercises the --all and --verbose advisory-rendering branches on

@@ -48,7 +48,9 @@ func pickProject(projects []Project, username, projectName string) (*Project, er
 
 // findProjectByUserAndName finds a project by username and project name
 func findProjectByUserAndName(server string, token *StoredToken, userID int64, username, projectName string) (string, error) {
-	projects, _, err := fetchProjectsPage(server, token, userID, projectLookupFilter(username, projectName), 1)
+	projects, err := lookupProjectsWith(func(req GraphQLRequest) ([]byte, error) {
+		return executeGraphQL(server, token, req)
+	}, userID, projectLookupFilter(username, projectName))
 	if err != nil {
 		return "", fmt.Errorf("failed to query projects: %w", err)
 	}
