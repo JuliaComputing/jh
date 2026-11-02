@@ -96,13 +96,18 @@ type ProjectsResponse struct {
 			} `json:"aggregate"`
 		} `json:"aggregate"`
 	} `json:"data"`
-	Errors []struct {
-		Message    string `json:"message"`
-		Extensions struct {
-			Code string `json:"code"`
-		} `json:"extensions"`
-	} `json:"errors"`
+	Errors []graphQLError `json:"errors"`
 }
+
+type graphQLError struct {
+	Message    string `json:"message"`
+	Extensions struct {
+		Code string `json:"code"`
+	} `json:"extensions"`
+}
+
+// String prints only the message, so errors read "GraphQL errors: [{message}]".
+func (e graphQLError) String() string { return "{" + e.Message + "}" }
 
 // projectsPageSize is how many projects are fetched per GraphQL request.
 // The Projects query is expensive per row on the server (several aggregates
@@ -158,10 +163,14 @@ func fetchProjectsPage(server string, token *StoredToken, ownerID int64, filter 
 func fetchProjectsPageWith(execute func(GraphQLRequest) ([]byte, error), ownerID int64, filter map[string]interface{}, page int) ([]Project, int, error) {
 	offset := (page - 1) * projectsPageSize
 	projects, total, rejected, err := queryProjects(execute, projectsQuery, ownerID, filter, projectsPageSize, offset)
-	if rejected {
-		projects, total, _, err = queryProjects(execute, projectsPre264Query, ownerID, filter, projectsPageSize, offset)
+	if !rejected {
+		return projects, total, err
 	}
-	return projects, total, err
+	projects, total, _, fallbackErr := queryProjects(execute, projectsPre264Query, ownerID, filter, projectsPageSize, offset)
+	if fallbackErr != nil {
+		return nil, 0, fmt.Errorf("%v; with the 25.7–26.3 document: %w", err, fallbackErr)
+	}
+	return projects, total, nil
 }
 
 // queryProjects sends one Projects document. rejected reports that the server

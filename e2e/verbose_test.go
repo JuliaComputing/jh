@@ -19,6 +19,9 @@ func runVerbose(t *testing.T, args ...string) {
 	requireCreds(t)
 	res := runJH(t, args...)
 	if res.exitCode != 0 {
+		if args[0] == "package" {
+			skipIfPackageFallbackDisallowed(t, res.combined())
+		}
 		skipIfUnsupported(t, res)
 		t.Fatalf("jh %s exited %d\nstderr: %s", strings.Join(args, " "), res.exitCode, res.stderr)
 	}

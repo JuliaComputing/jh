@@ -170,6 +170,21 @@ func TestFetchProjectsPageReportsWhenNoDocumentIsAllowlisted(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "query is not allowed") {
 		t.Fatalf("err = %v", err)
 	}
+	if !reflect.DeepEqual(sent, []string{"projects.gql", "projects_pre264.gql"}) {
+		t.Fatalf("sent %v", sent)
+	}
+}
+
+func TestFetchProjectsPageKeepsTheFirstErrorWhenTheFallbackFails(t *testing.T) {
+	var sent []string
+	_, _, err := fetchProjectsPageWith(fakeProjectsServer(map[string]string{
+		"projects.gql":        `{"errors":[{"message":"field 'requires_publish_request' not found in type: 'projects'","extensions":{"code":"validation-failed"}}]}`,
+		"projects_pre264.gql": notAllowedBody,
+	}, &sent), 1, map[string]interface{}{}, 1)
+	want := "GraphQL errors: [{field 'requires_publish_request' not found in type: 'projects'}]; with the 25.7–26.3 document: GraphQL errors: [{query is not allowed}]"
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v\nwant  %s", err, want)
+	}
 }
 
 func TestFetchProjectsPageFallsBackOnSchemaValidationFailure(t *testing.T) {
@@ -180,6 +195,9 @@ func TestFetchProjectsPageFallsBackOnSchemaValidationFailure(t *testing.T) {
 	}, &sent), 1, map[string]interface{}{}, 1)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("got %v, %v", projects, err)
+	}
+	if !reflect.DeepEqual(sent, []string{"projects.gql", "projects_pre264.gql"}) {
+		t.Fatalf("sent %v", sent)
 	}
 }
 
@@ -192,6 +210,9 @@ func TestPickProject(t *testing.T) {
 	rows := []Project{p("alice", "projX"), p("alice", "proj")}
 	if got := pickProject(rows, "ALICE", "PROJ"); got == nil || got.ID != "alice/proj" {
 		t.Fatalf("exact case-insensitive match: got %v", got)
+	}
+	if got := pickProject([]Project{p("alice", "Proj"), p("alice", "proj")}, "alice", "proj"); got == nil || got.ID != "alice/proj" {
+		t.Fatalf("exact match should beat an earlier case-insensitive one: got %v", got)
 	}
 	if got := pickProject([]Project{p("Łukasz", "p")}, "łukasz", "P"); got == nil {
 		t.Fatal("a single server-side match should be used even when EqualFold disagrees")

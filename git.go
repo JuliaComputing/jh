@@ -18,10 +18,15 @@ func projectLookupFilter(username, projectName string) map[string]interface{} {
 }
 
 // pickProject chooses the requested project among the rows the server matched
-// with ILIKE. An exact case-insensitive match wins. Failing that, a single row
-// is the server's own case-insensitive match (Postgres folds case by its
-// collation, which differs from Go's EqualFold for some non-ASCII letters).
+// with ILIKE. An exact match wins, then a case-insensitive one. Failing that, a
+// single row is the server's own case-insensitive match (Postgres folds case by
+// its collation, which differs from Go's EqualFold for some non-ASCII letters).
 func pickProject(projects []Project, username, projectName string) *Project {
+	for i := range projects {
+		if projects[i].Owner.Username == username && projects[i].Name == projectName {
+			return &projects[i]
+		}
+	}
 	for i := range projects {
 		if strings.EqualFold(projects[i].Owner.Username, username) && strings.EqualFold(projects[i].Name, projectName) {
 			return &projects[i]
