@@ -304,6 +304,12 @@ var unsupportedMarkers = []string{
 func skipIfUnsupported(t *testing.T, res result) {
 	t.Helper()
 	low := strings.ToLower(res.combined())
+	// The server answers only allowlisted GraphQL documents. "query is not
+	// allowed" means the CLI sent a document the server doesn't know, which is
+	// a CLI defect on every instance, not a feature this one lacks.
+	if strings.Contains(low, "query is not allowed") {
+		t.Fatalf("the CLI sent a GraphQL document that is not on the server's allowlist: %s", errorLine(res.combined()))
+	}
 	for _, m := range unsupportedMarkers {
 		if strings.Contains(low, m) {
 			t.Skipf("command unavailable/unauthorized on this instance (matched %q): %s", m, errorLine(res.combined()))

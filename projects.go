@@ -7,6 +7,14 @@ import (
 	"strings"
 )
 
+// projects.gql must stay, field for field, the JuliaHub server's allowlisted
+// `juliasim-projects.gql` (graphqlsrvr/external-queries/ in the JuliaHub repo).
+// The server answers only allowlisted documents and rejects any other text with
+// "query is not allowed", so trimming or reordering fields here breaks
+// `jh project list`. Paging and filtering go through the variables that document
+// already declares ($limit, $offset, $orderBy, $filter); fields the CLI doesn't
+// print are simply ignored when the response is decoded.
+//
 //go:embed projects.gql
 var projectsQuery string
 
