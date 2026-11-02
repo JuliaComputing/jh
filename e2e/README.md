@@ -52,8 +52,9 @@ One file per command category, plus shared infrastructure:
   are deliberately **not** matched by that helper, so they still fail. A GraphQL
   `query is not allowed` is one of them: the server answers only allowlisted
   documents, so it means the CLI sent the wrong document text, and the test
-  fails. The suite therefore targets servers whose allowlist carries the CLI's
-  current documents (JuliaHub master and the matching release).
+  fails. Exception to know about: the GraphQL fallback of `jh package` is not
+  allowlisted on any release, so the package tests fail rather than skip when
+  the REST package endpoint is unavailable and the fallback runs.
 - **Admin commands** require elevated permissions: under a standard test user
   they skip; run under an admin credential they execute. (See
   [Running in CI](#running-in-ci) about credential selection.)

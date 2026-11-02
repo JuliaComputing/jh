@@ -79,20 +79,114 @@ func normalizeGraphQL(doc string) string {
 	return regexp.MustCompile(` ?([{}():,!\[\]=$]) ?`).ReplaceAllString(doc, "$1")
 }
 
-// projects.gql is sent verbatim and the server answers only allowlisted
-// documents. This hash pins it to the JuliaHub web UI's Projects document
-// (frontend/src/components/Projects/queries/projects.gql). Change it only
-// together with that file, after checking the new text is on the server's
-// allowlist; an edit here alone breaks `jh project list` and `jh clone`.
-const projectsQuerySHA256 = "3c5c5d098cbe397de6fe6247e229a0cc7b0ed914ce1fdcc1b6c10876812fa0e3"
+// The Projects documents are sent verbatim and the server answers only
+// allowlisted text, so an edit to either file breaks `jh project list` and
+// `jh clone` on every server that doesn't carry the edited text. These hashes
+// only detect such an edit; this repo can't see the server's allowlist. Update
+// them only after checking the new text against JuliaHub's allowlist
+// (graphqlsrvr/internal/allowlist Lookup) for every release the CLI supports.
+var projectsDocumentSHA256 = map[string]string{
+	"projects.gql":          "3c5c5d098cbe397de6fe6247e229a0cc7b0ed914ce1fdcc1b6c10876812fa0e3",
+	"projects_juliasim.gql": "187e0b35c14cd505720d20fa3f07d34cae4951a2184379507a8a96037cf01ead",
+}
 
-func TestProjectsQueryIsTheAllowlistedDocument(t *testing.T) {
-	sum := sha256.Sum256([]byte(normalizeGraphQL(projectsQuery)))
-	if got := hex.EncodeToString(sum[:]); got != projectsQuerySHA256 {
-		t.Fatalf("projects.gql changed (normalized sha256 %s, pinned %s); it must stay the server's allowlisted Projects document", got, projectsQuerySHA256)
+func TestProjectsDocumentsUnchanged(t *testing.T) {
+	for name, doc := range map[string]string{"projects.gql": projectsQuery, "projects_juliasim.gql": projectsJuliaSimQuery} {
+		sum := sha256.Sum256([]byte(normalizeGraphQL(doc)))
+		if got := hex.EncodeToString(sum[:]); got != projectsDocumentSHA256[name] {
+			t.Errorf("%s changed (normalized sha256 %s, pinned %s); it must stay the server's allowlisted document", name, got, projectsDocumentSHA256[name])
+		}
 	}
 	if strings.Contains(projectsQuery, "resources") {
-		t.Fatal("projects.gql selects `resources`, which costs the server about a second per row")
+		t.Error("projects.gql selects `resources`, which costs the server about a second per row")
+	}
+}
+
+// fakeProjectsServer answers each document from bodies by its position in
+// projectsDocuments and records which documents were sent.
+func fakeProjectsServer(bodies map[string]string, sent *[]string) func(GraphQLRequest) ([]byte, error) {
+	return func(req GraphQLRequest) ([]byte, error) {
+		name := "projects.gql"
+		if req.Query == projectsJuliaSimQuery {
+			name = "projects_juliasim.gql"
+		}
+		*sent = append(*sent, name)
+		return []byte(bodies[name]), nil
+	}
+}
+
+const (
+	notAllowedBody = `{"errors":[{"message":"query is not allowed","extensions":{"code":"validation-failed"}}]}`
+	oneProjectBody = `{"data":{"aggregate":{"aggregate":{"count":1}},"projects":[{"id":"p1","name":"proj","owner":{"username":"alice"}}]}}`
+)
+
+func TestFetchProjectsPagePrefersTheWebUIDocument(t *testing.T) {
+	var sent []string
+	projects, total, err := fetchProjectsPageWith(fakeProjectsServer(map[string]string{"projects.gql": oneProjectBody}, &sent), 1, map[string]interface{}{}, 1)
+	if err != nil || total != 1 || len(projects) != 1 {
+		t.Fatalf("got %v, %d, %v", projects, total, err)
+	}
+	if !reflect.DeepEqual(sent, []string{"projects.gql"}) {
+		t.Fatalf("sent %v, want only projects.gql", sent)
+	}
+}
+
+func TestFetchProjectsPageFallsBackWhenNotAllowlisted(t *testing.T) {
+	var sent []string
+	projects, _, err := fetchProjectsPageWith(fakeProjectsServer(map[string]string{
+		"projects.gql":          notAllowedBody,
+		"projects_juliasim.gql": oneProjectBody,
+	}, &sent), 1, map[string]interface{}{}, 1)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("got %v, %v", projects, err)
+	}
+	if !reflect.DeepEqual(sent, []string{"projects.gql", "projects_juliasim.gql"}) {
+		t.Fatalf("sent %v", sent)
+	}
+}
+
+func TestFetchProjectsPageDoesNotFallBackOnOtherErrors(t *testing.T) {
+	var sent []string
+	_, _, err := fetchProjectsPageWith(fakeProjectsServer(map[string]string{
+		"projects.gql": `{"errors":[{"message":"permission denied"}]}`,
+	}, &sent), 1, map[string]interface{}{}, 1)
+	if err == nil || !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(sent) != 1 {
+		t.Fatalf("sent %v, want one request", sent)
+	}
+}
+
+func TestFetchProjectsPageReportsWhenNoDocumentIsAllowlisted(t *testing.T) {
+	var sent []string
+	_, _, err := fetchProjectsPageWith(fakeProjectsServer(map[string]string{
+		"projects.gql":          notAllowedBody,
+		"projects_juliasim.gql": notAllowedBody,
+	}, &sent), 1, map[string]interface{}{}, 1)
+	if err == nil || !strings.Contains(err.Error(), "query is not allowed") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestPickProject(t *testing.T) {
+	p := func(owner, name string) Project {
+		var pr Project
+		pr.Owner.Username, pr.Name, pr.ID = owner, name, owner+"/"+name
+		return pr
+	}
+	rows := []Project{p("alice", "projX"), p("alice", "proj")}
+	if got := pickProject(rows, "ALICE", "PROJ"); got == nil || got.ID != "alice/proj" {
+		t.Fatalf("exact case-insensitive match: got %v", got)
+	}
+	if got := pickProject([]Project{p("Łukasz", "p")}, "łukasz", "P"); got == nil {
+		t.Fatal("a single server-side match should be used even when EqualFold disagrees")
+	}
+	if got := pickProject(rows, "bob", "proj"); got != nil {
+		t.Fatalf("no match among several rows: got %v", got)
+	}
+	if got := pickProject(nil, "alice", "proj"); got != nil {
+		t.Fatalf("empty: got %v", got)
 	}
 }
 

@@ -12,41 +12,35 @@ import (
 // case-insensitively and literally, so the server returns at most a handful of
 // rows instead of every project the caller can see.
 func projectLookupFilter(username, projectName string) map[string]interface{} {
-	return map[string]interface{}{
-		"owner": map[string]interface{}{
-			"username": map[string]interface{}{"_ilike": escapeLikePattern(username)},
-		},
-		"name": map[string]interface{}{"_ilike": escapeLikePattern(projectName)},
+	filter := ownerUsernameFilter(username)
+	filter["name"] = map[string]interface{}{"_ilike": escapeLikePattern(projectName)}
+	return filter
+}
+
+// pickProject chooses the requested project among the rows the server matched
+// with ILIKE. An exact case-insensitive match wins. Failing that, a single row
+// is the server's own case-insensitive match (Postgres folds case by its
+// collation, which differs from Go's EqualFold for some non-ASCII letters).
+func pickProject(projects []Project, username, projectName string) *Project {
+	for i := range projects {
+		if strings.EqualFold(projects[i].Owner.Username, username) && strings.EqualFold(projects[i].Name, projectName) {
+			return &projects[i]
+		}
 	}
+	if len(projects) == 1 {
+		return &projects[0]
+	}
+	return nil
 }
 
 // findProjectByUserAndName finds a project by username and project name
-func findProjectByUserAndName(server, username, projectName string) (string, error) {
-	// Get user info to get the user ID
-	userInfo, err := getUserInfo(server)
-	if err != nil {
-		return "", fmt.Errorf("failed to get user info: %w", err)
-	}
-
-	token, err := ensureValidToken()
-	if err != nil {
-		return "", fmt.Errorf("authentication required: %w", err)
-	}
-
-	projects, _, err := fetchProjectsPage(server, token, userInfo.ID, projectLookupFilter(username, projectName), 1)
+func findProjectByUserAndName(server string, token *StoredToken, userID int64, username, projectName string) (string, error) {
+	projects, _, err := fetchProjectsPage(server, token, userID, projectLookupFilter(username, projectName), 1)
 	if err != nil {
 		return "", fmt.Errorf("failed to query projects: %w", err)
 	}
 
-	// Search for the project
-	var matchedProject *Project
-	for i := range projects {
-		if strings.EqualFold(projects[i].Owner.Username, username) && strings.EqualFold(projects[i].Name, projectName) {
-			matchedProject = &projects[i]
-			break
-		}
-	}
-
+	matchedProject := pickProject(projects, username, projectName)
 	if matchedProject == nil {
 		return "", fmt.Errorf("project '%s' not found for user '%s'", projectName, username)
 	}
@@ -62,6 +56,11 @@ func cloneProject(server, projectIdentifier, localPath string) error {
 		return fmt.Errorf("authentication required: %w", err)
 	}
 
+	userInfo, err := getUserInfo(server)
+	if err != nil {
+		return fmt.Errorf("failed to get user info: %w", err)
+	}
+
 	// Parse the project identifier
 	var username, projectName string
 	if strings.Contains(projectIdentifier, "/") {
@@ -70,17 +69,13 @@ func cloneProject(server, projectIdentifier, localPath string) error {
 		projectName = parts[1]
 	} else {
 		// No username provided, use the logged-in user's username
-		userInfo, err := getUserInfo(server)
-		if err != nil {
-			return fmt.Errorf("failed to get user info for default username: %w", err)
-		}
 		username = userInfo.Username
 		projectName = projectIdentifier
 		fmt.Printf("Using logged-in user '%s' as project owner\n", username)
 	}
 
 	// Find the project by username and project name
-	projectUUID, err := findProjectByUserAndName(server, username, projectName)
+	projectUUID, err := findProjectByUserAndName(server, token, userInfo.ID, username, projectName)
 	if err != nil {
 		return err
 	}

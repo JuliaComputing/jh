@@ -7,17 +7,28 @@ import (
 	"strings"
 )
 
-// projects.gql must stay, field for field, the JuliaHub web UI's Projects
-// document (frontend/src/components/Projects/queries/projects.gql in the JuliaHub
-// repo). The server answers only allowlisted documents and rejects any other text
-// with "query is not allowed", so trimming or reordering fields here breaks
-// `jh project list` and `jh clone`. Page and filter only through the variables it
-// declares ($limit, $offset, $orderBy, $filter). Don't switch to JuliaSim's
-// allowlisted Projects document: its `resources` field costs the server about a
-// second per row.
+// The server answers only allowlisted GraphQL documents and rejects any other
+// text with "query is not allowed", so these two files must stay, field for
+// field, the server's documents. Page and filter only through the variables both
+// declare ($limit, $offset, $orderBy, $ownerId, $filter); never edit the text.
+//
+// projects.gql is the JuliaHub web UI's Projects document
+// (frontend/src/components/Projects/queries/projects.gql), allowlisted from
+// JuliaHub 26.4 on. It is cheap: 100 rows in about half a second.
+//
+// projects_juliasim.gql is JuliaSim's (graphqlsrvr/external-queries/
+// juliasim-projects.gql), allowlisted on every release and kept stable as an
+// external query. Its `resources` field costs the server about a second per row,
+// so it is only the fallback for servers that don't allowlist the first one.
 //
 //go:embed projects.gql
 var projectsQuery string
+
+//go:embed projects_juliasim.gql
+var projectsJuliaSimQuery string
+
+// projectsDocuments are tried in order until the server accepts one.
+var projectsDocuments = []string{projectsQuery, projectsJuliaSimQuery}
 
 type Project struct {
 	ID                          string       `json:"id"`
@@ -121,10 +132,15 @@ func buildProjectsFilter(userFilter string, userFilterProvided bool, currentUser
 			"owner_id": map[string]interface{}{"_eq": currentUserID},
 		}
 	}
-	// Case-insensitive exact match on the owner's username (was EqualFold client-side).
+	return ownerUsernameFilter(userFilter)
+}
+
+// ownerUsernameFilter matches projects whose owner's username equals username,
+// case-insensitively and literally (LIKE metacharacters escaped).
+func ownerUsernameFilter(username string) map[string]interface{} {
 	return map[string]interface{}{
 		"owner": map[string]interface{}{
-			"username": map[string]interface{}{"_ilike": escapeLikePattern(userFilter)},
+			"username": map[string]interface{}{"_ilike": escapeLikePattern(username)},
 		},
 	}
 }
@@ -132,29 +148,57 @@ func buildProjectsFilter(userFilter string, userFilterProvided bool, currentUser
 // fetchProjectsPage requests one page of projects matching filter. It returns
 // the page's projects and the total number of matching projects on the server.
 func fetchProjectsPage(server string, token *StoredToken, ownerID int64, filter map[string]interface{}, page int) ([]Project, int, error) {
-	body, err := executeGraphQL(server, token, GraphQLRequest{
-		OperationName: "Projects",
-		Query:         projectsQuery,
-		Variables: map[string]interface{}{
-			"ownerId": ownerID,
-			"filter":  filter,
-			"limit":   projectsPageSize,
-			"offset":  (page - 1) * projectsPageSize,
-			"orderBy": map[string]interface{}{"created_at": "desc_nulls_last"},
-		},
-	})
-	if err != nil {
-		return nil, 0, err
-	}
+	return fetchProjectsPageWith(func(req GraphQLRequest) ([]byte, error) {
+		return executeGraphQL(server, token, req)
+	}, ownerID, filter, page)
+}
 
-	var response ProjectsResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, 0, fmt.Errorf("failed to parse response: %w", err)
+// fetchProjectsPageWith is fetchProjectsPage with the GraphQL transport passed
+// in. It sends each of projectsDocuments in turn, moving on only when the server
+// rejects one as not allowlisted.
+func fetchProjectsPageWith(execute func(GraphQLRequest) ([]byte, error), ownerID int64, filter map[string]interface{}, page int) ([]Project, int, error) {
+	var lastErr error
+	for _, query := range projectsDocuments {
+		body, err := execute(GraphQLRequest{
+			OperationName: "Projects",
+			Query:         query,
+			Variables: map[string]interface{}{
+				"ownerId": ownerID,
+				"filter":  filter,
+				"limit":   projectsPageSize,
+				"offset":  (page - 1) * projectsPageSize,
+				"orderBy": map[string]interface{}{"created_at": "desc_nulls_last"},
+			},
+		})
+		if err != nil {
+			return nil, 0, err
+		}
+
+		var response ProjectsResponse
+		if err := json.Unmarshal(body, &response); err != nil {
+			return nil, 0, fmt.Errorf("failed to parse response: %w", err)
+		}
+		if len(response.Errors) > 0 {
+			lastErr = fmt.Errorf("GraphQL errors: %v", response.Errors)
+			if response.notAllowlisted() {
+				continue
+			}
+			return nil, 0, lastErr
+		}
+		return response.Data.Projects, response.Data.Aggregate.Aggregate.Count, nil
 	}
-	if len(response.Errors) > 0 {
-		return nil, 0, fmt.Errorf("GraphQL errors: %v", response.Errors)
+	return nil, 0, lastErr
+}
+
+// notAllowlisted reports whether the server rejected the document itself
+// (it is not on the server's allowlist) rather than failing to run it.
+func (r ProjectsResponse) notAllowlisted() bool {
+	for _, e := range r.Errors {
+		if e.Message == "query is not allowed" {
+			return true
+		}
 	}
-	return response.Data.Projects, response.Data.Aggregate.Aggregate.Count, nil
+	return false
 }
 
 // totalPages is how many pages of projectsPageSize the given total spans.

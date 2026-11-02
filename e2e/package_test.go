@@ -9,9 +9,10 @@ import (
 
 // `jh package` — search/info/dependency. These depend on the REST `/api/v1/ui/packages/info`
 // endpoint with a GraphQL fallback; on some instances those are unavailable, and
-// such cases are treated as backend gaps and skipped. A "query is not allowed"
-// from the GraphQL fallback is a CLI defect (the document is not on the server's
-// allowlist) and fails. When the commands work, real structure is asserted.
+// such cases are treated as backend gaps and skipped. The GraphQL fallback's
+// documents are not on any server's allowlist, so if the REST path fails and the
+// fallback answers "query is not allowed", the test fails: the CLI defect is the
+// fallback document. When the commands work, real structure is asserted.
 // DataFrames is used as a well-known canary.
 
 const canaryPackage = "DataFrames"
