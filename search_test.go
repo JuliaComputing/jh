@@ -701,7 +701,7 @@ func TestDecodeSearchErrorGateway(t *testing.T) {
 	}{
 		{http.StatusBadGateway, page, "search_unavailable: this search is not available on the server (HTTP 502 Bad Gateway): its backend is down or not enabled there"},
 		{http.StatusServiceUnavailable, nil, "search_unavailable: this search is not available on the server (HTTP 503 Service Unavailable): its backend is down or not enabled there"},
-		{http.StatusGatewayTimeout, []byte("upstream timed out"), "search_unavailable: this search is not available on the server (HTTP 504 Gateway Timeout: upstream timed out): its backend is down or not enabled there"},
+		{http.StatusGatewayTimeout, []byte("upstream timed out"), "search_timeout: the search did not finish in time (HTTP 504 Gateway Timeout: upstream timed out); try a narrower pattern or limit it with --package/--registry"},
 	} {
 		if got := decodeSearchError(c.status, c.body).Error(); got != c.want {
 			t.Errorf("decodeSearchError(%d) = %q, want %q", c.status, got, c.want)

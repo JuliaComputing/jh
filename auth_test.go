@@ -174,7 +174,7 @@ func TestAuthServerFor(t *testing.T) {
 	}
 }
 
-func TestPickAuthServer(t *testing.T) {
+func TestProbeAuthServer(t *testing.T) {
 	only := func(hosts ...string) func(string) bool {
 		return func(h string) bool {
 			for _, x := range hosts {
@@ -197,8 +197,9 @@ func TestPickAuthServer(t *testing.T) {
 		{"offline.dev", only(), "offline.dev"},
 	}
 	for _, c := range cases {
-		if got := pickAuthServer(c.server, c.up); got != c.want {
-			t.Errorf("pickAuthServer(%q) = %q, want %q", c.server, got, c.want)
+		got, ok := probeAuthServer(c.server, c.up)
+		if got != c.want || ok != (c.server != "offline.dev") {
+			t.Errorf("probeAuthServer(%q) = %q, %v, want %q", c.server, got, ok, c.want)
 		}
 	}
 }
@@ -365,8 +366,7 @@ func TestLoginRedirectAuthServer(t *testing.T) {
 		http.Redirect(w, r, "https://auth.shared.example/dex/auth?client_id=web", http.StatusFound)
 	}))
 	defer srv.Close()
-	client := srv.Client()
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client := srv.Client() // follows redirects: loginRedirectAuthServer must not
 	host := strings.TrimPrefix(srv.URL, "https://")
 	if got := loginRedirectAuthServer(client, host); got != "auth.shared.example" {
 		t.Errorf("got %q, want auth.shared.example", got)

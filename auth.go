@@ -179,18 +179,20 @@ func authServerFor(server string) string {
 
 // discoverAuthServer is a variable so tests can avoid the network.
 var discoverAuthServer = func(server string) string {
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		// loginRedirectAuthServer reads the redirect itself.
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
+	client := &http.Client{Timeout: 10 * time.Second}
 	discoverable := func(host string) bool {
 		return dexDiscoverable(client, "https://"+host)
 	}
+	// Read the login redirect alongside the probes: it is needed only when
+	// neither usual candidate answers, and the <server>/dex probe can take
+	// seconds to fail.
+	redirect := make(chan string, 1)
+	go func() { redirect <- loginRedirectAuthServer(client, server) }()
 	if host, ok := probeAuthServer(server, discoverable); ok {
 		return host
 	}
-	if host := loginRedirectAuthServer(client, server); host != "" && discoverable(host) {
+	// A redirect to a candidate that just failed discovery is not re-probed.
+	if host := <-redirect; host != "" && host != server && host != "auth."+server && discoverable(host) {
 		return host
 	}
 	return server
@@ -200,8 +202,11 @@ var discoverAuthServer = func(server string) string {
 // to for dex authorization (<host>/dex/auth), or "" if it does not redirect
 // there. This finds the dex of installs whose auth host is shared with
 // another install, so it is neither the server itself nor auth.<server>.
+// The redirect is read, not followed, whatever client's own policy.
 func loginRedirectAuthServer(client *http.Client, server string) string {
-	resp, err := client.Get("https://" + server + "/login")
+	c := *client
+	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := c.Get("https://" + server + "/login")
 	if err != nil {
 		return ""
 	}
@@ -222,18 +227,12 @@ func dexAuthHost(status int, location string) string {
 	return u.Host
 }
 
-// pickAuthServer returns the first of auth.<server>, server whose dex answers
-// discovery, else server. auth.<server> goes first because it is the cheap
-// probe either way: on JuliaHub.com-style installs it answers at once while
-// <server>/dex is slow to fail (a gateway error after several seconds), and on
-// enterprise installs the auth. name normally does not resolve at all.
-func pickAuthServer(server string, discoverable func(host string) bool) string {
-	host, _ := probeAuthServer(server, discoverable)
-	return host
-}
-
-// probeAuthServer is pickAuthServer that also reports whether a candidate
-// answered (false: the server fallback is a guess).
+// probeAuthServer returns the first of auth.<server>, server whose dex
+// answers discovery and true, else server and false (the fallback is a
+// guess). auth.<server> goes first because it is the cheap probe either way:
+// on JuliaHub.com-style installs it answers at once while <server>/dex is slow
+// to fail (a gateway error after several seconds), and on enterprise installs
+// the auth. name normally does not resolve at all.
 func probeAuthServer(server string, discoverable func(host string) bool) (string, bool) {
 	var candidates []string
 	if !strings.HasPrefix(server, "auth.") {
