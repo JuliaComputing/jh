@@ -17,7 +17,7 @@ The application follows a command-line interface pattern using the Cobra library
 - **datasets.go**: Dataset operations (list, download, upload, status) with REST API integration
 - **registries.go**: Registry operations (list, config, add, update, registrator) with REST API integration
 - **packages.go**: Package operations (search, dependency) with REST API primary path (`/api/v1/ui/packages/info`), GraphQL fallback, and documentation API (`/docs/{registry}/{package}/stable/pkg.json`)
-- **projects.go**: Project management using GraphQL API. `jh project list` is paginated (`projectsPageSize` = 100 per page, one page per invocation, selected with `--page=N`, default 1) and filters by owner **server-side** (`buildProjectsFilter`). Never request the whole projects table: the Projects query costs the server several aggregates and permission checks per row, and an unpaginated request against a large install ran for hours after the 30 s client timeout fired
+- **projects.go**: Project management using GraphQL API. The server answers only allowlisted GraphQL documents ("query is not allowed" otherwise), so the Projects query is sent as an allowlisted document, never edited, trying the next one only when the server rejects the document itself ("query is not allowed", or a "field ... not found in type: 'projects'" `validation-failed` on a server without an allowlist): `listDocuments` are the web UI's own document as `projects.gql` (JuliaHub 26.4 on) and `projects_pre264.gql` (6.9 through 26.3). `jh clone` resolves `owner/name` with a server-side filter (`projectLookupFilter`, `projectLookupLimit` rows) through `lookupDocuments`, which add JuliaSim's `projects_juliasim.gql` (allowlisted from 6.7) as the last resort. Never use the JuliaSim document for listings: its `resources` field costs ~1 s per row. Page and filter only through the documents' variables. `jh project list` is paginated (`projectsPageSize` = 100 per page, one page per invocation, selected with `--page=N`, default 1) and filters by owner **server-side** (`buildProjectsFilter`). Never request the whole projects table: the Projects query costs the server several aggregates and permission checks per row, and an unpaginated request against a large install ran for hours after the 30 s client timeout fired
 - **user.go**: User information retrieval using GraphQL API and REST API for listing users
 - **tokens.go**: Token management operations (list) with REST API integration
 - **credentials.go**: Registry credential management (list, add, update, delete) with REST API integration
@@ -503,7 +503,7 @@ jh run setup
 ## Development Notes
 
 - All ID fields in GraphQL responses should be typed correctly (string for UUIDs, int64 for user IDs)
-- GraphQL queries are embedded at compile time using `go:embed` from `.gql` files (`userinfo.gql`, `users.gql`, `groups.gql`, `projects.gql`)
+- GraphQL queries are embedded at compile time using `go:embed` from `.gql` files (`userinfo.gql`, `users.gql`, `groups.gql`, `projects.gql`, `projects_pre264.gql`, `projects_juliasim.gql`)
 - Error handling includes both HTTP and GraphQL error responses
 - Token refresh is automatic via `ensureValidToken()`
 - File uploads use multipart form data with proper content types
@@ -514,7 +514,7 @@ jh run setup
 - Git commands use `http.extraHeader` for authentication and pass through all arguments
 - Git credential helper provides seamless authentication for standard Git commands
 - Multi-server authentication handled automatically via credential helper
-- Project filtering supports `--user` parameter for showing specific user's projects or own projects; `jh project list --page N` fetches the Nth page of 100 (a single GraphQL request per invocation)
+- Project filtering supports `--user` parameter for showing specific user's projects or own projects; `jh project list --page N` fetches the Nth page of 100 (one page per invocation: a single Projects request, or two on a server that rejects the 26.4+ document)
 - Clone command automatically resolves `username/project` format to project UUIDs
 - Clone command supports `project` (without username) and defaults to the logged-in user's username
 - Folder naming conflicts are resolved with automatic numbering (project-1, project-2, etc.)

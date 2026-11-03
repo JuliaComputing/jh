@@ -47,10 +47,18 @@ One file per command category, plus shared infrastructure:
   download URL, a registry config `"name"`, a UUID, etc.).
 - **Graceful skips on backend gaps, not CLI defects**: when a command is
   unavailable or unauthorized on the instance — missing admin permissions, an
-  absent endpoint (404), a disallowed GraphQL query, or a transient timeout —
-  the test **skips** via `skipIfUnsupported`. Genuine CLI defects (e.g. a
-  response that fails to parse) are deliberately **not** matched by that helper,
-  so they still fail.
+  absent endpoint (404), or a transient timeout — the test **skips** via
+  `skipIfUnsupported`. Genuine CLI defects (e.g. a response that fails to parse)
+  are deliberately **not** matched by that helper, so they still fail. A GraphQL
+  `query is not allowed` is one of them: the server answers only allowlisted
+  documents, so it means the CLI sent the wrong document text, and the test
+  fails. One known exception: the GraphQL fallback of `jh package` is
+  allowlisted only up to JuliaHub 26.3, so from 26.4 a failed REST package call
+  ends in "query is not allowed". The package tests skip that case by name
+  (`skipIfPackageFallbackDisallowed`) instead of failing. Because a disallowed
+  document fails, the suite targets servers whose allowlist has the CLI's
+  current documents: JuliaHub 25.10 and later (`jh group list` and
+  `jh user list` send web UI documents that 25.7 and 25.8 don't allowlist).
 - **Admin commands** require elevated permissions: under a standard test user
   they skip; run under an admin credential they execute. (See
   [Running in CI](#running-in-ci) about credential selection.)
@@ -65,7 +73,8 @@ One file per command category, plus shared infrastructure:
   submits a manifest scan with `--no-wait` (no long poll, nothing to delete).
 - **Adapts to the instance.** Tests assert real data/structure when the relevant
   endpoint is available and **skip** when it is not (absent endpoint, missing
-  permissions, disallowed query, timeout). Genuine CLI defects still fail.
+  permissions, timeout). Genuine CLI defects, including a disallowed GraphQL
+  document, still fail.
 - **Skips without credentials.** If no credentials are available, the suite
   skips rather than fails.
 

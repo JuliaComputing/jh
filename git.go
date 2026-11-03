@@ -2,210 +2,65 @@ package main
 
 import (
 	"bufio"
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 )
 
+// projectLookupFilter matches a project by owner username and project name,
+// case-insensitively and literally, so the server returns at most a handful of
+// rows instead of every project the caller can see.
+func projectLookupFilter(username, projectName string) map[string]interface{} {
+	filter := ownerUsernameFilter(username)
+	filter["name"] = map[string]interface{}{"_ilike": escapeLikePattern(projectName)}
+	return filter
+}
+
+// pickProject chooses the requested project among the rows the server matched
+// with ILIKE. Usernames compare case-insensitively. A project name typed exactly
+// wins (names are unique per owner), then the only case-insensitive match.
+// Several case-insensitive matches without an exact one are ambiguous, and rows
+// that match neither are not the requested project.
+func pickProject(projects []Project, username, projectName string) (*Project, error) {
+	for i := range projects {
+		if strings.EqualFold(projects[i].Owner.Username, username) && projects[i].Name == projectName {
+			return &projects[i], nil
+		}
+	}
+	var matches []*Project
+	for i := range projects {
+		if strings.EqualFold(projects[i].Owner.Username, username) && strings.EqualFold(projects[i].Name, projectName) {
+			matches = append(matches, &projects[i])
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return nil, fmt.Errorf("project '%s' not found for user '%s'", projectName, username)
+	case 1:
+		return matches[0], nil
+	}
+	names := make([]string, len(matches))
+	for i, p := range matches {
+		names[i] = p.Owner.Username + "/" + p.Name
+	}
+	return nil, fmt.Errorf("'%s/%s' matches several projects that differ only in case (%s); give the exact owner and project name", username, projectName, strings.Join(names, ", "))
+}
+
 // findProjectByUserAndName finds a project by username and project name
-func findProjectByUserAndName(server, username, projectName string) (string, error) {
-	// Get user info to get the user ID
-	userInfo, err := getUserInfo(server)
-	if err != nil {
-		return "", fmt.Errorf("failed to get user info: %w", err)
-	}
-
-	token, err := ensureValidToken()
-	if err != nil {
-		return "", fmt.Errorf("authentication required: %w", err)
-	}
-
-	// Get all projects using the same GraphQL query as listProjects
-	query := `query Projects(
-  $limit: Int
-    $offset: Int
-      $orderBy: [projects_order_by!]
-        $ownerId: bigint
-          $filter: projects_bool_exp
-            ) {
-              aggregate: projects_aggregate(where: $filter) {
-                aggregate {
-                  count
-                }
-              }
-              projects(limit: $limit, offset: $offset, order_by: $orderBy, where: $filter) {
-                id: project_id
-                project_id
-                name
-                owner {
-                  username
-                  name
-                }
-                created_at
-                product_id
-                finished
-                is_archived
-                instance_default_role
-                deployable
-                project_deployments_aggregate {
-                  aggregate {
-                    count
-                  }
-                }
-                running_deployments: project_deployments_aggregate(
-                  where: {
-                    status: { _eq: "JobQueued" }
-                    job: { status: { _eq: "Running" } }
-                  }
-                ) {
-                  aggregate {
-                    count
-                  }
-                }
-                pending_deployments: project_deployments_aggregate(
-                  where: {
-                    status: { _eq: "JobQueued" }
-                    job: { status: { _in: ["SubmitInitialized", "Submitted", "Pending"] } }
-                  }
-                ) {
-                  aggregate {
-                    count
-                  }
-                }
-                resources(order_by: [{ sorting_order: asc_nulls_last }]) {
-                  sorting_order
-                  instance_default_role
-                  giturl
-                  name
-                  resource_id
-                  resource_type
-                }
-                product {
-                  id
-                  displayName: display_name
-                  name
-                }
-                visibility
-                description
-                users: groups(where: { group_id: { _is_null: true } }) {
-                  user {
-                    name
-                  }
-                  id
-                  assigned_role
-                }
-                groups(where: { group_id: { _is_null: false } }) {
-                  group {
-                    name
-                    group_id
-                  }
-                  id: group_id
-                  group_id
-                  project_id
-                  assigned_role
-                }
-                tags
-                userRole: access_control_users_aggregate(
-                  where: { user_id: { _eq: $ownerId } }
-                ) {
-                  aggregate {
-                    max {
-                      assigned_role
-                    }
-                  }
-                }
-                is_simple_mode
-                projects_current_editor_user_id {
-                  name
-                  id
-                }
-              }
-            }`
-
-	// Execute the GraphQL query
-	response, err := executeProjectsQuery(server, token, query, userInfo.ID)
+func findProjectByUserAndName(server string, token *StoredToken, userID int64, username, projectName string) (string, error) {
+	projects, err := lookupProjectsWith(graphQLExecutor(server, token), userID, projectLookupFilter(username, projectName))
 	if err != nil {
 		return "", fmt.Errorf("failed to query projects: %w", err)
 	}
 
-	// Search for the project
-	var matchedProject *Project
-	for _, project := range response.Data.Projects {
-		if strings.EqualFold(project.Owner.Username, username) && strings.EqualFold(project.Name, projectName) {
-			matchedProject = &project
-			break
-		}
-	}
-
-	if matchedProject == nil {
-		return "", fmt.Errorf("project '%s' not found for user '%s'", projectName, username)
+	matchedProject, err := pickProject(projects, username, projectName)
+	if err != nil {
+		return "", err
 	}
 
 	fmt.Printf("Found project: %s by %s (ID: %s)\n", matchedProject.Name, matchedProject.Owner.Username, matchedProject.ID)
 	return matchedProject.ID, nil
-}
-
-// executeProjectsQuery executes the GraphQL query for projects
-func executeProjectsQuery(server string, token *StoredToken, query string, userID int64) (*ProjectsResponse, error) {
-	// This is similar to the code in listProjects but returns the response for reuse
-	graphqlReq := GraphQLRequest{
-		OperationName: "Projects",
-		Query:         query,
-		Variables: map[string]interface{}{
-			"ownerId": userID,
-		},
-	}
-
-	jsonData, err := json.Marshal(graphqlReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal GraphQL request: %w", err)
-	}
-
-	url := fmt.Sprintf("https://%s/v1/graphql", server)
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.IDToken))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("X-Hasura-Role", "jhuser")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("GraphQL request failed (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	var response ProjectsResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	// Check for GraphQL errors
-	if len(response.Errors) > 0 {
-		return nil, fmt.Errorf("GraphQL errors: %v", response.Errors)
-	}
-
-	return &response, nil
 }
 
 // cloneProject clones a project using git with authorization
@@ -213,6 +68,11 @@ func cloneProject(server, projectIdentifier, localPath string) error {
 	token, err := ensureValidToken()
 	if err != nil {
 		return fmt.Errorf("authentication required: %w", err)
+	}
+
+	userInfo, err := getUserInfo(server)
+	if err != nil {
+		return fmt.Errorf("failed to get user info: %w", err)
 	}
 
 	// Parse the project identifier
@@ -223,17 +83,13 @@ func cloneProject(server, projectIdentifier, localPath string) error {
 		projectName = parts[1]
 	} else {
 		// No username provided, use the logged-in user's username
-		userInfo, err := getUserInfo(server)
-		if err != nil {
-			return fmt.Errorf("failed to get user info for default username: %w", err)
-		}
 		username = userInfo.Username
 		projectName = projectIdentifier
 		fmt.Printf("Using logged-in user '%s' as project owner\n", username)
 	}
 
 	// Find the project by username and project name
-	projectUUID, err := findProjectByUserAndName(server, username, projectName)
+	projectUUID, err := findProjectByUserAndName(server, token, userInfo.ID, username, projectName)
 	if err != nil {
 		return err
 	}

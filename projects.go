@@ -3,12 +3,59 @@ package main
 import (
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 )
 
+// The server answers only allowlisted GraphQL documents and rejects any other
+// text with "query is not allowed", so these files must stay, field for field,
+// documents the server allowlists. Page and filter only through the variables
+// they all declare ($limit, $offset, $orderBy, $ownerId, $filter); never edit
+// the text.
+//
+// projects.gql and projects_pre264.gql are the JuliaHub web UI's Projects
+// document (frontend/src/components/Projects/queries/projects.gql) from 26.4 on
+// and from 6.9 through 26.3 (without `editing_mode` and
+// `requires_publish_request`).
+//
+// projects_juliasim.gql is JuliaSim's Projects document
+// (graphqlsrvr/external-queries/juliasim-projects.gql), allowlisted from 6.7 on.
+// Its `resources` field costs the server about a second per row, so only the
+// owner/name lookup of `jh clone`, which matches a row or two, falls back to it;
+// project listings never do.
+//
 //go:embed projects.gql
 var projectsQuery string
+
+//go:embed projects_pre264.gql
+var projectsPre264Query string
+
+//go:embed projects_juliasim.gql
+var projectsJuliaSimQuery string
+
+type projectsDocument struct {
+	name  string
+	query string
+}
+
+// listDocuments are tried in order for project listings, lookupDocuments for
+// the `jh clone` owner/name lookup.
+var (
+	listDocuments = []projectsDocument{
+		{"26.4+", projectsQuery},
+		{"6.9–26.3", projectsPre264Query},
+	}
+	lookupDocuments = []projectsDocument{
+		{"26.4+", projectsQuery},
+		{"6.9–26.3", projectsPre264Query},
+		{"JuliaSim", projectsJuliaSimQuery},
+	}
+)
+
+// projectLookupLimit bounds the owner/name lookup. The filter matches only the
+// case variants of one name, and the JuliaSim document is slow per row.
+const projectLookupLimit = 10
 
 type Project struct {
 	ID                          string       `json:"id"`
@@ -80,10 +127,18 @@ type ProjectsResponse struct {
 			} `json:"aggregate"`
 		} `json:"aggregate"`
 	} `json:"data"`
-	Errors []struct {
-		Message string `json:"message"`
-	} `json:"errors"`
+	Errors []graphQLError `json:"errors"`
 }
+
+type graphQLError struct {
+	Message    string `json:"message"`
+	Extensions struct {
+		Code string `json:"code"`
+	} `json:"extensions"`
+}
+
+// String prints only the message, so errors read "GraphQL errors: [{message}]".
+func (e graphQLError) String() string { return "{" + e.Message + "}" }
 
 // projectsPageSize is how many projects are fetched per GraphQL request.
 // The Projects query is expensive per row on the server (several aggregates
@@ -112,10 +167,15 @@ func buildProjectsFilter(userFilter string, userFilterProvided bool, currentUser
 			"owner_id": map[string]interface{}{"_eq": currentUserID},
 		}
 	}
-	// Case-insensitive exact match on the owner's username (was EqualFold client-side).
+	return ownerUsernameFilter(userFilter)
+}
+
+// ownerUsernameFilter matches projects whose owner's username equals username,
+// case-insensitively and literally (LIKE metacharacters escaped).
+func ownerUsernameFilter(username string) map[string]interface{} {
 	return map[string]interface{}{
 		"owner": map[string]interface{}{
-			"username": map[string]interface{}{"_ilike": escapeLikePattern(userFilter)},
+			"username": map[string]interface{}{"_ilike": escapeLikePattern(username)},
 		},
 	}
 }
@@ -123,29 +183,104 @@ func buildProjectsFilter(userFilter string, userFilterProvided bool, currentUser
 // fetchProjectsPage requests one page of projects matching filter. It returns
 // the page's projects and the total number of matching projects on the server.
 func fetchProjectsPage(server string, token *StoredToken, ownerID int64, filter map[string]interface{}, page int) ([]Project, int, error) {
-	body, err := executeGraphQL(server, token, GraphQLRequest{
+	return fetchProjectsPageWith(graphQLExecutor(server, token), ownerID, filter, page)
+}
+
+// graphQLExecutor sends GraphQL requests to server with token.
+func graphQLExecutor(server string, token *StoredToken) func(GraphQLRequest) ([]byte, error) {
+	return func(req GraphQLRequest) ([]byte, error) {
+		return executeGraphQL(server, token, req)
+	}
+}
+
+// fetchProjectsPageWith is fetchProjectsPage with the GraphQL transport passed
+// in.
+func fetchProjectsPageWith(execute func(GraphQLRequest) ([]byte, error), ownerID int64, filter map[string]interface{}, page int) ([]Project, int, error) {
+	return fetchProjectsWith(execute, listDocuments, ownerID, filter, projectsPageSize, (page-1)*projectsPageSize)
+}
+
+// lookupProjectsWith runs the `jh clone` owner/name lookup filter with the
+// GraphQL transport passed in.
+func lookupProjectsWith(execute func(GraphQLRequest) ([]byte, error), ownerID int64, filter map[string]interface{}) ([]Project, error) {
+	projects, _, err := fetchProjectsWith(execute, lookupDocuments, ownerID, filter, projectLookupLimit, 0)
+	return projects, err
+}
+
+// fetchProjectsWith sends docs in order until the server accepts one, and moves
+// to the next only when the server rejects the document itself (see
+// queryProjects). When none is accepted, every document's error is reported,
+// labelled with the document.
+func fetchProjectsWith(execute func(GraphQLRequest) ([]byte, error), docs []projectsDocument, ownerID int64, filter map[string]interface{}, limit, offset int) ([]Project, int, error) {
+	var firstErr error
+	var msgs []string
+	rejected := false
+	for _, d := range docs {
+		projects, total, docRejected, err := queryProjects(execute, d.query, ownerID, filter, limit, offset)
+		if err == nil {
+			return projects, total, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+		msgs = append(msgs, fmt.Sprintf("%s document: %v", d.name, err))
+		rejected = docRejected
+		if !rejected {
+			break
+		}
+	}
+	if len(msgs) == 1 {
+		return nil, 0, firstErr
+	}
+	msg := strings.Join(msgs, "; ")
+	if rejected {
+		msg = "this server rejects every Projects document this jh version knows (" + msg + ")"
+	}
+	return nil, 0, errors.New(msg)
+}
+
+// queryProjects sends one Projects document. rejected reports that the server
+// refused the document itself rather than failed to run it: it is not on the
+// allowlist ("query is not allowed"), or, on a server running without an
+// allowlist, it selects a project field that server's schema lacks ("field ...
+// not found in type: 'projects'"). Only then is another document worth trying.
+func queryProjects(execute func(GraphQLRequest) ([]byte, error), query string, ownerID int64, filter map[string]interface{}, limit, offset int) (projects []Project, total int, rejected bool, err error) {
+	body, err := execute(GraphQLRequest{
 		OperationName: "Projects",
-		Query:         projectsQuery,
+		Query:         query,
 		Variables: map[string]interface{}{
 			"ownerId": ownerID,
 			"filter":  filter,
-			"limit":   projectsPageSize,
-			"offset":  (page - 1) * projectsPageSize,
+			"limit":   limit,
+			"offset":  offset,
 			"orderBy": map[string]interface{}{"created_at": "desc_nulls_last"},
 		},
 	})
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
 
 	var response ProjectsResponse
 	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, 0, fmt.Errorf("failed to parse response: %w", err)
+		return nil, 0, false, fmt.Errorf("failed to parse response: %w", err)
 	}
 	if len(response.Errors) > 0 {
-		return nil, 0, fmt.Errorf("GraphQL errors: %v", response.Errors)
+		return nil, 0, response.documentRejected(), fmt.Errorf("GraphQL errors: %v", response.Errors)
 	}
-	return response.Data.Projects, response.Data.Aggregate.Aggregate.Count, nil
+	return response.Data.Projects, response.Data.Aggregate.Aggregate.Count, false, nil
+}
+
+// documentRejected reports whether the server refused the document itself
+// (see queryProjects) rather than failing to run it.
+func (r ProjectsResponse) documentRejected() bool {
+	for _, e := range r.Errors {
+		if strings.Contains(strings.ToLower(e.Message), "query is not allowed") {
+			return true
+		}
+		if e.Extensions.Code == "validation-failed" && strings.HasSuffix(e.Message, "not found in type: 'projects'") {
+			return true
+		}
+	}
+	return false
 }
 
 // totalPages is how many pages of projectsPageSize the given total spans.

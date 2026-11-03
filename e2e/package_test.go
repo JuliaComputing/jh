@@ -8,10 +8,12 @@ import (
 )
 
 // `jh package` — search/info/dependency. These depend on the REST `/api/v1/ui/packages/info`
-// endpoint with a GraphQL fallback; on some instances those are unavailable or
-// the GraphQL role is not permitted ("query is not allowed"). Such cases are
-// treated as backend gaps and skipped; when the commands work, real structure
-// is asserted. DataFrames is used as a well-known canary.
+// endpoint with a GraphQL fallback; on some instances those are unavailable, and
+// such cases are treated as backend gaps and skipped. The GraphQL fallback's
+// documents are allowlisted only up to JuliaHub 26.3, so from 26.4 a failed REST
+// call ends in "query is not allowed"; skipIfPackageFallbackDisallowed skips that
+// known dead fallback by name. When the commands work, real structure is asserted.
+// DataFrames is used as a well-known canary.
 
 const canaryPackage = "DataFrames"
 
@@ -19,7 +21,7 @@ func TestPackageSearch(t *testing.T) {
 	requireCreds(t)
 	res := runJH(t, "package", "search", canaryPackage)
 	if res.exitCode != 0 || backendGap(res.combined()) {
-		skipIfUnsupported(t, res)
+		skipIfPackageUnsupported(t, res)
 		t.Skipf("package search unavailable on this instance: %s", errorLine(res.combined()))
 	}
 	if strings.Contains(strings.ToLower(res.combined()), "no packages found") {
@@ -33,7 +35,7 @@ func TestPackageInfo(t *testing.T) {
 	res := runJH(t, "package", "info", canaryPackage)
 	out := res.combined()
 	if res.exitCode != 0 || backendGap(out) {
-		skipIfUnsupported(t, res)
+		skipIfPackageUnsupported(t, res)
 		t.Skipf("package info unavailable on this instance: %s", errorLine(out))
 	}
 	if strings.Contains(strings.ToLower(out), "not found") {
@@ -50,7 +52,7 @@ func TestPackageDependency(t *testing.T) {
 	res := runJH(t, "package", "dependency", canaryPackage)
 	out := res.combined()
 	if res.exitCode != 0 || backendGap(out) {
-		skipIfUnsupported(t, res)
+		skipIfPackageUnsupported(t, res)
 		if strings.Contains(strings.ToLower(out), "not found") {
 			t.Skipf("%s not indexed on this instance", canaryPackage)
 		}
@@ -65,6 +67,7 @@ func TestPackageInfoNotFound(t *testing.T) {
 	requireCreds(t)
 	res := runJH(t, "package", "info", "Zz_jh_e2e_does_not_exist_0xDEADBEEF")
 	out := res.combined()
+	skipIfPackageFallbackDisallowed(t, out)
 	if backendGap(out) {
 		t.Skipf("package backend unavailable on this instance: %s", errorLine(out))
 	}

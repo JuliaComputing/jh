@@ -271,11 +271,43 @@ func isServerError(out string) bool {
 	return false
 }
 
+// disallowedQuery reports whether output carries the server's answer to a
+// GraphQL document that is not on its allowlist. The server answers only
+// allowlisted documents, so this means the CLI sent the wrong text: a CLI defect
+// on every instance, never a backend gap.
+func disallowedQuery(out string) bool {
+	return strings.Contains(strings.ToLower(out), "query is not allowed")
+}
+
+// skipIfPackageFallbackDisallowed skips a `jh package` test whose output ends in
+// the GraphQL fallback being rejected. Those fallback documents are allowlisted
+// up to JuliaHub 26.3 and not from 26.4 on, so there a failed REST package call
+// surfaces as "query is not allowed": a known dead fallback, not a defect in the
+// command under test. skipIfPackageUnsupported runs it before skipIfUnsupported.
+func skipIfPackageFallbackDisallowed(t *testing.T, out string) {
+	t.Helper()
+	if disallowedQuery(out) {
+		t.Skipf("REST package endpoint unavailable and the GraphQL fallback is not allowlisted on this server (JuliaHub 26.4+): %s", errorLine(out))
+	}
+}
+
+// skipIfPackageUnsupported is skipIfUnsupported for commands that use the package
+// GraphQL fallback (`jh package`, `jh search packages`).
+func skipIfPackageUnsupported(t *testing.T, res result) {
+	t.Helper()
+	skipIfPackageFallbackDisallowed(t, res.combined())
+	skipIfUnsupported(t, res)
+}
+
 // backendGap reports whether output indicates the relevant service/endpoint is
-// unavailable on this instance (absent endpoint, disallowed query, or 5xx) —
-// i.e. a reason to skip rather than fail. Used by the package and scan tests,
-// whose backends are not present on every instance.
+// unavailable on this instance (absent endpoint, a GraphQL error other than a
+// disallowed document, or 5xx) — i.e. a reason to skip rather than fail. Used by
+// the package, search and scan tests, whose backends are not present on every
+// instance.
 func backendGap(out string) bool {
+	if disallowedQuery(out) {
+		return false
+	}
 	low := strings.ToLower(out)
 	if isServerError(out) {
 		return true
@@ -290,7 +322,8 @@ func backendGap(out string) bool {
 
 // unsupportedMarkers are substrings indicating a command is unavailable or
 // unauthorized on the instance (rather than a CLI defect): missing permissions,
-// absent endpoints, disallowed queries, or transient backend errors.
+// absent endpoints, or transient backend errors. A disallowed GraphQL document is
+// checked first and fails instead (see disallowedQuery).
 var unsupportedMarkers = []string{
 	"permission", "forbidden", "unauthorized", "not allowed",
 	"status 401", "status 403", "status 404",
@@ -303,6 +336,9 @@ var unsupportedMarkers = []string{
 // defects (e.g. JSON unmarshal errors), so those still fail.
 func skipIfUnsupported(t *testing.T, res result) {
 	t.Helper()
+	if disallowedQuery(res.combined()) {
+		t.Fatalf("the CLI sent a GraphQL document that is not on the server's allowlist: %s", errorLine(res.combined()))
+	}
 	low := strings.ToLower(res.combined())
 	for _, m := range unsupportedMarkers {
 		if strings.Contains(low, m) {
