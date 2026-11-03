@@ -297,6 +297,20 @@ func decodeSearchError(status int, body []byte) *searchError {
 		// the search API: the status text says all there is to say.
 		msg = http.StatusText(status)
 	}
+	switch status {
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		// The web server answered for a search backend that is down or
+		// unreachable: say so instead of a bare gateway status.
+		gateway := fmt.Sprintf("HTTP %d %s", status, http.StatusText(status))
+		if msg != "" && msg != http.StatusText(status) {
+			gateway += ": " + msg
+		}
+		return &searchError{
+			Status:  status,
+			Code:    "search_unavailable",
+			Message: fmt.Sprintf("the search service is not responding (%s); try again later", gateway),
+		}
+	}
 	return &searchError{Status: status, Message: msg}
 }
 

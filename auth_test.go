@@ -333,3 +333,45 @@ func TestPollDeviceTokenStops(t *testing.T) {
 		})
 	}
 }
+
+func TestDexAuthHost(t *testing.T) {
+	cases := []struct {
+		status   int
+		location string
+		want     string
+	}{
+		{http.StatusFound, "https://auth.example.com/dex/auth?client_id=x&redirect_uri=y", "auth.example.com"},
+		{http.StatusSeeOther, "https://login.example.org/dex/auth/", "login.example.org"},
+		{http.StatusOK, "https://auth.example.com/dex/auth", ""},
+		{http.StatusFound, "", ""},
+		{http.StatusFound, "http://auth.example.com/dex/auth", ""},
+		{http.StatusFound, "https://example.com/ui/Home", ""},
+		{http.StatusFound, "/dex/auth?x=1", ""},
+		{http.StatusFound, "https://example.com/dex/auth/github", ""},
+	}
+	for _, c := range cases {
+		if got := dexAuthHost(c.status, c.location); got != c.want {
+			t.Errorf("dexAuthHost(%d, %q) = %q, want %q", c.status, c.location, got, c.want)
+		}
+	}
+}
+
+func TestLoginRedirectAuthServer(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/login" {
+			http.NotFound(w, r)
+			return
+		}
+		http.Redirect(w, r, "https://auth.shared.example/dex/auth?client_id=web", http.StatusFound)
+	}))
+	defer srv.Close()
+	client := srv.Client()
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	host := strings.TrimPrefix(srv.URL, "https://")
+	if got := loginRedirectAuthServer(client, host); got != "auth.shared.example" {
+		t.Errorf("got %q, want auth.shared.example", got)
+	}
+	if got := loginRedirectAuthServer(client, "127.0.0.1:1"); got != "" {
+		t.Errorf("unreachable server: got %q, want empty", got)
+	}
+}

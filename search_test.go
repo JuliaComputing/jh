@@ -687,7 +687,29 @@ func TestDecodeSearchErrorHTMLPage(t *testing.T) {
 	if se.Message != "Unauthorized" || strings.Contains(se.Error(), "<") {
 		t.Errorf("HTML error page should collapse to the status text, got %q", se.Error())
 	}
-	if se := decodeSearchError(http.StatusBadGateway, []byte("upstream down")); se.Message != "upstream down" {
+	if se := decodeSearchError(http.StatusBadRequest, []byte("bad thing")); se.Message != "bad thing" {
 		t.Errorf("plain-text bodies are kept, got %q", se.Message)
+	}
+}
+
+func TestDecodeSearchErrorGateway(t *testing.T) {
+	page := []byte("<html>\n<head><title>502 Bad Gateway</title></head>\n</html>\n")
+	for _, c := range []struct {
+		status int
+		body   []byte
+		want   string
+	}{
+		{http.StatusBadGateway, page, "search_unavailable: the search service is not responding (HTTP 502 Bad Gateway); try again later"},
+		{http.StatusServiceUnavailable, nil, "search_unavailable: the search service is not responding (HTTP 503 Service Unavailable); try again later"},
+		{http.StatusGatewayTimeout, []byte("upstream timed out"), "search_unavailable: the search service is not responding (HTTP 504 Gateway Timeout: upstream timed out); try again later"},
+	} {
+		if got := decodeSearchError(c.status, c.body).Error(); got != c.want {
+			t.Errorf("decodeSearchError(%d) = %q, want %q", c.status, got, c.want)
+		}
+	}
+	// A structured error from the search API itself is reported as sent.
+	se := decodeSearchError(http.StatusServiceUnavailable, []byte(`{"code":"metadata_unavailable","message":"m"}`))
+	if se.Code != "metadata_unavailable" {
+		t.Errorf("structured 503 lost its code: %v", se)
 	}
 }

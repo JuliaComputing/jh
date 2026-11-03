@@ -179,10 +179,47 @@ func authServerFor(server string) string {
 
 // discoverAuthServer is a variable so tests can avoid the network.
 var discoverAuthServer = func(server string) string {
-	client := &http.Client{Timeout: 10 * time.Second}
-	return pickAuthServer(server, func(host string) bool {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		// loginRedirectAuthServer reads the redirect itself.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	discoverable := func(host string) bool {
 		return dexDiscoverable(client, "https://"+host)
-	})
+	}
+	if host, ok := probeAuthServer(server, discoverable); ok {
+		return host
+	}
+	if host := loginRedirectAuthServer(client, server); host != "" && discoverable(host) {
+		return host
+	}
+	return server
+}
+
+// loginRedirectAuthServer returns the host the server's web login redirects
+// to for dex authorization (<host>/dex/auth), or "" if it does not redirect
+// there. This finds the dex of installs whose auth host is shared with
+// another install, so it is neither the server itself nor auth.<server>.
+func loginRedirectAuthServer(client *http.Client, server string) string {
+	resp, err := client.Get("https://" + server + "/login")
+	if err != nil {
+		return ""
+	}
+	resp.Body.Close()
+	return dexAuthHost(resp.StatusCode, resp.Header.Get("Location"))
+}
+
+// dexAuthHost is the pure part of loginRedirectAuthServer: the host of an
+// https redirect to a dex authorization endpoint, else "".
+func dexAuthHost(status int, location string) string {
+	if status < 300 || status > 399 || location == "" {
+		return ""
+	}
+	u, err := url.Parse(location)
+	if err != nil || u.Scheme != "https" || u.Host == "" || strings.TrimSuffix(u.Path, "/") != "/dex/auth" {
+		return ""
+	}
+	return u.Host
 }
 
 // pickAuthServer returns the first of auth.<server>, server whose dex answers
@@ -191,6 +228,13 @@ var discoverAuthServer = func(server string) string {
 // <server>/dex is slow to fail (a gateway error after several seconds), and on
 // enterprise installs the auth. name normally does not resolve at all.
 func pickAuthServer(server string, discoverable func(host string) bool) string {
+	host, _ := probeAuthServer(server, discoverable)
+	return host
+}
+
+// probeAuthServer is pickAuthServer that also reports whether a candidate
+// answered (false: the server fallback is a guess).
+func probeAuthServer(server string, discoverable func(host string) bool) (string, bool) {
 	var candidates []string
 	if !strings.HasPrefix(server, "auth.") {
 		candidates = append(candidates, "auth."+server)
@@ -209,10 +253,10 @@ func pickAuthServer(server string, discoverable func(host string) bool) string {
 	wg.Wait()
 	for i, host := range candidates {
 		if up[i] {
-			return host
+			return host, true
 		}
 	}
-	return server
+	return server, false
 }
 
 // rememberAuthServerFromToken records the auth host named by a stored token's

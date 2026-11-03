@@ -342,7 +342,7 @@ go run . run -- --project=. --threads=4 -e "println(Threads.nthreads())"
 
 The CLI supports multiple JuliaHub environments:
 - Default: `juliahub.com` (uses `auth.juliahub.com` for auth)
-- Custom servers: Direct server specification. The dex (auth) host is found by `authServerFor`: enterprise installs serve dex at `<server>/dex`, JuliaHub.com-style installs at `auth.<server>/dex`. Login probes both OIDC discovery documents (`/dex/.well-known/openid-configuration`, concurrently, `auth.` preferred); refresh takes the host from the stored token's `iss` claim instead (`rememberAuthServerFromToken`). The stored `server=` stays the API host
+- Custom servers: Direct server specification. The dex (auth) host is found by `authServerFor`: enterprise installs serve dex at `<server>/dex`, JuliaHub.com-style installs at `auth.<server>/dex`. Login probes both OIDC discovery documents (`/dex/.well-known/openid-configuration`, concurrently, `auth.` preferred); when neither answers, the host the server's web login (`GET /login`, not followed) redirects to for `/dex/auth` is used if it serves its own discovery document (`loginRedirectAuthServer`, for installs whose dex lives on a shared auth host); refresh takes the host from the stored token's `iss` claim instead (`rememberAuthServerFromToken`). The stored `server=` stays the API host
 - Server normalization: Automatically appends `.juliahub.com` to short names
 
 ## Authentication Flow
