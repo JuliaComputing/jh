@@ -174,7 +174,7 @@ func TestAuthServerFor(t *testing.T) {
 	}
 }
 
-func TestPickAuthServer(t *testing.T) {
+func TestProbeAuthServer(t *testing.T) {
 	only := func(hosts ...string) func(string) bool {
 		return func(h string) bool {
 			for _, x := range hosts {
@@ -189,16 +189,18 @@ func TestPickAuthServer(t *testing.T) {
 		server string
 		up     func(string) bool
 		want   string
+		wantOK bool
 	}{
-		{"nightly.juliahub.dev", only("nightly.juliahub.dev"), "nightly.juliahub.dev"},
-		{"nightly-juliahub.juliahub.dev", only("auth.nightly-juliahub.juliahub.dev"), "auth.nightly-juliahub.juliahub.dev"},
-		{"both.dev", only("both.dev", "auth.both.dev"), "auth.both.dev"},
-		{"auth.x.dev", only("auth.x.dev"), "auth.x.dev"},
-		{"offline.dev", only(), "offline.dev"},
+		{"nightly.juliahub.dev", only("nightly.juliahub.dev"), "nightly.juliahub.dev", true},
+		{"nightly-juliahub.juliahub.dev", only("auth.nightly-juliahub.juliahub.dev"), "auth.nightly-juliahub.juliahub.dev", true},
+		{"both.dev", only("both.dev", "auth.both.dev"), "auth.both.dev", true},
+		{"auth.x.dev", only("auth.x.dev"), "auth.x.dev", true},
+		{"offline.dev", only(), "offline.dev", false},
 	}
 	for _, c := range cases {
-		if got := pickAuthServer(c.server, c.up); got != c.want {
-			t.Errorf("pickAuthServer(%q) = %q, want %q", c.server, got, c.want)
+		got, ok := probeAuthServer(c.server, c.up)
+		if got != c.want || ok != c.wantOK {
+			t.Errorf("probeAuthServer(%q) = %q, %v, want %q, %v", c.server, got, ok, c.want, c.wantOK)
 		}
 	}
 }
@@ -331,5 +333,46 @@ func TestPollDeviceTokenStops(t *testing.T) {
 				t.Errorf("err = %v, want it to mention %q", err, c.want)
 			}
 		})
+	}
+}
+
+func TestDexAuthHost(t *testing.T) {
+	cases := []struct {
+		status   int
+		location string
+		want     string
+	}{
+		{http.StatusFound, "https://auth.example.com/dex/auth?client_id=x&redirect_uri=y", "auth.example.com"},
+		{http.StatusSeeOther, "https://login.example.org/dex/auth/", "login.example.org"},
+		{http.StatusOK, "https://auth.example.com/dex/auth", ""},
+		{http.StatusFound, "", ""},
+		{http.StatusFound, "http://auth.example.com/dex/auth", ""},
+		{http.StatusFound, "https://example.com/ui/Home", ""},
+		{http.StatusFound, "/dex/auth?x=1", ""},
+		{http.StatusFound, "https://example.com/dex/auth/github", ""},
+	}
+	for _, c := range cases {
+		if got := dexAuthHost(c.status, c.location); got != c.want {
+			t.Errorf("dexAuthHost(%d, %q) = %q, want %q", c.status, c.location, got, c.want)
+		}
+	}
+}
+
+func TestLoginRedirectAuthServer(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/login" {
+			http.NotFound(w, r)
+			return
+		}
+		http.Redirect(w, r, "https://auth.shared.example/dex/auth?client_id=web", http.StatusFound)
+	}))
+	defer srv.Close()
+	client := srv.Client() // follows redirects: loginRedirectAuthServer must not
+	host := strings.TrimPrefix(srv.URL, "https://")
+	if got := loginRedirectAuthServer(client, host); got != "auth.shared.example" {
+		t.Errorf("got %q, want auth.shared.example", got)
+	}
+	if got := loginRedirectAuthServer(client, "127.0.0.1:1"); got != "" {
+		t.Errorf("unreachable server: got %q, want empty", got)
 	}
 }
