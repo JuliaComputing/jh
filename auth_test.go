@@ -189,17 +189,18 @@ func TestProbeAuthServer(t *testing.T) {
 		server string
 		up     func(string) bool
 		want   string
+		wantOK bool
 	}{
-		{"nightly.juliahub.dev", only("nightly.juliahub.dev"), "nightly.juliahub.dev"},
-		{"nightly-juliahub.juliahub.dev", only("auth.nightly-juliahub.juliahub.dev"), "auth.nightly-juliahub.juliahub.dev"},
-		{"both.dev", only("both.dev", "auth.both.dev"), "auth.both.dev"},
-		{"auth.x.dev", only("auth.x.dev"), "auth.x.dev"},
-		{"offline.dev", only(), "offline.dev"},
+		{"nightly.juliahub.dev", only("nightly.juliahub.dev"), "nightly.juliahub.dev", true},
+		{"nightly-juliahub.juliahub.dev", only("auth.nightly-juliahub.juliahub.dev"), "auth.nightly-juliahub.juliahub.dev", true},
+		{"both.dev", only("both.dev", "auth.both.dev"), "auth.both.dev", true},
+		{"auth.x.dev", only("auth.x.dev"), "auth.x.dev", true},
+		{"offline.dev", only(), "offline.dev", false},
 	}
 	for _, c := range cases {
 		got, ok := probeAuthServer(c.server, c.up)
-		if got != c.want || ok != (c.server != "offline.dev") {
-			t.Errorf("probeAuthServer(%q) = %q, %v, want %q", c.server, got, ok, c.want)
+		if got != c.want || ok != c.wantOK {
+			t.Errorf("probeAuthServer(%q) = %q, %v, want %q, %v", c.server, got, ok, c.want, c.wantOK)
 		}
 	}
 }

@@ -202,7 +202,7 @@ var discoverAuthServer = func(server string) string {
 // to for dex authorization (<host>/dex/auth), or "" if it does not redirect
 // there. This finds the dex of installs whose auth host is shared with
 // another install, so it is neither the server itself nor auth.<server>.
-// The redirect is read, not followed, whatever client's own policy.
+// The redirect is read, not followed, whatever the client's own redirect policy.
 func loginRedirectAuthServer(client *http.Client, server string) string {
 	c := *client
 	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }

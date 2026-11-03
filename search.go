@@ -95,9 +95,8 @@ type legacySearchResponse struct {
 // (e.g. invalid_pattern, invalid_registry), or "legacy_error" for a
 // `success:false` legacy envelope, "search_unavailable" when the route is
 // missing or a gateway answered 502/503 for the search backend, or
-// "search_timeout" when it answered 504; it is
-// empty when the body could not be decoded, in which case Message holds the
-// raw body text.
+// "search_timeout" when it answered 504; it is empty when the body could not
+// be decoded, in which case Message holds the raw body text.
 type searchError struct {
 	Status  int
 	Code    string
@@ -300,10 +299,6 @@ func decodeSearchError(status int, body []byte) *searchError {
 		// the search API: the status text says all there is to say.
 		msg = http.StatusText(status)
 	}
-	gateway := fmt.Sprintf("HTTP %d %s", status, http.StatusText(status))
-	if msg != "" && msg != http.StatusText(status) {
-		gateway += ": " + msg
-	}
 	switch status {
 	case http.StatusBadGateway, http.StatusServiceUnavailable:
 		// The web server answered for a search backend it cannot reach: one
@@ -312,7 +307,7 @@ func decodeSearchError(status int, body []byte) *searchError {
 		return &searchError{
 			Status:  status,
 			Code:    "search_unavailable",
-			Message: fmt.Sprintf("this search is not available on the server (%s): its backend is down or not enabled there", gateway),
+			Message: fmt.Sprintf("this search is not available on the server (%s): its backend is down or not enabled there", gatewayStatus(status, msg)),
 		}
 	case http.StatusGatewayTimeout:
 		// The backend took longer than the web server waits, most often an
@@ -320,10 +315,20 @@ func decodeSearchError(status int, body []byte) *searchError {
 		return &searchError{
 			Status:  status,
 			Code:    "search_timeout",
-			Message: fmt.Sprintf("the search did not finish in time (%s); try a narrower pattern or limit it with --package/--registry", gateway),
+			Message: fmt.Sprintf("the search did not finish in time (%s); try a narrower pattern or limit it with --package/--registry", gatewayStatus(status, msg)),
 		}
 	}
 	return &searchError{Status: status, Message: msg}
+}
+
+// gatewayStatus describes a gateway reply: "HTTP <status> <text>", plus the
+// body text when it says more than the status text.
+func gatewayStatus(status int, msg string) string {
+	s := fmt.Sprintf("HTTP %d %s", status, http.StatusText(status))
+	if msg != "" && msg != http.StatusText(status) {
+		s += ": " + msg
+	}
+	return s
 }
 
 // decodeLegacySearchResponse interprets the pre-v1 `{"success","data"}`
