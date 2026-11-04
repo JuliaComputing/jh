@@ -1213,8 +1213,8 @@ Four kinds of search are available, one per subcommand:
 code, symbols and docs accept --package (name or UUID, repeatable) and
 --registry (name, repeatable) to narrow the search, and --limit to cap the
 number of results. Every subcommand takes --json, which prints only a JSON
-document on stdout — {"results": [...], "truncated": bool} for code, symbols
-and docs; {"results": [...], "total": N} for packages — with notes and errors
+document on stdout — {"results": [...], "truncated": bool, "unavailable": [...]} for code, symbols
+and docs (unavailable is omitted when complete); {"results": [...], "total": N} for packages — with notes and errors
 on stderr, so the output can be consumed by scripts and tool-calling agents.
 
 --server accepts a JuliaHub host (as elsewhere) or, for local development of
@@ -2822,7 +2822,7 @@ func init() {
 		c.Flags().StringArray("package", nil, "Restrict to a package by name or UUID (repeatable)")
 		c.Flags().StringArray("registry", nil, "Restrict to a registry by name (repeatable)")
 		c.Flags().Int("limit", 0, "Maximum number of results (default: server default)")
-		c.Flags().Bool("json", false, "Print only a JSON document ({\"results\": [...], \"truncated\": bool}) on stdout")
+		c.Flags().Bool("json", false, "Print only JSON on stdout ({\"results\": [...], \"truncated\": bool, \"unavailable\": [...] when incomplete})")
 	}
 	searchCodeCmd.Flags().String("path", "", "Only search files whose path matches this regular expression")
 	searchCodeCmd.Flags().Bool("ignore-case", false, "Case-insensitive match")
