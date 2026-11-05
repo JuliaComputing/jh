@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -301,46 +302,70 @@ func dexDiscoverable(client *http.Client, baseURL string) bool {
 
 func deviceFlow(server string) (*TokenResponse, error) {
 	authServer := authServerFor(server)
-
-	deviceCodeURL := fmt.Sprintf("https://%s/dex/device/code", authServer)
-	tokenURL := fmt.Sprintf("https://%s/dex/token", authServer)
-
-	// Step 1: Request device code
-	data := url.Values{}
-	data.Set("client_id", "device")
-	data.Set("scope", "openid email profile offline_access")
-	data.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
-	resp, err := http.PostForm(deviceCodeURL, data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to request device code: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read device code response: %w", err)
-	}
-
-	var deviceResp DeviceCodeResponse
-	if err := json.Unmarshal(body, &deviceResp); err != nil {
-		return nil, fmt.Errorf("failed to parse device code response: %w", err)
-	}
-
-	// Step 2: Display user instructions
-	fmt.Printf("Go to %s and authorize this device\n", deviceResp.VerificationURIComplete)
-	fmt.Printf("Waiting for authorization...\n")
-
-	// Step 3: Poll for token
 	client := &http.Client{Timeout: 30 * time.Second}
-	token, err := pollDeviceToken(client, tokenURL, deviceResp, realClock{})
+
+	dc, err := requestDeviceCode(client, fmt.Sprintf("https://%s/dex/device/code", authServer))
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Fprintln(os.Stderr, deviceCodePrompt(dc))
+	fmt.Fprintln(os.Stderr, "Waiting for authorization...")
+
+	token, err := pollDeviceToken(client, fmt.Sprintf("https://%s/dex/token", authServer), dc, realClock{})
 	if err != nil {
 		return nil, err
 	}
 	if token.RefreshToken == "" {
-		fmt.Printf("Warning: No refresh token received. This may indicate an issue with the authentication provider.\n")
-		fmt.Printf("Consider trying the GitHub connector instead for better token management.\n")
+		fmt.Fprintln(os.Stderr, "Warning: No refresh token received. This may indicate an issue with the authentication provider.")
+		fmt.Fprintln(os.Stderr, "Consider trying the GitHub connector instead for better token management.")
 	}
 	return token, nil
+}
+
+// requestDeviceCode starts a device authorization (RFC 8628 section 3.1) and
+// returns the server's answer, which must carry a device code.
+func requestDeviceCode(client *http.Client, deviceCodeURL string) (DeviceCodeResponse, error) {
+	var dc DeviceCodeResponse
+	resp, err := client.PostForm(deviceCodeURL, url.Values{
+		"client_id":  {"device"},
+		"scope":      {"openid email profile offline_access"},
+		"grant_type": {"urn:ietf:params:oauth:grant-type:device_code"},
+	})
+	if err != nil {
+		return dc, fmt.Errorf("failed to request device code: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return dc, fmt.Errorf("failed to read device code response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		var oauthErr struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(body, &oauthErr) == nil && oauthErr.Error != "" {
+			return dc, fmt.Errorf("device code request failed: %s", oauthErr.Error)
+		}
+		return dc, fmt.Errorf("device code request failed: HTTP %d", resp.StatusCode)
+	}
+	if err := json.Unmarshal(body, &dc); err != nil {
+		return dc, fmt.Errorf("failed to parse device code response: %w", err)
+	}
+	if dc.DeviceCode == "" {
+		return dc, fmt.Errorf("device code response has no device_code")
+	}
+	return dc, nil
+}
+
+// deviceCodePrompt tells the user where to approve the device. The complete
+// URI embeds the user code; RFC 8628 makes it optional, so without it the
+// code is shown next to verification_uri.
+func deviceCodePrompt(dc DeviceCodeResponse) string {
+	if dc.VerificationURIComplete != "" {
+		return fmt.Sprintf("Go to %s and authorize this device", dc.VerificationURIComplete)
+	}
+	return fmt.Sprintf("Go to %s and enter the code %s to authorize this device", dc.VerificationURI, dc.UserCode)
 }
 
 // pollClock lets tests drive pollDeviceToken without waiting.
@@ -357,54 +382,65 @@ func (realClock) Sleep(d time.Duration) { time.Sleep(d) }
 // defaultDevicePollInterval is RFC 8628's default when the server sends none.
 const defaultDevicePollInterval = 5 * time.Second
 
+// defaultDeviceCodeLifetime bounds polling when the server sends no
+// expires_in.
+const defaultDeviceCodeLifetime = 15 * time.Minute
+
+// maxDevicePollBackoff caps the interval doubling after transient failures.
+const maxDevicePollBackoff = time.Minute
+
 // pollDeviceToken polls the token endpoint until the user approves the device,
 // following RFC 8628 section 3.5: wait the server's interval between polls,
 // add 5 seconds to it on slow_down, keep going on authorization_pending, and
 // stop on access_denied, expired_token or once the device code has expired.
+// A poll that gets no answer, or a server error without an OAuth error body,
+// doubles the interval (up to maxDevicePollBackoff) and is retried.
 func pollDeviceToken(client *http.Client, tokenURL string, dc DeviceCodeResponse, clock pollClock) (*TokenResponse, error) {
 	interval := time.Duration(dc.Interval) * time.Second
 	if interval <= 0 {
 		interval = defaultDevicePollInterval
 	}
-	var deadline time.Time
-	if dc.ExpiresIn > 0 {
-		deadline = clock.Now().Add(time.Duration(dc.ExpiresIn) * time.Second)
+	lifetime := time.Duration(dc.ExpiresIn) * time.Second
+	if lifetime <= 0 {
+		lifetime = defaultDeviceCodeLifetime
 	}
-	expired := fmt.Errorf("the login request expired before it was approved; run 'jh auth login' again")
+	deadline := clock.Now().Add(lifetime)
+	expired := errors.New("the login request expired before it was approved; run 'jh auth login' again")
 
+	var lastErr error
 	for {
 		clock.Sleep(interval)
-		if !deadline.IsZero() && clock.Now().After(deadline) {
+		if clock.Now().After(deadline) {
+			if lastErr != nil {
+				return nil, fmt.Errorf("%w (last poll: %w)", expired, lastErr)
+			}
 			return nil, expired
 		}
 
-		tokenData := url.Values{}
-		tokenData.Set("client_id", "device")
-		tokenData.Set("device_code", dc.DeviceCode)
-		tokenData.Set("scope", "openid email profile offline_access")
-		tokenData.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
-
-		tokenResp, err := client.PostForm(tokenURL, tokenData)
+		token, err := postTokenForm(client, tokenURL, url.Values{
+			"client_id":   {"device"},
+			"device_code": {dc.DeviceCode},
+			"scope":       {"openid email profile offline_access"},
+			"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
+		})
+		if errors.Is(err, errTokenEndpointUnavailable) {
+			lastErr = err
+			if interval < maxDevicePollBackoff {
+				interval = min(2*interval, maxDevicePollBackoff)
+			}
+			continue
+		}
 		if err != nil {
-			return nil, fmt.Errorf("failed to request token: %w", err)
+			return nil, err
 		}
-		tokenBody, err := io.ReadAll(tokenResp.Body)
-		tokenResp.Body.Close()
-		if err != nil {
-			return nil, fmt.Errorf("failed to read token response: %w", err)
-		}
-
-		var token TokenResponse
-		if err := json.Unmarshal(tokenBody, &token); err != nil {
-			return nil, fmt.Errorf("failed to parse token response: %w", err)
-		}
+		lastErr = nil
 
 		switch token.Error {
 		case "":
 			if token.AccessToken == "" {
 				return nil, fmt.Errorf("no access token in token response")
 			}
-			return &token, nil
+			return token, nil
 		case "authorization_pending":
 		case "slow_down":
 			interval += 5 * time.Second
@@ -418,30 +454,46 @@ func pollDeviceToken(client *http.Client, tokenURL string, dc DeviceCodeResponse
 	}
 }
 
-func refreshToken(server string, refreshToken string) (*TokenResponse, error) {
-	authServer := authServerFor(server)
+// errTokenEndpointUnavailable wraps postTokenForm failures that say nothing
+// about the request itself: no answer, or a server error without a JSON body.
+var errTokenEndpointUnavailable = errors.New("token endpoint unavailable")
 
-	tokenURL := fmt.Sprintf("https://%s/dex/token", authServer)
-
-	data := url.Values{}
-	data.Set("client_id", "device")
-	data.Set("grant_type", "refresh_token")
-	data.Set("refresh_token", refreshToken)
-
-	resp, err := http.PostForm(tokenURL, data)
+// postTokenForm posts form to a dex token endpoint and decodes the reply. An
+// OAuth error answer is returned in TokenResponse.Error, not as an error.
+func postTokenForm(client *http.Client, tokenURL string, form url.Values) (*TokenResponse, error) {
+	resp, err := client.PostForm(tokenURL, form)
 	if err != nil {
-		return nil, fmt.Errorf("failed to refresh token: %w", err)
+		return nil, fmt.Errorf("%w: %w", errTokenEndpointUnavailable, err)
 	}
 	defer resp.Body.Close()
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read refresh token response: %w", err)
+		return nil, fmt.Errorf("%w: reading the response: %w", errTokenEndpointUnavailable, err)
 	}
-
 	var token TokenResponse
 	if err := json.Unmarshal(body, &token); err != nil {
-		return nil, fmt.Errorf("failed to parse refresh token response: %w", err)
+		if resp.StatusCode >= 500 {
+			return nil, fmt.Errorf("%w: HTTP %d", errTokenEndpointUnavailable, resp.StatusCode)
+		}
+		return nil, fmt.Errorf("failed to parse token response (HTTP %d): %w", resp.StatusCode, err)
+	}
+	return &token, nil
+}
+
+// refreshToken exchanges stored's refresh token at the dex host named by its
+// access token's issuer (falling back to discovery).
+func refreshToken(stored *StoredToken) (*TokenResponse, error) {
+	rememberAuthServerFromToken(stored.Server, stored.AccessToken)
+	tokenURL := fmt.Sprintf("https://%s/dex/token", authServerFor(stored.Server))
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	token, err := postTokenForm(client, tokenURL, url.Values{
+		"client_id":     {"device"},
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {stored.RefreshToken},
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	if token.Error != "" {
@@ -452,7 +504,7 @@ func refreshToken(server string, refreshToken string) (*TokenResponse, error) {
 		return nil, fmt.Errorf("no access token in refresh response")
 	}
 
-	return &token, nil
+	return token, nil
 }
 
 func ensureValidToken() (*StoredToken, error) {
@@ -476,8 +528,7 @@ func ensureValidToken() (*StoredToken, error) {
 		return nil, fmt.Errorf("access token expired and no refresh token available")
 	}
 
-	rememberAuthServerFromToken(storedToken.Server, storedToken.AccessToken)
-	refreshedToken, err := refreshToken(storedToken.Server, storedToken.RefreshToken)
+	refreshedToken, err := refreshToken(storedToken)
 	if err != nil {
 		return nil, fmt.Errorf("failed to refresh token: %w", err)
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -374,5 +375,121 @@ func TestLoginRedirectAuthServer(t *testing.T) {
 	}
 	if got := loginRedirectAuthServer(client, "127.0.0.1:1"); got != "" {
 		t.Errorf("unreachable server: got %q, want empty", got)
+	}
+}
+
+func TestPollDeviceTokenRetriesTransientFailures(t *testing.T) {
+	polls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		polls++
+		switch polls {
+		case 1, 2:
+			w.WriteHeader(http.StatusBadGateway)
+			w.Write([]byte(`<html>502 Bad Gateway</html>`))
+		default:
+			w.Write([]byte(`{"access_token":"a"}`))
+		}
+	}))
+	defer srv.Close()
+	clock := &fakeClock{now: time.Unix(0, 0)}
+	tok, err := pollDeviceToken(srv.Client(), srv.URL, DeviceCodeResponse{Interval: 5, ExpiresIn: 300}, clock)
+	if err != nil {
+		t.Fatalf("pollDeviceToken: %v", err)
+	}
+	if tok.AccessToken != "a" {
+		t.Errorf("token = %+v", tok)
+	}
+	want := []time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second}
+	if !reflect.DeepEqual(clock.slept, want) {
+		t.Errorf("slept %v, want %v (interval doubled after each gateway error)", clock.slept, want)
+	}
+}
+
+func TestPollDeviceTokenBacksOffUntilExpiry(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	tokenURL := srv.URL
+	srv.Close()
+	clock := &fakeClock{now: time.Unix(0, 0)}
+	_, err := pollDeviceToken(http.DefaultClient, tokenURL, DeviceCodeResponse{Interval: 5, ExpiresIn: 200}, clock)
+	if err == nil || !strings.Contains(err.Error(), "expired") || !errors.Is(err, errTokenEndpointUnavailable) {
+		t.Fatalf("err = %v, want expiry wrapping the last unavailable poll", err)
+	}
+	want := []time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second, 40 * time.Second, time.Minute, time.Minute, time.Minute}
+	if !reflect.DeepEqual(clock.slept, want) {
+		t.Errorf("slept %v, want %v (doubling, capped at a minute)", clock.slept, want)
+	}
+}
+
+func TestPollDeviceTokenNonJSONClientErrorIsFatal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	clock := &fakeClock{now: time.Unix(0, 0)}
+	_, err := pollDeviceToken(srv.Client(), srv.URL, DeviceCodeResponse{Interval: 5, ExpiresIn: 300}, clock)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 404") || len(clock.slept) != 1 {
+		t.Errorf("err = %v after %d polls, want an immediate HTTP 404 parse error", err, len(clock.slept))
+	}
+}
+
+func TestPollDeviceTokenDefaultsLifetime(t *testing.T) {
+	srv, forms := tokenEndpoint(t, `{"error":"authorization_pending"}`)
+	clock := &fakeClock{now: time.Unix(0, 0)}
+	_, err := pollDeviceToken(srv.Client(), srv.URL, DeviceCodeResponse{}, clock)
+	if err == nil || !strings.Contains(err.Error(), "expired") {
+		t.Fatalf("err = %v, want expiry", err)
+	}
+	if want := int(defaultDeviceCodeLifetime / defaultDevicePollInterval); len(*forms) != want {
+		t.Errorf("polled %d times, want %d (default lifetime / default interval)", len(*forms), want)
+	}
+}
+
+func TestRequestDeviceCode(t *testing.T) {
+	cases := map[string]struct {
+		status  int
+		body    string
+		wantErr string
+	}{
+		"ok":            {200, `{"device_code":"dc","user_code":"ABCD","verification_uri":"https://a/device","interval":5,"expires_in":300}`, ""},
+		"oauth error":   {400, `{"error":"invalid_client"}`, "invalid_client"},
+		"html error":    {502, `<html>bad gateway</html>`, "HTTP 502"},
+		"no code":       {200, `{}`, "no device_code"},
+		"not json (ok)": {200, `<html></html>`, "parse"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			var form url.Values
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				r.ParseForm()
+				form = r.PostForm
+				w.WriteHeader(c.status)
+				w.Write([]byte(c.body))
+			}))
+			defer srv.Close()
+			dc, err := requestDeviceCode(srv.Client(), srv.URL)
+			if c.wantErr == "" {
+				if err != nil || dc.DeviceCode != "dc" || dc.Interval != 5 || dc.ExpiresIn != 300 {
+					t.Fatalf("got %+v, %v", dc, err)
+				}
+				if form.Get("client_id") != "device" || form.Get("scope") != "openid email profile offline_access" {
+					t.Errorf("form = %v", form)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.wantErr) {
+				t.Errorf("err = %v, want it to mention %q", err, c.wantErr)
+			}
+		})
+	}
+}
+
+func TestDeviceCodePrompt(t *testing.T) {
+	full := deviceCodePrompt(DeviceCodeResponse{VerificationURI: "https://a/device", UserCode: "ABCD", VerificationURIComplete: "https://a/device?user_code=ABCD"})
+	if !strings.Contains(full, "https://a/device?user_code=ABCD") {
+		t.Errorf("prompt = %q", full)
+	}
+	bare := deviceCodePrompt(DeviceCodeResponse{VerificationURI: "https://a/device", UserCode: "ABCD"})
+	if !strings.Contains(bare, "https://a/device") || !strings.Contains(bare, "ABCD") {
+		t.Errorf("prompt without verification_uri_complete = %q", bare)
 	}
 }

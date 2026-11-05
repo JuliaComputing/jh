@@ -636,6 +636,8 @@ func TestLoginMatchesServer(t *testing.T) {
 		{"tanmaylocal.juliahub.dev", "nightly.juliahub.dev", false},
 		{"nightly.juliahub.dev", "auth.nightly.juliahub.dev", false},
 		{"", "nightly.juliahub.dev", false},
+		{"example.org.juliahub.com", "example.org", false},
+		{"example.org", "example.org.juliahub.com", true},
 	}
 	for _, c := range cases {
 		if got := loginMatchesServer(c.login, c.host); got != c.want {

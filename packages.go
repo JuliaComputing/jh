@@ -825,6 +825,9 @@ func searchPackages(params PackageSearchParams) error {
 	infos, total, err := fetchPackagesREST(params)
 	if err != nil {
 		restErr := err
+		if len(params.RegistryNames) > 0 && len(params.RegistryIDs) == 0 {
+			return fmt.Errorf("%w (the GraphQL fallback needs registry IDs, which could not be listed)", restErr)
+		}
 		fmt.Fprintf(os.Stderr, "warning: REST package search failed (%v); falling back to GraphQL\n", restErr)
 		if infos, total, err = fetchPackagesGraphQL(params); err != nil {
 			return fmt.Errorf("%v; GraphQL fallback: %w", restErr, err)
