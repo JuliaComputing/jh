@@ -393,3 +393,11 @@ func TestCountsSummary(t *testing.T) {
 		t.Errorf("countsSummary = %q", got)
 	}
 }
+
+func TestSearchPackagesKeepsRegistryFilterOnFallback(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	err := searchPackages(PackageSearchParams{Server: "127.0.0.1:1", Search: "x", Limit: 10, RegistryNames: []string{"Private"}})
+	if err == nil || !strings.Contains(err.Error(), "registry IDs") || strings.Contains(err.Error(), "GraphQL fallback:") {
+		t.Errorf("err = %v, want the REST error without an unfiltered GraphQL fallback", err)
+	}
+}
