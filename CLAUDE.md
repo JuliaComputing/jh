@@ -350,7 +350,7 @@ The CLI supports multiple JuliaHub environments:
 The application uses OAuth2 device flow:
 1. Request device code from `/dex/device/code`
 2. Present verification URL to user
-3. Poll `/dex/token` endpoint until authorization complete (`pollDeviceToken`, RFC 8628 §3.5: the server's `interval` (default 5 s) between polls, +5 s on `slow_down`, stop on `access_denied` / `expired_token` / after `expires_in`)
+3. Poll `/dex/token` endpoint until authorization complete (`pollDeviceToken`, RFC 8628 §3.5: the server's `interval` (default 5 s) between polls, +5 s on `slow_down`, stop on `access_denied` / `expired_token` / after `expires_in` (15 min when the server sends none); a poll with no answer or a 5xx without a JSON body doubles the interval, capped at 1 min, and is retried). `requestDeviceCode` checks the device-code answer; the approval prompt goes to stderr because `jh git-credential get` can run the flow and git reads its stdout
 4. Store tokens in configuration file with JWT claims extraction
 
 ## API Patterns
