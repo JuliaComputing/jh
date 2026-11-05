@@ -271,8 +271,7 @@ refresh them proactively.`,
 		fmt.Printf("Refreshing token for server: %s\n", storedToken.Server)
 
 		// Refresh the token
-		rememberAuthServerFromToken(storedToken.Server, storedToken.AccessToken)
-		refreshedToken, err := refreshToken(storedToken.Server, storedToken.RefreshToken)
+		refreshedToken, err := refreshToken(storedToken)
 		if err != nil {
 			fmt.Printf("Failed to refresh token: %v\n", err)
 			os.Exit(1)

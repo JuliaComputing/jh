@@ -378,25 +378,14 @@ func pollDeviceToken(client *http.Client, tokenURL string, dc DeviceCodeResponse
 			return nil, expired
 		}
 
-		tokenData := url.Values{}
-		tokenData.Set("client_id", "device")
-		tokenData.Set("device_code", dc.DeviceCode)
-		tokenData.Set("scope", "openid email profile offline_access")
-		tokenData.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
-
-		tokenResp, err := client.PostForm(tokenURL, tokenData)
+		token, err := postTokenForm(client, tokenURL, url.Values{
+			"client_id":   {"device"},
+			"device_code": {dc.DeviceCode},
+			"scope":       {"openid email profile offline_access"},
+			"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
+		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to request token: %w", err)
-		}
-		tokenBody, err := io.ReadAll(tokenResp.Body)
-		tokenResp.Body.Close()
-		if err != nil {
-			return nil, fmt.Errorf("failed to read token response: %w", err)
-		}
-
-		var token TokenResponse
-		if err := json.Unmarshal(tokenBody, &token); err != nil {
-			return nil, fmt.Errorf("failed to parse token response: %w", err)
+			return nil, err
 		}
 
 		switch token.Error {
@@ -404,7 +393,7 @@ func pollDeviceToken(client *http.Client, tokenURL string, dc DeviceCodeResponse
 			if token.AccessToken == "" {
 				return nil, fmt.Errorf("no access token in token response")
 			}
-			return &token, nil
+			return token, nil
 		case "authorization_pending":
 		case "slow_down":
 			interval += 5 * time.Second
@@ -418,30 +407,39 @@ func pollDeviceToken(client *http.Client, tokenURL string, dc DeviceCodeResponse
 	}
 }
 
-func refreshToken(server string, refreshToken string) (*TokenResponse, error) {
-	authServer := authServerFor(server)
-
-	tokenURL := fmt.Sprintf("https://%s/dex/token", authServer)
-
-	data := url.Values{}
-	data.Set("client_id", "device")
-	data.Set("grant_type", "refresh_token")
-	data.Set("refresh_token", refreshToken)
-
-	resp, err := http.PostForm(tokenURL, data)
+// postTokenForm posts form to a dex token endpoint and decodes the reply. An
+// OAuth error answer is returned in TokenResponse.Error, not as an error.
+func postTokenForm(client *http.Client, tokenURL string, form url.Values) (*TokenResponse, error) {
+	resp, err := client.PostForm(tokenURL, form)
 	if err != nil {
-		return nil, fmt.Errorf("failed to refresh token: %w", err)
+		return nil, fmt.Errorf("failed to request token: %w", err)
 	}
 	defer resp.Body.Close()
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read refresh token response: %w", err)
+		return nil, fmt.Errorf("failed to read token response: %w", err)
 	}
-
 	var token TokenResponse
 	if err := json.Unmarshal(body, &token); err != nil {
-		return nil, fmt.Errorf("failed to parse refresh token response: %w", err)
+		return nil, fmt.Errorf("failed to parse token response: %w", err)
+	}
+	return &token, nil
+}
+
+// refreshToken exchanges stored's refresh token at the dex host named by its
+// access token's issuer (falling back to discovery).
+func refreshToken(stored *StoredToken) (*TokenResponse, error) {
+	rememberAuthServerFromToken(stored.Server, stored.AccessToken)
+	tokenURL := fmt.Sprintf("https://%s/dex/token", authServerFor(stored.Server))
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	token, err := postTokenForm(client, tokenURL, url.Values{
+		"client_id":     {"device"},
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {stored.RefreshToken},
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	if token.Error != "" {
@@ -452,7 +450,7 @@ func refreshToken(server string, refreshToken string) (*TokenResponse, error) {
 		return nil, fmt.Errorf("no access token in refresh response")
 	}
 
-	return &token, nil
+	return token, nil
 }
 
 func ensureValidToken() (*StoredToken, error) {
@@ -476,8 +474,7 @@ func ensureValidToken() (*StoredToken, error) {
 		return nil, fmt.Errorf("access token expired and no refresh token available")
 	}
 
-	rememberAuthServerFromToken(storedToken.Server, storedToken.AccessToken)
-	refreshedToken, err := refreshToken(storedToken.Server, storedToken.RefreshToken)
+	refreshedToken, err := refreshToken(storedToken)
 	if err != nil {
 		return nil, fmt.Errorf("failed to refresh token: %w", err)
 	}
