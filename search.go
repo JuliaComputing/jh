@@ -468,14 +468,15 @@ func addLoginHint(err error, host string) {
 // --- which token to send ---
 
 // loginMatchesServer reports whether a stored login (its server= value)
-// belongs to host. A login stored as auth.<host> (the dex host of a
-// JuliaHub.com-style install) belongs to <host> too.
+// belongs to host, the host the request goes to. A login stored as
+// auth.<host> (the dex host of a JuliaHub.com-style install) belongs to
+// <host> too.
 func loginMatchesServer(loginServer, host string) bool {
 	if loginServer == "" || host == "" {
 		return false
 	}
-	login, h := normalizeServer(loginServer), normalizeServer(host)
-	return login == h || login == "auth."+h
+	login := normalizeServer(loginServer)
+	return login == host || login == "auth."+host
 }
 
 // chooseToken is the decision behind tokenForServer: the ID token of the
