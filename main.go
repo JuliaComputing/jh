@@ -1028,10 +1028,6 @@ Use --verbose flag for comprehensive output, or get a concise summary by default
 	Run:     runPackageSearch,
 }
 
-// runPackageSearch is the shared body of `jh package search` and
-// `jh search packages`: resolve the --registries filter, then search (REST
-// first, GraphQL fallback), printing a table or, with --json, only the JSON
-// document on stdout.
 // splitRegistryNames splits a comma-separated --registries value, dropping
 // empty entries.
 func splitRegistryNames(csv string) []string {
@@ -1044,6 +1040,10 @@ func splitRegistryNames(csv string) []string {
 	return names
 }
 
+// runPackageSearch is the shared body of `jh package search` and
+// `jh search packages`: resolve the --registries filter, then search (REST
+// first, GraphQL fallback), printing a table or, with --json, only the JSON
+// document on stdout.
 func runPackageSearch(cmd *cobra.Command, args []string) {
 	server, err := getServerFromFlagOrConfig(cmd)
 	if err != nil {
