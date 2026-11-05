@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -374,5 +375,71 @@ func TestLoginRedirectAuthServer(t *testing.T) {
 	}
 	if got := loginRedirectAuthServer(client, "127.0.0.1:1"); got != "" {
 		t.Errorf("unreachable server: got %q, want empty", got)
+	}
+}
+
+func TestPollDeviceTokenRetriesTransientFailures(t *testing.T) {
+	polls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		polls++
+		switch polls {
+		case 1, 2:
+			w.WriteHeader(http.StatusBadGateway)
+			w.Write([]byte(`<html>502 Bad Gateway</html>`))
+		default:
+			w.Write([]byte(`{"access_token":"a"}`))
+		}
+	}))
+	defer srv.Close()
+	clock := &fakeClock{now: time.Unix(0, 0)}
+	tok, err := pollDeviceToken(srv.Client(), srv.URL, DeviceCodeResponse{Interval: 5, ExpiresIn: 300}, clock)
+	if err != nil {
+		t.Fatalf("pollDeviceToken: %v", err)
+	}
+	if tok.AccessToken != "a" {
+		t.Errorf("token = %+v", tok)
+	}
+	want := []time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second}
+	if !reflect.DeepEqual(clock.slept, want) {
+		t.Errorf("slept %v, want %v (interval doubled after each gateway error)", clock.slept, want)
+	}
+}
+
+func TestPollDeviceTokenBacksOffUntilExpiry(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	tokenURL := srv.URL
+	srv.Close()
+	clock := &fakeClock{now: time.Unix(0, 0)}
+	_, err := pollDeviceToken(http.DefaultClient, tokenURL, DeviceCodeResponse{Interval: 5, ExpiresIn: 200}, clock)
+	if err == nil || !strings.Contains(err.Error(), "expired") || !errors.Is(err, errTokenEndpointUnavailable) {
+		t.Fatalf("err = %v, want expiry wrapping the last unavailable poll", err)
+	}
+	want := []time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second, 40 * time.Second, time.Minute, time.Minute, time.Minute}
+	if !reflect.DeepEqual(clock.slept, want) {
+		t.Errorf("slept %v, want %v (doubling, capped at a minute)", clock.slept, want)
+	}
+}
+
+func TestPollDeviceTokenNonJSONClientErrorIsFatal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	clock := &fakeClock{now: time.Unix(0, 0)}
+	_, err := pollDeviceToken(srv.Client(), srv.URL, DeviceCodeResponse{Interval: 5, ExpiresIn: 300}, clock)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 404") || len(clock.slept) != 1 {
+		t.Errorf("err = %v after %d polls, want an immediate HTTP 404 parse error", err, len(clock.slept))
+	}
+}
+
+func TestPollDeviceTokenDefaultsLifetime(t *testing.T) {
+	srv, forms := tokenEndpoint(t, `{"error":"authorization_pending"}`)
+	clock := &fakeClock{now: time.Unix(0, 0)}
+	_, err := pollDeviceToken(srv.Client(), srv.URL, DeviceCodeResponse{}, clock)
+	if err == nil || !strings.Contains(err.Error(), "expired") {
+		t.Fatalf("err = %v, want expiry", err)
+	}
+	if want := int(defaultDeviceCodeLifetime / defaultDevicePollInterval); len(*forms) != want {
+		t.Errorf("polled %d times, want %d (default lifetime / default interval)", len(*forms), want)
 	}
 }

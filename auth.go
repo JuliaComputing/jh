@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -357,24 +358,38 @@ func (realClock) Sleep(d time.Duration) { time.Sleep(d) }
 // defaultDevicePollInterval is RFC 8628's default when the server sends none.
 const defaultDevicePollInterval = 5 * time.Second
 
+// defaultDeviceCodeLifetime bounds polling when the server sends no
+// expires_in.
+const defaultDeviceCodeLifetime = 15 * time.Minute
+
+// maxDevicePollBackoff caps the interval doubling after transient failures.
+const maxDevicePollBackoff = time.Minute
+
 // pollDeviceToken polls the token endpoint until the user approves the device,
 // following RFC 8628 section 3.5: wait the server's interval between polls,
 // add 5 seconds to it on slow_down, keep going on authorization_pending, and
 // stop on access_denied, expired_token or once the device code has expired.
+// A poll that gets no answer, or a server error without an OAuth error body,
+// doubles the interval (up to maxDevicePollBackoff) and is retried.
 func pollDeviceToken(client *http.Client, tokenURL string, dc DeviceCodeResponse, clock pollClock) (*TokenResponse, error) {
 	interval := time.Duration(dc.Interval) * time.Second
 	if interval <= 0 {
 		interval = defaultDevicePollInterval
 	}
-	var deadline time.Time
-	if dc.ExpiresIn > 0 {
-		deadline = clock.Now().Add(time.Duration(dc.ExpiresIn) * time.Second)
+	lifetime := time.Duration(dc.ExpiresIn) * time.Second
+	if lifetime <= 0 {
+		lifetime = defaultDeviceCodeLifetime
 	}
-	expired := fmt.Errorf("the login request expired before it was approved; run 'jh auth login' again")
+	deadline := clock.Now().Add(lifetime)
+	expired := errors.New("the login request expired before it was approved; run 'jh auth login' again")
 
+	var lastErr error
 	for {
 		clock.Sleep(interval)
-		if !deadline.IsZero() && clock.Now().After(deadline) {
+		if clock.Now().After(deadline) {
+			if lastErr != nil {
+				return nil, fmt.Errorf("%w (last poll: %w)", expired, lastErr)
+			}
 			return nil, expired
 		}
 
@@ -384,9 +399,17 @@ func pollDeviceToken(client *http.Client, tokenURL string, dc DeviceCodeResponse
 			"scope":       {"openid email profile offline_access"},
 			"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
 		})
+		if errors.Is(err, errTokenEndpointUnavailable) {
+			lastErr = err
+			if interval < maxDevicePollBackoff {
+				interval = min(2*interval, maxDevicePollBackoff)
+			}
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
+		lastErr = nil
 
 		switch token.Error {
 		case "":
@@ -407,21 +430,28 @@ func pollDeviceToken(client *http.Client, tokenURL string, dc DeviceCodeResponse
 	}
 }
 
+// errTokenEndpointUnavailable wraps postTokenForm failures that say nothing
+// about the request itself: no answer, or a server error without a JSON body.
+var errTokenEndpointUnavailable = errors.New("token endpoint unavailable")
+
 // postTokenForm posts form to a dex token endpoint and decodes the reply. An
 // OAuth error answer is returned in TokenResponse.Error, not as an error.
 func postTokenForm(client *http.Client, tokenURL string, form url.Values) (*TokenResponse, error) {
 	resp, err := client.PostForm(tokenURL, form)
 	if err != nil {
-		return nil, fmt.Errorf("failed to request token: %w", err)
+		return nil, fmt.Errorf("%w: %w", errTokenEndpointUnavailable, err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read token response: %w", err)
+		return nil, fmt.Errorf("%w: reading the response: %w", errTokenEndpointUnavailable, err)
 	}
 	var token TokenResponse
 	if err := json.Unmarshal(body, &token); err != nil {
-		return nil, fmt.Errorf("failed to parse token response: %w", err)
+		if resp.StatusCode >= 500 {
+			return nil, fmt.Errorf("%w: HTTP %d", errTokenEndpointUnavailable, resp.StatusCode)
+		}
+		return nil, fmt.Errorf("failed to parse token response (HTTP %d): %w", resp.StatusCode, err)
 	}
 	return &token, nil
 }
