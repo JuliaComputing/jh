@@ -302,46 +302,70 @@ func dexDiscoverable(client *http.Client, baseURL string) bool {
 
 func deviceFlow(server string) (*TokenResponse, error) {
 	authServer := authServerFor(server)
-
-	deviceCodeURL := fmt.Sprintf("https://%s/dex/device/code", authServer)
-	tokenURL := fmt.Sprintf("https://%s/dex/token", authServer)
-
-	// Step 1: Request device code
-	data := url.Values{}
-	data.Set("client_id", "device")
-	data.Set("scope", "openid email profile offline_access")
-	data.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
-	resp, err := http.PostForm(deviceCodeURL, data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to request device code: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read device code response: %w", err)
-	}
-
-	var deviceResp DeviceCodeResponse
-	if err := json.Unmarshal(body, &deviceResp); err != nil {
-		return nil, fmt.Errorf("failed to parse device code response: %w", err)
-	}
-
-	// Step 2: Display user instructions
-	fmt.Printf("Go to %s and authorize this device\n", deviceResp.VerificationURIComplete)
-	fmt.Printf("Waiting for authorization...\n")
-
-	// Step 3: Poll for token
 	client := &http.Client{Timeout: 30 * time.Second}
-	token, err := pollDeviceToken(client, tokenURL, deviceResp, realClock{})
+
+	dc, err := requestDeviceCode(client, fmt.Sprintf("https://%s/dex/device/code", authServer))
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Fprintln(os.Stderr, deviceCodePrompt(dc))
+	fmt.Fprintln(os.Stderr, "Waiting for authorization...")
+
+	token, err := pollDeviceToken(client, fmt.Sprintf("https://%s/dex/token", authServer), dc, realClock{})
 	if err != nil {
 		return nil, err
 	}
 	if token.RefreshToken == "" {
-		fmt.Printf("Warning: No refresh token received. This may indicate an issue with the authentication provider.\n")
-		fmt.Printf("Consider trying the GitHub connector instead for better token management.\n")
+		fmt.Fprintln(os.Stderr, "Warning: No refresh token received. This may indicate an issue with the authentication provider.")
+		fmt.Fprintln(os.Stderr, "Consider trying the GitHub connector instead for better token management.")
 	}
 	return token, nil
+}
+
+// requestDeviceCode starts a device authorization (RFC 8628 section 3.1) and
+// returns the server's answer, which must carry a device code.
+func requestDeviceCode(client *http.Client, deviceCodeURL string) (DeviceCodeResponse, error) {
+	var dc DeviceCodeResponse
+	resp, err := client.PostForm(deviceCodeURL, url.Values{
+		"client_id":  {"device"},
+		"scope":      {"openid email profile offline_access"},
+		"grant_type": {"urn:ietf:params:oauth:grant-type:device_code"},
+	})
+	if err != nil {
+		return dc, fmt.Errorf("failed to request device code: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return dc, fmt.Errorf("failed to read device code response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		var oauthErr struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(body, &oauthErr) == nil && oauthErr.Error != "" {
+			return dc, fmt.Errorf("device code request failed: %s", oauthErr.Error)
+		}
+		return dc, fmt.Errorf("device code request failed: HTTP %d", resp.StatusCode)
+	}
+	if err := json.Unmarshal(body, &dc); err != nil {
+		return dc, fmt.Errorf("failed to parse device code response: %w", err)
+	}
+	if dc.DeviceCode == "" {
+		return dc, fmt.Errorf("device code response has no device_code")
+	}
+	return dc, nil
+}
+
+// deviceCodePrompt tells the user where to approve the device. The complete
+// URI embeds the user code; RFC 8628 makes it optional, so without it the
+// code is shown next to verification_uri.
+func deviceCodePrompt(dc DeviceCodeResponse) string {
+	if dc.VerificationURIComplete != "" {
+		return fmt.Sprintf("Go to %s and authorize this device", dc.VerificationURIComplete)
+	}
+	return fmt.Sprintf("Go to %s and enter the code %s to authorize this device", dc.VerificationURI, dc.UserCode)
 }
 
 // pollClock lets tests drive pollDeviceToken without waiting.

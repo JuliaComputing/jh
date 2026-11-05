@@ -443,3 +443,53 @@ func TestPollDeviceTokenDefaultsLifetime(t *testing.T) {
 		t.Errorf("polled %d times, want %d (default lifetime / default interval)", len(*forms), want)
 	}
 }
+
+func TestRequestDeviceCode(t *testing.T) {
+	cases := map[string]struct {
+		status  int
+		body    string
+		wantErr string
+	}{
+		"ok":            {200, `{"device_code":"dc","user_code":"ABCD","verification_uri":"https://a/device","interval":5,"expires_in":300}`, ""},
+		"oauth error":   {400, `{"error":"invalid_client"}`, "invalid_client"},
+		"html error":    {502, `<html>bad gateway</html>`, "HTTP 502"},
+		"no code":       {200, `{}`, "no device_code"},
+		"not json (ok)": {200, `<html></html>`, "parse"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			var form url.Values
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				r.ParseForm()
+				form = r.PostForm
+				w.WriteHeader(c.status)
+				w.Write([]byte(c.body))
+			}))
+			defer srv.Close()
+			dc, err := requestDeviceCode(srv.Client(), srv.URL)
+			if c.wantErr == "" {
+				if err != nil || dc.DeviceCode != "dc" || dc.Interval != 5 || dc.ExpiresIn != 300 {
+					t.Fatalf("got %+v, %v", dc, err)
+				}
+				if form.Get("client_id") != "device" || form.Get("scope") != "openid email profile offline_access" {
+					t.Errorf("form = %v", form)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.wantErr) {
+				t.Errorf("err = %v, want it to mention %q", err, c.wantErr)
+			}
+		})
+	}
+}
+
+func TestDeviceCodePrompt(t *testing.T) {
+	full := deviceCodePrompt(DeviceCodeResponse{VerificationURI: "https://a/device", UserCode: "ABCD", VerificationURIComplete: "https://a/device?user_code=ABCD"})
+	if !strings.Contains(full, "https://a/device?user_code=ABCD") {
+		t.Errorf("prompt = %q", full)
+	}
+	bare := deviceCodePrompt(DeviceCodeResponse{VerificationURI: "https://a/device", UserCode: "ABCD"})
+	if !strings.Contains(bare, "https://a/device") || !strings.Contains(bare, "ABCD") {
+		t.Errorf("prompt without verification_uri_complete = %q", bare)
+	}
+}
