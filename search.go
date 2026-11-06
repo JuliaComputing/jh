@@ -17,7 +17,8 @@ import (
 )
 
 // JuliaHub's search service is reachable at POST /search/v1/{code,sym,docs}
-// (JSON body, `{"results": [...], "truncated": bool}` on 200, a structured
+// (JSON body, `{"results": [...], "truncated": bool, "unavailable": [names]}`
+// on 200; `unavailable` is optional, and a structured
 // `{"code","message","details"}` on any failure). Older installs only have the
 // legacy routes POST /search/{code,sym,docs}, which answer 200 for every outcome
 // with `{"success": bool, "data": <results or error string>}`. The client calls
@@ -74,8 +75,9 @@ type docsSearchRequest struct {
 
 // searchResponse is the 200 body of the v1 endpoints.
 type searchResponse struct {
-	Results   json.RawMessage `json:"results"`
-	Truncated bool            `json:"truncated"`
+	Results     json.RawMessage `json:"results"`
+	Truncated   bool            `json:"truncated"`
+	Unavailable []string        `json:"unavailable,omitempty"`
 }
 
 // searchErrorResponse is the non-2xx body of the v1 endpoints.
@@ -271,21 +273,22 @@ func buildDocsSearchRequest(pattern string, packages, registries []string, thres
 // --- response decoding (pure) ---
 
 // decodeSearchResponse interprets a v1 reply. A 2xx body is
-// `{"results": [...], "truncated": bool}`; anything else is a *searchError,
-// decoded from the structured error body when possible and carrying the
-// trimmed raw body as Message otherwise.
-func decodeSearchResponse(status int, body []byte) (json.RawMessage, bool, error) {
+// `{"results": [...], "truncated": bool, "unavailable": [names]}` with the
+// optional `unavailable` field; anything else is a *searchError, decoded from
+// the structured error body when possible and carrying the trimmed raw body as
+// Message otherwise.
+func decodeSearchResponse(status int, body []byte) (searchResponse, error) {
 	if status < 200 || status > 299 {
-		return nil, false, decodeSearchError(status, body)
+		return searchResponse{}, decodeSearchError(status, body)
 	}
 	var resp searchResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, false, fmt.Errorf("failed to parse search response: %w", err)
+		return searchResponse{}, fmt.Errorf("failed to parse search response: %w", err)
 	}
 	if len(resp.Results) == 0 || string(resp.Results) == "null" {
 		resp.Results = json.RawMessage("[]")
 	}
-	return resp.Results, resp.Truncated, nil
+	return resp, nil
 }
 
 func decodeSearchError(status int, body []byte) *searchError {
@@ -335,10 +338,10 @@ func gatewayStatus(status int, msg string) string {
 // envelope (always delivered with HTTP 200). On success data is the results
 // array; on failure it is the error string, surfaced as a *searchError with
 // Code "legacy_error". The legacy API has no truncation flag.
-func decodeLegacySearchResponse(body []byte) (json.RawMessage, bool, error) {
+func decodeLegacySearchResponse(body []byte) (searchResponse, error) {
 	var env legacySearchResponse
 	if err := json.Unmarshal(body, &env); err != nil {
-		return nil, false, fmt.Errorf("failed to parse legacy search response: %w", err)
+		return searchResponse{}, fmt.Errorf("failed to parse legacy search response: %w", err)
 	}
 	if !env.Success {
 		msg := strings.TrimSpace(string(env.Data))
@@ -346,12 +349,12 @@ func decodeLegacySearchResponse(body []byte) (json.RawMessage, bool, error) {
 		if err := json.Unmarshal(env.Data, &s); err == nil {
 			msg = s
 		}
-		return nil, false, &searchError{Status: http.StatusOK, Code: "legacy_error", Message: msg}
+		return searchResponse{}, &searchError{Status: http.StatusOK, Code: "legacy_error", Message: msg}
 	}
 	if len(env.Data) == 0 || string(env.Data) == "null" {
 		env.Data = json.RawMessage("[]")
 	}
-	return env.Data, false, nil
+	return searchResponse{Results: env.Data}, nil
 }
 
 // --- HTTP ---
@@ -386,15 +389,15 @@ func doSearchRequest(client *http.Client, baseURL, path, token string, body []by
 // postSearchWithToken runs one search against baseURL: the v1 route first,
 // then the legacy route when v1 answers 404/405. It is the testable core of
 // postSearch (token and client are injected).
-func postSearchWithToken(client *http.Client, baseURL string, kind searchKind, token string, body any) (json.RawMessage, bool, error) {
+func postSearchWithToken(client *http.Client, baseURL string, kind searchKind, token string, body any) (searchResponse, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return nil, false, fmt.Errorf("failed to marshal request: %w", err)
+		return searchResponse{}, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
 	status, respBody, err := doSearchRequest(client, baseURL, searchV1Prefix+string(kind), token, payload)
 	if err != nil {
-		return nil, false, err
+		return searchResponse{}, err
 	}
 	if status != http.StatusNotFound && status != http.StatusMethodNotAllowed {
 		return decodeSearchResponse(status, respBody)
@@ -403,23 +406,23 @@ func postSearchWithToken(client *http.Client, baseURL string, kind searchKind, t
 	// API itself, not from a web server that has no such route: report it
 	// rather than re-running the search on the legacy route.
 	if se := decodeSearchError(status, respBody); se.Code != "" {
-		return nil, false, se
+		return searchResponse{}, se
 	}
 
 	// v1 is absent on this install: try the legacy envelope route.
 	legacyStatus, legacyBody, err := doSearchRequest(client, baseURL, searchLegacyPrefix+string(kind), token, payload)
 	if err != nil {
-		return nil, false, err
+		return searchResponse{}, err
 	}
 	if legacyStatus == http.StatusNotFound || legacyStatus == http.StatusMethodNotAllowed {
-		return nil, false, &searchError{
+		return searchResponse{}, &searchError{
 			Status:  legacyStatus,
 			Code:    "search_unavailable",
 			Message: fmt.Sprintf("search API not available on this server (HTTP %d from %s%s, HTTP %d from %s%s)", status, searchV1Prefix, kind, legacyStatus, searchLegacyPrefix, kind),
 		}
 	}
 	if legacyStatus < 200 || legacyStatus > 299 {
-		return nil, false, decodeSearchError(legacyStatus, legacyBody)
+		return searchResponse{}, decodeSearchError(legacyStatus, legacyBody)
 	}
 	return decodeLegacySearchResponse(legacyBody)
 }
@@ -432,7 +435,7 @@ func postSearchWithToken(client *http.Client, baseURL string, kind searchKind, t
 // reported with a hint to log in. Against a plain-http local service a missing
 // stored token is tolerated, and the token is never sent in cleartext to a
 // non-loopback host (searchTokenAllowed).
-func postSearch(baseURL string, kind searchKind, body any) (json.RawMessage, bool, error) {
+func postSearch(baseURL string, kind searchKind, body any) (searchResponse, error) {
 	var bearer string
 	if isLocalSearchBaseURL(baseURL) {
 		token, err := ensureValidToken()
@@ -449,11 +452,11 @@ func postSearch(baseURL string, kind searchKind, body any) (json.RawMessage, boo
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
-	results, truncated, err := postSearchWithToken(client, baseURL, kind, bearer, body)
+	resp, err := postSearchWithToken(client, baseURL, kind, bearer, body)
 	if bearer == "" {
 		addLoginHint(err, strings.TrimPrefix(baseURL, "https://"))
 	}
-	return results, truncated, err
+	return resp, err
 }
 
 // addLoginHint marks a 401/403 to an unauthenticated search with how to log
@@ -733,18 +736,15 @@ func renderDocsResults(w io.Writer, raw json.RawMessage) error {
 	return nil
 }
 
-// writeJSONResults writes the machine-readable document `{"results": <raw>,
-// "truncated": bool}`, 2-space indented, with a trailing newline. The results
-// array is the server's, re-indented but otherwise untouched.
-func writeJSONResults(w io.Writer, results json.RawMessage, truncated bool) error {
-	if len(results) == 0 {
-		results = json.RawMessage("[]")
+// writeJSONResults writes the machine-readable document with keys in order:
+// `results`, `truncated`, and `unavailable` when non-empty. It is 2-space
+// indented, with a trailing newline; the results array is the server's,
+// re-indented but otherwise untouched.
+func writeJSONResults(w io.Writer, resp searchResponse) error {
+	if len(resp.Results) == 0 || string(resp.Results) == "null" {
+		resp.Results = json.RawMessage("[]")
 	}
-	doc := struct {
-		Results   json.RawMessage `json:"results"`
-		Truncated bool            `json:"truncated"`
-	}{results, truncated}
-	out, err := json.MarshalIndent(doc, "", "  ")
+	out, err := json.MarshalIndent(resp, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to encode results: %w", err)
 	}
@@ -753,21 +753,49 @@ func writeJSONResults(w io.Writer, results json.RawMessage, truncated bool) erro
 }
 
 // runSearch executes one search and writes the output: with asJSON only the
-// JSON document goes to stdout; otherwise the table goes to stdout and a
-// truncation notice, if any, to stderr.
+// JSON document goes to stdout; otherwise the table goes to stdout and any
+// truncation or unavailable-registry notes go to stderr.
 func runSearch(baseURL string, kind searchKind, body any, asJSON bool, render func(io.Writer, json.RawMessage) error) error {
-	results, truncated, err := postSearch(baseURL, kind, body)
+	resp, err := postSearch(baseURL, kind, body)
 	if err != nil {
 		return err
 	}
 	if asJSON {
-		return writeJSONResults(os.Stdout, results, truncated)
+		return writeJSONResults(os.Stdout, resp)
 	}
-	if err := render(os.Stdout, results); err != nil {
+	if err := render(os.Stdout, resp.Results); err != nil {
 		return err
 	}
-	if truncated {
-		fmt.Fprintln(os.Stderr, "note: results truncated (search stopped early)")
-	}
+	writeSearchNotes(os.Stderr, resp)
 	return nil
+}
+
+func joinNames(names []string) string {
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
+		return names[0]
+	case 2:
+		return names[0] + " and " + names[1]
+	default:
+		return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
+	}
+}
+
+func unavailableNote(names []string) string {
+	service := "the service they are searched through could not be reached"
+	if len(names) == 1 {
+		service = "the service it is searched through could not be reached"
+	}
+	return fmt.Sprintf("note: results from %s are missing: %s; try again later", joinNames(names), service)
+}
+
+func writeSearchNotes(w io.Writer, resp searchResponse) {
+	if resp.Truncated {
+		fmt.Fprintln(w, "note: results truncated (search stopped early)")
+	}
+	if len(resp.Unavailable) > 0 {
+		fmt.Fprintln(w, unavailableNote(resp.Unavailable))
+	}
 }

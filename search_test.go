@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -106,25 +107,36 @@ func TestBuildDocsSearchRequest(t *testing.T) {
 // --- response decoding ---
 
 func TestDecodeSearchResponse(t *testing.T) {
-	results, truncated, err := decodeSearchResponse(200, []byte(`{"results":[{"file":"a.jl"}],"truncated":true}`))
+	resp, err := decodeSearchResponse(200, []byte(`{"results":[{"file":"a.jl"}],"truncated":true,"unavailable":["General","JuliaSimRegistry"]}`))
 	if err != nil {
 		t.Fatalf("200: unexpected error: %v", err)
 	}
-	if !truncated {
+	if !resp.Truncated {
 		t.Error("200: truncated should be true")
 	}
-	if string(results) != `[{"file":"a.jl"}]` {
-		t.Errorf("200: results = %s", results)
+	if string(resp.Results) != `[{"file":"a.jl"}]` {
+		t.Errorf("200: results = %s", resp.Results)
+	}
+	if !reflect.DeepEqual(resp.Unavailable, []string{"General", "JuliaSimRegistry"}) {
+		t.Errorf("200: unavailable = %v", resp.Unavailable)
+	}
+
+	resp, err = decodeSearchResponse(200, []byte(`{"results":[],"truncated":false}`))
+	if err != nil {
+		t.Fatalf("200 without unavailable: unexpected error: %v", err)
+	}
+	if resp.Unavailable != nil {
+		t.Errorf("200 without unavailable: got %v, want nil", resp.Unavailable)
 	}
 
 	// Missing/null results normalize to an empty array.
-	results, _, err = decodeSearchResponse(200, []byte(`{"results":null,"truncated":false}`))
-	if err != nil || string(results) != "[]" {
-		t.Errorf("200 null results: got %s, %v; want [], nil", results, err)
+	resp, err = decodeSearchResponse(200, []byte(`{"results":null,"truncated":false}`))
+	if err != nil || string(resp.Results) != "[]" {
+		t.Errorf("200 null results: got %s, %v; want [], nil", resp.Results, err)
 	}
 
 	// Structured error body.
-	_, _, err = decodeSearchResponse(400, []byte(`{"code":"invalid_pattern","message":"unterminated character class","details":{"pattern":"["}}`))
+	_, err = decodeSearchResponse(400, []byte(`{"code":"invalid_pattern","message":"unterminated character class","details":{"pattern":"["}}`))
 	var se *searchError
 	if !errors.As(err, &se) {
 		t.Fatalf("400: expected *searchError, got %T (%v)", err, err)
@@ -140,7 +152,7 @@ func TestDecodeSearchResponse(t *testing.T) {
 	}
 
 	// Undecodable body: HTTP <status>: <trimmed body>.
-	_, _, err = decodeSearchResponse(500, []byte("  upstream exploded\n"))
+	_, err = decodeSearchResponse(500, []byte("  upstream exploded\n"))
 	if !errors.As(err, &se) {
 		t.Fatalf("500: expected *searchError, got %T", err)
 	}
@@ -149,24 +161,27 @@ func TestDecodeSearchResponse(t *testing.T) {
 	}
 
 	// 2xx with a garbage body is a parse error, not a searchError.
-	if _, _, err := decodeSearchResponse(200, []byte("not json")); err == nil || errors.As(err, &se) {
+	if _, err := decodeSearchResponse(200, []byte("not json")); err == nil || errors.As(err, &se) {
 		t.Errorf("200 garbage: got %v, want a plain parse error", err)
 	}
 }
 
 func TestDecodeLegacySearchResponse(t *testing.T) {
-	results, truncated, err := decodeLegacySearchResponse([]byte(`{"success":true,"data":[{"file":"b.jl","line":3}]}`))
+	resp, err := decodeLegacySearchResponse([]byte(`{"success":true,"data":[{"file":"b.jl","line":3}]}`))
 	if err != nil {
 		t.Fatalf("success: unexpected error: %v", err)
 	}
-	if truncated {
+	if resp.Truncated {
 		t.Error("legacy never reports truncation")
 	}
-	if string(results) != `[{"file":"b.jl","line":3}]` {
-		t.Errorf("success: results = %s", results)
+	if string(resp.Results) != `[{"file":"b.jl","line":3}]` {
+		t.Errorf("success: results = %s", resp.Results)
+	}
+	if resp.Unavailable != nil {
+		t.Errorf("legacy unavailable = %v, want nil", resp.Unavailable)
 	}
 
-	_, _, err = decodeLegacySearchResponse([]byte(`{"success":false,"data":"invalid pattern: missing ]"}`))
+	_, err = decodeLegacySearchResponse([]byte(`{"success":false,"data":"invalid pattern: missing ]"}`))
 	var se *searchError
 	if !errors.As(err, &se) {
 		t.Fatalf("failure: expected *searchError, got %T (%v)", err, err)
@@ -178,13 +193,13 @@ func TestDecodeLegacySearchResponse(t *testing.T) {
 		t.Errorf("failure: Error() = %q", se.Error())
 	}
 
-	if _, _, err := decodeLegacySearchResponse([]byte("<html>")); err == nil {
+	if _, err := decodeLegacySearchResponse([]byte("<html>")); err == nil {
 		t.Error("expected parse error for non-JSON legacy body")
 	}
 }
 
 func TestSearchErrorHint(t *testing.T) {
-	_, _, err := decodeSearchResponse(400, []byte(`{"code":"invalid_registry","message":"unknown registry \"Genral\"","details":{"known":["General","JuliaSimRegistry"]}}`))
+	_, err := decodeSearchResponse(400, []byte(`{"code":"invalid_registry","message":"unknown registry \"Genral\"","details":{"known":["General","JuliaSimRegistry"]}}`))
 	var se *searchError
 	if !errors.As(err, &se) {
 		t.Fatalf("expected *searchError, got %T", err)
@@ -288,7 +303,7 @@ func TestRenderDocsResults(t *testing.T) {
 
 func TestWriteJSONResults(t *testing.T) {
 	var buf bytes.Buffer
-	if err := writeJSONResults(&buf, json.RawMessage(`[{"file":"a.jl","line":1}]`), true); err != nil {
+	if err := writeJSONResults(&buf, searchResponse{Results: json.RawMessage(`[{"file":"a.jl","line":1}]`), Truncated: true}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	want := "{\n  \"results\": [\n    {\n      \"file\": \"a.jl\",\n      \"line\": 1\n    }\n  ],\n  \"truncated\": true\n}\n"
@@ -297,11 +312,103 @@ func TestWriteJSONResults(t *testing.T) {
 	}
 
 	buf.Reset()
-	if err := writeJSONResults(&buf, nil, false); err != nil {
+	if err := writeJSONResults(&buf, searchResponse{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if buf.String() != "{\n  \"results\": [],\n  \"truncated\": false\n}\n" {
 		t.Errorf("empty writeJSONResults output:\n%s", buf.String())
+	}
+
+	buf.Reset()
+	if err := writeJSONResults(&buf, searchResponse{
+		Results:     json.RawMessage("[]"),
+		Truncated:   true,
+		Unavailable: []string{"General", "JuliaSimRegistry"},
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want = "{\n  \"results\": [],\n  \"truncated\": true,\n  \"unavailable\": [\n    \"General\",\n    \"JuliaSimRegistry\"\n  ]\n}\n"
+	if buf.String() != want {
+		t.Errorf("writeJSONResults with unavailable:\n%s\nwant:\n%s", buf.String(), want)
+	}
+
+	buf.Reset()
+	if err := writeJSONResults(&buf, searchResponse{Results: json.RawMessage("[]"), Unavailable: []string{}}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(buf.String(), `"unavailable"`) {
+		t.Errorf("empty unavailable key should be omitted:\n%s", buf.String())
+	}
+}
+
+func TestJoinNames(t *testing.T) {
+	cases := []struct {
+		names []string
+		want  string
+	}{
+		{[]string{"A"}, "A"},
+		{[]string{"A", "B"}, "A and B"},
+		{[]string{"A", "B", "C"}, "A, B and C"},
+	}
+	for _, tc := range cases {
+		if got := joinNames(tc.names); got != tc.want {
+			t.Errorf("joinNames(%v) = %q, want %q", tc.names, got, tc.want)
+		}
+	}
+}
+
+func TestUnavailableNote(t *testing.T) {
+	cases := []struct {
+		names []string
+		want  string
+	}{
+		{
+			names: []string{"General"},
+			want:  "note: results from General are missing: the service it is searched through could not be reached; try again later",
+		},
+		{
+			names: []string{"A", "B", "C"},
+			want:  "note: results from A, B and C are missing: the service they are searched through could not be reached; try again later",
+		},
+	}
+	for _, tc := range cases {
+		if got := unavailableNote(tc.names); got != tc.want {
+			t.Errorf("unavailableNote(%v) = %q, want %q", tc.names, got, tc.want)
+		}
+	}
+}
+
+func TestWriteSearchNotes(t *testing.T) {
+	cases := []struct {
+		name string
+		resp searchResponse
+		want string
+	}{
+		{name: "neither"},
+		{
+			name: "truncated only",
+			resp: searchResponse{Truncated: true},
+			want: "note: results truncated (search stopped early)\n",
+		},
+		{
+			name: "unavailable only",
+			resp: searchResponse{Unavailable: []string{"General"}},
+			want: "note: results from General are missing: the service it is searched through could not be reached; try again later\n",
+		},
+		{
+			name: "both",
+			resp: searchResponse{Truncated: true, Unavailable: []string{"General"}},
+			want: "note: results truncated (search stopped early)\nnote: results from General are missing: the service it is searched through could not be reached; try again later\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			writeSearchNotes(&buf, tc.resp)
+			if got := buf.String(); got != tc.want {
+				t.Errorf("writeSearchNotes() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -449,18 +556,21 @@ func TestPostSearchFallsBackToLegacy(t *testing.T) {
 	})
 
 	body, _ := buildCodeSearchRequest("x", nil, nil, "", false, 0)
-	results, truncated, err := postSearchWithToken(srv.Client(), srv.URL, searchCode, "tok", body)
+	resp, err := postSearchWithToken(srv.Client(), srv.URL, searchCode, "tok", body)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if v1Hits != 1 || legacyHits != 1 {
 		t.Errorf("hits v1=%d legacy=%d, want 1/1", v1Hits, legacyHits)
 	}
-	if truncated {
+	if resp.Truncated {
 		t.Error("legacy result must not be truncated")
 	}
-	if string(results) != `[{"file":"legacy.jl","line":1,"text":"x"}]` {
-		t.Errorf("results = %s", results)
+	if resp.Unavailable != nil {
+		t.Errorf("legacy unavailable = %v, want nil", resp.Unavailable)
+	}
+	if string(resp.Results) != `[{"file":"legacy.jl","line":1,"text":"x"}]` {
+		t.Errorf("results = %s", resp.Results)
 	}
 	if legacyAuth != "Bearer tok" {
 		t.Errorf("legacy Authorization = %q", legacyAuth)
@@ -488,7 +598,7 @@ func TestPostSearchV1StructuredNotFoundIsNotAFallback(t *testing.T) {
 	})
 
 	body, _ := buildCodeSearchRequest("x", nil, nil, "", false, 0)
-	_, _, err := postSearchWithToken(srv.Client(), srv.URL, searchCode, "tok", body)
+	_, err := postSearchWithToken(srv.Client(), srv.URL, searchCode, "tok", body)
 	var se *searchError
 	if !errors.As(err, &se) || se.Code != "package_not_found" || se.Status != http.StatusNotFound {
 		t.Fatalf("err = %v, want the structured 404 error", err)
@@ -527,7 +637,7 @@ func TestPostSearchLegacyFailureEnvelope(t *testing.T) {
 			w.Write([]byte(`{"success":false,"data":"invalid pattern"}`))
 		},
 	})
-	_, _, err := postSearchWithToken(srv.Client(), srv.URL, searchSym, "tok", map[string]string{"pattern": "["})
+	_, err := postSearchWithToken(srv.Client(), srv.URL, searchSym, "tok", map[string]string{"pattern": "["})
 	var se *searchError
 	if !errors.As(err, &se) || se.Code != "legacy_error" || se.Message != "invalid pattern" {
 		t.Errorf("got %v (%T), want legacy_error: invalid pattern", err, err)
@@ -552,7 +662,7 @@ func TestPostSearchV1StructuredError(t *testing.T) {
 			legacyHit = true
 		},
 	})
-	_, _, err := postSearchWithToken(srv.Client(), srv.URL, searchCode, "tok", map[string]string{"pattern": "["})
+	_, err := postSearchWithToken(srv.Client(), srv.URL, searchCode, "tok", map[string]string{"pattern": "["})
 	var se *searchError
 	if !errors.As(err, &se) || se.Status != 400 || se.Code != "invalid_pattern" {
 		t.Errorf("got %v, want invalid_pattern searchError", err)
@@ -565,21 +675,24 @@ func TestPostSearchV1StructuredError(t *testing.T) {
 func TestPostSearchV1Success(t *testing.T) {
 	srv := searchTestServer(t, map[string]http.HandlerFunc{
 		"/search/v1/docs": func(w http.ResponseWriter, r *http.Request) {
-			w.Write([]byte(`{"results":[{"packagename":"DataFrames"}],"truncated":true}`))
+			w.Write([]byte(`{"results":[{"packagename":"DataFrames"}],"truncated":true,"unavailable":["General"]}`))
 		},
 	})
-	results, truncated, err := postSearchWithToken(srv.Client(), srv.URL, searchDocs, "", map[string]string{"pattern": "q"})
+	resp, err := postSearchWithToken(srv.Client(), srv.URL, searchDocs, "", map[string]string{"pattern": "q"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !truncated || string(results) != `[{"packagename":"DataFrames"}]` {
-		t.Errorf("results=%s truncated=%v", results, truncated)
+	if !resp.Truncated || string(resp.Results) != `[{"packagename":"DataFrames"}]` {
+		t.Errorf("results=%s truncated=%v", resp.Results, resp.Truncated)
+	}
+	if !reflect.DeepEqual(resp.Unavailable, []string{"General"}) {
+		t.Errorf("unavailable=%v, want [General]", resp.Unavailable)
 	}
 }
 
 func TestPostSearchUnavailableOnBothRoutes(t *testing.T) {
 	srv := searchTestServer(t, map[string]http.HandlerFunc{}) // everything 404s
-	_, _, err := postSearchWithToken(srv.Client(), srv.URL, searchCode, "tok", map[string]string{"pattern": "x"})
+	_, err := postSearchWithToken(srv.Client(), srv.URL, searchCode, "tok", map[string]string{"pattern": "x"})
 	var se *searchError
 	if !errors.As(err, &se) || se.Code != "search_unavailable" {
 		t.Errorf("got %v, want search_unavailable", err)

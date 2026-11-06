@@ -316,7 +316,7 @@ Search the Julia packages indexed on JuliaHub. Every subcommand takes `--json`, 
   - `--path <regex>` - Only search files whose path matches
   - `--ignore-case` - Case-insensitive match
   - `--limit <n>` - Maximum number of results (default: the server's)
-  - `--json` - `{"results": [...], "truncated": bool}`
+  - `--json` - `{"results": [...], "truncated": bool, "unavailable": [...]}`; `unavailable` (omitted when every registry answered) lists registries whose results are missing because the service they are searched through could not be reached
 - `jh search symbols <name>` - Find where a function, type, macro or module is defined and used
   - `--type <kind>` - `function`, `type`, `macro` or `module` (repeatable)
   - `--usage <kind>` - `define` or `use` (repeatable)
@@ -327,7 +327,7 @@ Search the Julia packages indexed on JuliaHub. Every subcommand takes `--json`, 
   - `--package`, `--registry`, `--limit`, `--json` as for `code`
 - `jh search packages [search-term]` - The package catalogue search (same as `jh package search`), with `--registries`, `--limit`, `--offset`, `--verbose` and `--json` (`{"results": [...], "total": N}`)
 - `--server` / `-s` accepts a JuliaHub host as elsewhere, or a full URL such as `--server http://localhost:4446` to point `code`/`symbols`/`docs` at a locally running search service (no stored login required; the request is sent unauthenticated with a note on stderr, and `--package` must then be given as a UUID). The stored token is only ever sent over `https://`, or over `http://` to a loopback host; a plain-http URL on any other host gets an unauthenticated request and a note
-- Older JuliaHub installs expose only the legacy search routes; the CLI detects this and falls back to them automatically. In human-readable mode a `note: results truncated (search stopped early)` line on stderr means the server stopped before exhausting the index
+- Older JuliaHub installs expose only the legacy search routes; the CLI detects this and falls back to them automatically. In human-readable mode `note: results truncated (search stopped early)` on stderr means the server stopped before exhausting the index; `note: results from <registries> are missing: ...; try again later` means results from those registries are missing because the service they are searched through could not be reached
 
 ### Update (`jh update`)
 
