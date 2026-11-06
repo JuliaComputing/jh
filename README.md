@@ -158,9 +158,52 @@ go build -o jh .
 
 ### Jobs (`jh job`)
 
+- `jh job shell [flags] [-- command...]` - Start an `agent-shell` product job, wait for its app, and attach (default `julia`). Stops the job on exit or Ctrl+C during startup; `--keep` leaves it running and prints reattachment instructions. Requires the product/image configuration to exist on the server.
+- `jh job exec <job-name> [flags] -- <command...>` - Run a command in an agentshell job (default command: `julia`). Automatically uses a PTY when stdin/stdout are terminals; `-t/--tty` forces a PTY and `-T/--no-tty` preserves separate stdout/stderr. Supports `--cwd`, repeatable `--env K=V`, and `--timeout 30s`. Arguments are shell-quoted; use `-- sh -c '...'` for shell syntax. Exits with the remote command's exit code.
+- `jh job commands <job-name> [--json]` - List recent agentshell commands, newest first.
+- `jh job output <job-name> <command-id> [--follow]` - Read persisted combined output; `--follow` long-polls until completion.
 - `jh job usage` - Show your active jobs, and the vCPUs and GPUs allocated to them, against your compute limits (`--json` for scripts; needs a JuliaHub version that reports compute usage)
 - `jh job result list <job-name>` - List a job's result files (`--all` for every job file, `--json` for scripts)
 - `jh job result download <job-name> [file-name]` - Download one or all result files (`-o` destination, `--force` to overwrite, `--type` for other job file types)
+
+Agentshell commands resolve a running job's full `proxy_link` URL and authenticate
+with the JuliaHub ID token. They require an agentshell job image, not a regular
+batch image. All three accept `--url` to override discovery; an HTTP localhost
+URL (also 127.0.0.1 / ::1) skips login and does not send a bearer token:
+
+```bash
+jh job exec jr-example -- julia
+jh job exec jr-example -T --env MODE=test --timeout 30s -- sh -c 'echo out; echo err >&2'
+jh job exec --url http://localhost:8080 x -T -- sh -c 'exit 4'
+```
+
+In PTY mode the local terminal is restored on return, and terminal resizes are
+forwarded to the job. Ctrl+C is sent as terminal input; disconnecting does not
+terminate the remote command. Remote signal exits map to conventional local
+statuses (INT=130, TERM=143, KILL=137). Non-local HTTP URLs are refused to avoid
+sending credentials over plaintext. A local server must disable owner-header
+checks for this direct-connection development mode (approuter supplies that
+header in production).
+
+`job shell` uses the app-default submission endpoint unless job overrides are
+provided. `--product` selects another product; `--project-id` selects a project.
+Overrides `--node`, `--image-name`, `--image-tag`, `--alias`, `--env K=V`,
+`--timeout`, or `--port` use multipart submission. **Jobmanagement requires an
+explicit `--node` with any of these overrides**; otherwise node/time defaults
+come from the user's app settings. Multipart jobs default to a 2-hour lifetime;
+`--timeout 90m` sets a job lifetime rounded up to 2 hours, not a command timeout.
+`--env` sets the job environment. `--wait-timeout` bounds startup (default 10m).
+`-t`, `-T`, and `--cwd` apply to the attached command just as with `job exec`.
+
+```bash
+jh job shell
+jh job shell --keep -- julia
+jh job shell --node <node-name> --timeout 1h --env MODE=test -- sh -c 'echo "$MODE"'
+```
+
+Cleanup uses a separate bounded request even if startup was cancelled. If cleanup
+fails, the CLI warns with the job name so it can be stopped manually. If submission
+is interrupted before a job name is received, check JuliaHub for a submitted job.
 
 ### Package Management (`jh package`)
 
