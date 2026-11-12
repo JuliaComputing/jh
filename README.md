@@ -145,6 +145,7 @@ go build -o jh .
 
 - `jh auth login` - Login to JuliaHub using OAuth2 device flow
   - `jh auth login -s yourinstall` to login to yourinstall.juliahub.com
+  - `jh auth login --with-token < token.toml` - Store a long-term token (the JWT, or the `token.toml` an administrator downloads from Admin → Token) instead of logging in interactively; it is used as is and never refreshed
 - `jh auth refresh` - Refresh authentication token
 - `jh auth status` - Show authentication status
 - `jh auth env` - Print environment variables for authentication
@@ -345,6 +346,25 @@ Configuration is stored in `~/.juliahub` with 0600 permissions. The file contain
 Default server: `juliahub.com`
 
 Currently, you will only be logged in one server at a time.
+
+### Non-interactive use (CI)
+
+In CI, give `jh` a JuliaHub **long-term token** through the environment instead of logging in. An administrator creates one under Admin → Token for the account the job should act as, and downloads it as `token.toml`.
+
+| Variable | Meaning |
+| --- | --- |
+| `JULIAHUB_TOKEN` | The token: the `id_token` value from `token.toml`, or the whole file's content |
+| `JULIAHUB_TOKEN_FILE` | Path to `token.toml` (or to a file holding the token), e.g. a GitLab "file" CI variable. `JULIAHUB_TOKEN` wins if both are set |
+| `JULIAHUB_SERVER` | The server the token is for, e.g. `juliahub.example.com` (`JULIAHUB_HOST` also works; `JULIAHUB_SERVER` wins). Default: the token's issuer, else `JULIA_PKG_SERVER` (unless it is `pkg.julialang.org`) |
+
+A token in the environment takes precedence over `~/.juliahub`, which is then neither read nor written, and works with every command (`jh run` writes the Julia `auth.toml` from it). `jh auth status` shows where the token came from. Long-term tokens are not refreshed: when one expires, `jh` says so and a new token is needed.
+
+```bash
+export JULIAHUB_SERVER=juliahub.example.com
+export JULIAHUB_TOKEN="$(cat token.toml)"
+jh auth status
+jh registry list
+```
 
 ## Examples
 

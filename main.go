@@ -26,7 +26,22 @@ func getConfigFilePath() string {
 	return filepath.Join(homeDir, ".juliahub")
 }
 
+// readConfigFile returns the server jh talks to by default: the server of a
+// token set in the environment (see envtoken.go), else the one stored in
+// ~/.juliahub, else juliahub.com.
 func readConfigFile() (string, error) {
+	if t, ok, err := storedTokenFromEnv(); ok {
+		if err != nil {
+			return "", err
+		}
+		return t.Server, nil
+	}
+	return readConfigFileServer()
+}
+
+// readConfigFileServer returns the server stored in ~/.juliahub, or
+// juliahub.com.
+func readConfigFileServer() (string, error) {
 	configPath := getConfigFilePath()
 	file, err := os.Open(configPath)
 	if err != nil {
@@ -195,7 +210,28 @@ var authCmd = &cobra.Command{
 	Long: `Manage authentication with JuliaHub.
 
 Authentication uses OAuth2 device flow to securely authenticate with JuliaHub.
-Tokens are stored in ~/.juliahub and automatically refreshed when needed.`,
+Tokens are stored in ~/.juliahub and automatically refreshed when needed.
+
+NON-INTERACTIVE USE (CI)
+
+For CI jobs and other unattended use, give jh a long-term token, created by a
+JuliaHub administrator under Admin → Token (downloaded as token.toml). The
+token acts as the JuliaHub user whose email it was created for. Either:
+
+  JULIAHUB_TOKEN        the token: the id_token value from token.toml, or the
+                        whole token.toml content
+  JULIAHUB_TOKEN_FILE   path to token.toml (or to a file holding the token),
+                        e.g. a CI "file" variable
+
+and optionally the server it is for (by default, the token's issuer, else
+JULIA_PKG_SERVER):
+
+  JULIAHUB_SERVER       e.g. juliahub.example.com (JULIAHUB_HOST also works)
+
+A token in the environment takes precedence over ~/.juliahub, which is then
+neither read nor written. Alternatively, store a long-term token in
+~/.juliahub with 'jh auth login --with-token'. Long-term tokens are not
+refreshed: when one expires, jh reports it and a new one is needed.`,
 }
 
 var authLoginCmd = &cobra.Command{
@@ -208,10 +244,24 @@ This command will:
 2. Display a verification URL for you to visit
 3. Wait for you to authorize the device in your browser
 4. Store the authentication tokens locally`,
-	Example: "  jh auth login\n  jh auth login -s custom-server.com",
+	Example: "  jh auth login\n  jh auth login -s custom-server.com\n  jh auth login --with-token < token.toml",
 	Run: func(cmd *cobra.Command, args []string) {
 		server, _ := cmd.Flags().GetString("server")
 		serverFlagUsed := cmd.Flags().Changed("server")
+
+		if withToken, _ := cmd.Flags().GetBool("with-token"); withToken {
+			if !serverFlagUsed {
+				server = ""
+			}
+			if err := loginWithToken(os.Stdin, server); err != nil {
+				fmt.Fprintf(os.Stderr, "Login failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+		if _, source, _ := tokenFromEnv(); source != "" {
+			fmt.Fprintf(os.Stderr, "Note: a token is set in %s; it takes precedence over this login until it is unset.\n", source)
+		}
 
 		if !serverFlagUsed {
 			// Read from config file if no -s flag was provided
@@ -263,8 +313,12 @@ refresh them proactively.`,
 			os.Exit(1)
 		}
 
+		if storedToken.Source != "" {
+			fmt.Printf("The token from %s is a long-term token and cannot be refreshed\n", storedToken.Source)
+			os.Exit(1)
+		}
 		if storedToken.RefreshToken == "" {
-			fmt.Println("No refresh token found in configuration")
+			fmt.Println("No refresh token found in configuration (a token stored with 'jh auth login --with-token' cannot be refreshed)")
 			os.Exit(1)
 		}
 
@@ -2836,6 +2890,7 @@ func init() {
 	searchPackagesCmd.Flags().Bool("verbose", false, "Show detailed package information")
 	searchPackagesCmd.Flags().Bool("json", false, "Print only a JSON document ({\"results\": [...], \"total\": N}) on stdout")
 
+	authLoginCmd.Flags().Bool("with-token", false, "Read a long-term token (the JWT or a token.toml) from stdin and store it instead of logging in interactively")
 	authCmd.AddCommand(authLoginCmd, authRefreshCmd, authStatusCmd, authEnvCmd)
 	jobResultCmd.AddCommand(jobResultListCmd, jobResultDownloadCmd)
 	jobCmd.AddCommand(jobListCmd, jobStartCmd, jobUsageCmd, jobResultCmd)

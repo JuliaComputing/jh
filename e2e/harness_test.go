@@ -12,7 +12,10 @@
 // ~/.juliahub, exactly as after a normal interactive login. For CI, this harness
 // materializes a throwaway ~/.juliahub inside an isolated HOME from tokens passed
 // via env vars, so the CLI's auth path is exercised unchanged and no real login
-// on the runner is touched.
+// on the runner is touched. jh also reads JULIAHUB_TOKEN & co. itself (a
+// long-term token overriding ~/.juliahub), so runJH strips them from the
+// subprocess environment whenever the isolated config is in use;
+// TestAuthTokenFromEnv tests that path on purpose.
 //
 // Run locally against your existing login (uses your real ~/.juliahub):
 //
@@ -293,6 +296,42 @@ func (r result) combined() string { return r.stdout + r.stderr }
 // callers assert on the result.
 func runJH(t *testing.T, args ...string) result {
 	t.Helper()
+	env := os.Environ()
+	if testHome != "" {
+		// The credential env vars were turned into the isolated ~/.juliahub;
+		// jh itself also reads JULIAHUB_TOKEN & co. (as a long-term token that
+		// overrides ~/.juliahub), so keep them from reaching it.
+		env = append(withoutTokenEnv(env), "HOME="+testHome)
+	}
+	return runJHEnv(t, env, args...)
+}
+
+// tokenEnvVars are the variables through which jh takes a token from the
+// environment instead of ~/.juliahub.
+var tokenEnvVars = []string{"JULIAHUB_TOKEN", "JULIAHUB_TOKEN_FILE", "JULIAHUB_SERVER", "JULIAHUB_HOST", "JULIA_PKG_SERVER"}
+
+// withoutTokenEnv returns env without tokenEnvVars.
+func withoutTokenEnv(env []string) []string {
+	var out []string
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		drop := false
+		for _, v := range tokenEnvVars {
+			if name == v {
+				drop = true
+				break
+			}
+		}
+		if !drop {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
+// runJHEnv is runJH with the subprocess environment given explicitly.
+func runJHEnv(t *testing.T, env []string, args ...string) result {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
 
@@ -301,10 +340,7 @@ func runJH(t *testing.T, args ...string) result {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	cmd.Env = os.Environ()
-	if testHome != "" {
-		cmd.Env = append(cmd.Env, "HOME="+testHome)
-	}
+	cmd.Env = env
 
 	err := cmd.Run()
 	res := result{stdout: stdout.String(), stderr: stderr.String()}

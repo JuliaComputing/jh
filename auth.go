@@ -54,6 +54,9 @@ type StoredToken struct {
 	Server       string
 	Name         string
 	Email        string
+	// Source says where a token that is not the ~/.juliahub login came
+	// from (e.g. "JULIAHUB_TOKEN environment variable"); "" for ~/.juliahub.
+	Source string
 }
 
 func decodeJWT(tokenString string) (*JWTClaims, error) {
@@ -106,7 +109,18 @@ func isTokenExpired(accessToken string, expiresIn int) (bool, error) {
 	return true, fmt.Errorf("unable to determine token expiry")
 }
 
+// readStoredToken returns the token jh authenticates with: one set in the
+// environment (JULIAHUB_TOKEN / JULIAHUB_TOKEN_FILE) if any, else the login
+// stored in ~/.juliahub.
 func readStoredToken() (*StoredToken, error) {
+	if t, ok, err := storedTokenFromEnv(); ok {
+		return t, err
+	}
+	return readStoredTokenFile()
+}
+
+// readStoredTokenFile reads the login stored in ~/.juliahub.
+func readStoredTokenFile() (*StoredToken, error) {
 	configPath := getConfigFilePath()
 	file, err := os.Open(configPath)
 	if err != nil {
@@ -525,7 +539,7 @@ func ensureValidToken() (*StoredToken, error) {
 
 	// Token is expired, try to refresh
 	if storedToken.RefreshToken == "" {
-		return nil, fmt.Errorf("access token expired and no refresh token available")
+		return nil, errExpiredUnrefreshable(storedToken)
 	}
 
 	refreshedToken, err := refreshToken(storedToken)
@@ -603,6 +617,9 @@ func formatTokenInfo(token *StoredToken) string {
 	}
 	var result strings.Builder
 	result.WriteString(fmt.Sprintf("Server: %s\n", token.Server))
+	if token.Source != "" {
+		result.WriteString(fmt.Sprintf("Token Source: %s\n", token.Source))
+	}
 	result.WriteString(fmt.Sprintf("Token Status: %s\n", status))
 	result.WriteString(fmt.Sprintf("Subject: %s\n", claims.Subject))
 	result.WriteString(fmt.Sprintf("Issuer: %s\n", claims.Issuer))

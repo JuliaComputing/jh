@@ -127,8 +127,12 @@ For non-interactive/CI use, the **test harness** materializes a throwaway
 then runs `jh` against it. This reuses the same credential source the platform
 already uses for its other live test suites (e.g. JuliaHub.jl): a headless login
 produces an `auth.toml`, and the tokens plus server host are exported as env
-vars. The harness translates those into a `~/.juliahub` file; the CLI never reads
-the env vars itself.
+vars. The harness translates those into a `~/.juliahub` file and removes
+`JULIAHUB_TOKEN`, `JULIAHUB_TOKEN_FILE`, `JULIAHUB_SERVER`, `JULIAHUB_HOST` and `JULIA_PKG_SERVER`
+from the environment `jh` runs with: `jh` itself treats `JULIAHUB_TOKEN` as a
+long-term token that overrides `~/.juliahub`, and the suite exercises the file
+path. `TestAuthTokenFromEnv` covers the environment path separately, passing the
+active id token as `JULIAHUB_TOKEN` with an empty `HOME`.
 
 | Variable                | Read by    | Meaning                                                       |
 | ----------------------- | ---------- | ------------------------------------------------------------- |
