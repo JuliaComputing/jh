@@ -186,6 +186,12 @@ go build -o jh .
   - `jh package dependents --registry General` - Specify registry to use
   - `jh package dependents --short` - Print one line: `JuMP  v1.32.1 · General: 335 direct · 94 indirect · 429 total dependents`
   - `jh package dependents --json` - Print only `{"name", "version", "registry", "direct", "indirect", "total", "dependents": [...]}` on stdout; the counts always cover every dependent, `dependents` lists the indirect ones only with `--indirect`
+- `jh package register --registry <name> [repo-url]` - Register a new package version in a JuliaHub registry (opens the registry pull/merge request, like the web UI's Register Packages page) and wait for the result
+  - Without `repo-url`, uses the current git checkout: its `origin` remote and checked-out branch. SSH remotes (`git@host:org/Pkg.jl`, `ssh://git@host/...`) are registered as `https://host/...`, since the registrator does not accept a user in the URL
+  - `jh package register --branch <branch>` - Branch to register (on a detached HEAD the registrator uses the default branch)
+  - `jh package register --subdir <dir>` / `--notes <text>` - Package subdirectory and release notes
+  - `jh package register --git-server-type gitlab` - Where the package is hosted (`github`, `gitlab`, `bitbucket`, `bare-git`); detected for github.com, gitlab.com and bitbucket.org, otherwise the registry's own type
+  - `jh package register --no-wait` - Submit and return; `--poll-interval` / `--timeout` tune the wait (default 5 s / 600 s)
 
 ### Registry Management (`jh registry`)
 
@@ -419,6 +425,11 @@ jh package dependency CSV --registry General  # Use specific registry
 # List reverse dependencies (dependents)
 jh package dependents JuMP                    # Counts, plus the direct dependents
 jh package dependents JuMP --indirect         # Also lists indirect dependents
+
+# Register a new version (run inside the package's git checkout)
+jh package register --registry MyRegistry
+jh package register -r MyRegistry https://github.com/org/MyPkg.jl --branch main --notes "Bug fixes"
+jh package register -r MyRegistry https://git.example.com/team/MyPkg.jl --git-server-type gitlab --no-wait
 ```
 
 ### Registry Operations

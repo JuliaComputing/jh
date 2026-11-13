@@ -999,12 +999,91 @@ var scanResultsCmd = &cobra.Command{
 
 var packageCmd = &cobra.Command{
 	Use:   "package",
-	Short: "Package search commands",
-	Long: `Search and explore Julia packages on JuliaHub.
+	Short: "Package search and registration commands",
+	Long: `Search, explore and register Julia packages on JuliaHub.
 
 Packages are Julia libraries that provide reusable functionality. JuliaHub
 hosts packages from multiple registries and provides comprehensive search
 capabilities including filtering by tags, registries, and more.`,
+}
+
+var packageRegisterCmd = &cobra.Command{
+	Use:   "register [repo-url]",
+	Short: "Register a package version in a JuliaHub registry",
+	Long: `Register a new version of a package in a registry hosted on JuliaHub.
+
+This is the command-line equivalent of the "Register Packages" page: JuliaHub
+opens a pull (or merge) request against the registry for the version found on
+the given branch. The command waits for the registration to finish and prints
+the pull request URL; use --no-wait to submit and return immediately.
+
+Without a repo-url, the package is the git checkout in the current directory:
+its "origin" remote is the repository URL and, unless --branch is given, the
+checked-out branch is registered (on a detached HEAD, as in most CI jobs, the
+registrator uses the repository's default branch; pass --branch then).
+
+The git server type is detected for github.com, gitlab.com and bitbucket.org;
+otherwise the registry's own server type is used. Override it with
+--git-server-type.
+
+Requirements:
+  - you need the register privilege on the registry
+  - when the registry requires authorized registration (the default), your
+    JuliaHub account must be connected to the package's git server (done once
+    in the web UI) and have write access to the package repository
+
+Registration status is kept per user: check it with the same account that
+submitted it. See 'jh auth --help' for authenticating in CI.`,
+	Example: `  jh package register --registry MyRegistry
+  jh package register --registry MyRegistry https://github.com/org/MyPkg.jl --branch main
+  jh package register -r MyRegistry --subdir lib/SubPkg --notes "Fixes #12"
+  jh package register -r MyRegistry https://git.example.com/team/MyPkg.jl --git-server-type gitlab --no-wait`,
+	Args: cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		opts := registerOptions{Wait: true}
+		opts.Registry, _ = cmd.Flags().GetString("registry")
+		opts.Branch, _ = cmd.Flags().GetString("branch")
+		opts.Subdir, _ = cmd.Flags().GetString("subdir")
+		opts.Notes, _ = cmd.Flags().GetString("notes")
+		opts.GitServerType, _ = cmd.Flags().GetString("git-server-type")
+		noWait, _ := cmd.Flags().GetBool("no-wait")
+		opts.Wait = !noWait
+		interval, _ := cmd.Flags().GetInt("poll-interval")
+		timeout, _ := cmd.Flags().GetInt("timeout")
+		if interval < 1 || timeout < 1 {
+			fmt.Fprintln(os.Stderr, "Error: --poll-interval and --timeout must be at least 1 second")
+			os.Exit(1)
+		}
+		opts.PollInterval = time.Duration(interval) * time.Second
+		opts.Timeout = time.Duration(timeout) * time.Second
+
+		if len(args) == 1 {
+			opts.RepoURL = normalizeRepoURL(args[0])
+			if opts.RepoURL != strings.TrimSpace(args[0]) {
+				fmt.Fprintf(os.Stderr, "note: registering %s (the registrator does not accept a user in the repository URL)\n", opts.RepoURL)
+			}
+		} else {
+			repoURL, branch, err := repoFromCheckout(".")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			opts.RepoURL = repoURL
+			if !cmd.Flags().Changed("branch") {
+				opts.Branch = branch
+			}
+		}
+
+		if err := registerPackage(server, opts); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	},
 }
 
 var packageSearchCmd = &cobra.Command{
@@ -2840,7 +2919,17 @@ func init() {
 	jobResultCmd.AddCommand(jobResultListCmd, jobResultDownloadCmd)
 	jobCmd.AddCommand(jobListCmd, jobStartCmd, jobUsageCmd, jobResultCmd)
 	datasetCmd.AddCommand(datasetListCmd, datasetDownloadCmd, datasetUploadCmd, datasetStatusCmd)
-	packageCmd.AddCommand(packageSearchCmd, packageInfoCmd, packageDependencyCmd, packageDependentsCmd)
+	packageRegisterCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	packageRegisterCmd.Flags().StringP("registry", "r", "", "Registry to register the package in (required)")
+	packageRegisterCmd.Flags().StringP("branch", "b", "", "Branch to register (default: the checked-out branch, or the repository's default branch)")
+	packageRegisterCmd.Flags().String("subdir", "", "Subdirectory of the repository that holds the package")
+	packageRegisterCmd.Flags().String("notes", "", "Release notes added to the registry pull request")
+	packageRegisterCmd.Flags().String("git-server-type", "", "Where the package is hosted: github, gitlab, bitbucket or bare-git (default: detected)")
+	packageRegisterCmd.Flags().Bool("no-wait", false, "Submit the registration and return without waiting for the result")
+	packageRegisterCmd.Flags().Int("poll-interval", 5, "Seconds between status checks while waiting")
+	packageRegisterCmd.Flags().Int("timeout", 600, "Max seconds to wait for the registration to finish")
+	_ = packageRegisterCmd.MarkFlagRequired("registry")
+	packageCmd.AddCommand(packageSearchCmd, packageInfoCmd, packageDependencyCmd, packageDependentsCmd, packageRegisterCmd)
 	registryConfigCmd.Flags().StringP("server", "s", "", "JuliaHub server")
 	registryConfigAddCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	registryConfigAddCmd.Flags().StringP("file", "f", "", "Path to JSON config file (reads from stdin if omitted)")
