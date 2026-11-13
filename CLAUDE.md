@@ -12,6 +12,7 @@ The application follows a command-line interface pattern using the Cobra library
 
 - **main.go**: Core CLI structure with command definitions and configuration management
 - **auth.go**: OAuth2 device flow authentication with JWT token handling
+- **envtoken.go**: Non-interactive auth with a long-term token: `JULIAHUB_TOKEN` (the JWT or a whole `token.toml`) or `JULIAHUB_TOKEN_FILE` (path), server from `JULIAHUB_SERVER`, else `JULIAHUB_HOST`, else the token's `iss` (`https://<server>/dex`, `auth.` stripped), else `JULIA_PKG_SERVER` (skipped for `*pkg.julialang.org`; notes on stderr once), else `~/.juliahub`. `readStoredToken` and `readConfigFile` return the env token / its server first (`storedTokenFromEnv`), so every command uses it; `~/.juliahub` is then not read for the token and never written (`readStoredTokenFile` / `readConfigFileServer` are the file-only readers). `StoredToken.Source` names the env source (shown by `jh auth status`). No refresh: an expired env token fails with `errExpiredUnrefreshable`. `jh auth login --with-token` (`loginWithToken`) reads a JWT or `token.toml` from stdin, refuses an expired one, and stores it in `~/.juliahub` with no refresh token (server: `-s`, else issuer, else configured)
 - **jobs.go**: Job result operations (list and download job files) via the Hasura REST job endpoint and the job file download endpoint
 - **usage.go**: `jh job usage` — the user's concurrent jobs, vCPUs and GPUs against their per-user compute limits via `GET /api/v1/jobs/usage` (`{"jobs","vcpus","gpus"}`, each `{"used","limit"}`). Servers without the endpoint route the request to `GET /api/v1/jobs/{job_name}` and 404, reported as `errJobUsageUnsupported`
 - **datasets.go**: Dataset operations (list, download, upload, status) with REST API integration
@@ -47,7 +48,7 @@ The application follows a command-line interface pattern using the Cobra library
    - **Authentication**: Uses ID tokens (`token.IDToken`) for API calls
 
 3. **Command Structure**:
-   - `jh auth`: Authentication commands (login, refresh, status, env)
+   - `jh auth`: Authentication commands (login, refresh, status, env); `login --with-token` stores a long-term token from stdin; `JULIAHUB_TOKEN`/`JULIAHUB_TOKEN_FILE` (+ `JULIAHUB_SERVER`/`JULIAHUB_HOST`) authenticate from the environment
    - `jh job usage`: Compute usage against per-user limits (`--json`)
    - `jh job result`: Job result files (list, download)
    - `jh dataset`: Dataset operations (list, download, upload, status)
