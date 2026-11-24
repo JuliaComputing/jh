@@ -8,18 +8,68 @@ import (
 	"testing"
 )
 
-// `jh job list` — currently a placeholder in the CLI. This test pins that
-// behaviour: it must run cleanly and produce output. If/when the command is
-// implemented, tighten this assertion.
+// `jh job list --json` — GET /juliaruncloud/get_jobs. The account may have no
+// jobs, so only the document's shape is checked.
 func TestJobList(t *testing.T) {
 	requireCreds(t)
-	res := runJH(t, "job", "list")
+	res := runJH(t, "job", "list", "--json", "--limit", "5")
 	if res.exitCode != 0 {
 		skipIfUnsupported(t, res)
 		t.Fatalf("job list exited %d\nstderr: %s", res.exitCode, res.stderr)
 	}
-	if strings.TrimSpace(res.combined()) == "" {
-		t.Error("job list produced no output")
+	var doc struct {
+		Jobs []struct {
+			JobName string `json:"jobname"`
+			Status  string `json:"status"`
+		} `json:"jobs"`
+	}
+	if err := json.Unmarshal([]byte(res.stdout), &doc); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, res.stdout)
+	}
+	if doc.Jobs == nil {
+		t.Error(`no "jobs" array`)
+	}
+	for _, j := range doc.Jobs {
+		if j.JobName == "" || j.Status == "" {
+			t.Errorf("job without a name or status: %+v", j)
+		}
+	}
+}
+
+// `jh job nodes --json` — GET /api/v1/config/compute/nodes, which job
+// submission picks its default node from.
+func TestJobNodesJSON(t *testing.T) {
+	requireCreds(t)
+	res := runJH(t, "job", "nodes", "--json")
+	if res.exitCode != 0 {
+		skipIfUnsupported(t, res)
+		t.Fatalf("job nodes exited %d\nstderr: %s", res.exitCode, res.stderr)
+	}
+	var doc struct {
+		Nodes []struct {
+			Node  string `json:"node"`
+			VCPUs int    `json:"vcpus"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(res.stdout), &doc); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, res.stdout)
+	}
+	if len(doc.Nodes) == 0 || doc.Nodes[0].Node == "" || doc.Nodes[0].VCPUs < 1 {
+		t.Errorf("unexpected nodes: %+v", doc.Nodes)
+	}
+}
+
+// `jh job status` against a job name that cannot exist: exercises the
+// GET /api/v1/jobs/{job_name} 404 without submitting a job.
+func TestJobStatusUnknownJob(t *testing.T) {
+	requireCreds(t)
+	res := runJH(t, "job", "status", "jr-jhe2enonexistent")
+	if res.exitCode == 0 {
+		t.Fatalf("job status for an unknown job exited 0\nstdout: %s", res.stdout)
+	}
+	skipIfUnsupported(t, res)
+	if !strings.Contains(res.stderr, "not found") {
+		t.Errorf("want a not-found error, got stderr: %s", res.stderr)
 	}
 }
 

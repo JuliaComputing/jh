@@ -6,7 +6,7 @@ A command-line interface for interacting with JuliaHub, a platform for Julia com
 
 - **Authentication**: OAuth2 device flow authentication with JWT token handling
 - **Dataset Management**: List, download, upload, and check status of datasets
-- **Job Results**: List and download a job's result files (and its other input/source/project files)
+- **Jobs**: Run Julia scripts, code or shell commands as batch jobs (optionally with a whole directory), follow their logs, wait for them, stop them, and download their results
 - **Package Management**: Search and explore Julia packages across registries via REST API (GraphQL fallback), with dependency analysis
 - **Registry Management**: List, add, and update Julia package registries
 - **Project Management**: List and filter projects using GraphQL API
@@ -159,6 +159,13 @@ go build -o jh .
 
 ### Jobs (`jh job`)
 
+- `jh job submit [script.jl | -]` - Run a script, `-e` code or a `--command` shell command as a batch job; `--bundle DIR` uploads a directory to run in, `--results PATH` uploads a file or directory as the result, `--node` or `--cpu`/`--memory` pick the machine, `--image` the Julia version, `--wait`/`--follow` wait for it (`--json` for scripts)
+- `jh job list` - List your recent jobs (`--limit`, `--json`)
+- `jh job status <job-name>` - Show a job's status, resources, timing and events (`--json` prints the server's document)
+- `jh job wait <job-name>` - Wait for a job to finish; exits 1 unless it completed
+- `jh job logs <job-name>` - Print a job's log (`-f` to follow, `--tail N`, `--timestamps`)
+- `jh job kill <job-name>` - Stop a job
+- `jh job nodes` / `jh job images` - The machines and images jobs can run on
 - `jh job usage` - Show your active jobs, and the vCPUs and GPUs allocated to them, against your compute limits (`--json` for scripts; needs a JuliaHub version that reports compute usage)
 - `jh job result list <job-name>` - List a job's result files (`--all` for every job file, `--json` for scripts)
 - `jh job result download <job-name> [file-name]` - Download one or all result files (`-o` destination, `--force` to overwrite, `--type` for other job file types)
@@ -391,6 +398,31 @@ jh dataset upload --new ./my-data.tar.gz
 
 # Upload new version to existing dataset
 jh dataset upload my-dataset ./updated-data.tar.gz
+```
+
+### Job Submission
+
+```bash
+# Run a script in its directory's environment (Project.toml + Manifest.toml are sent along)
+jh job submit train.jl
+
+# Pick a machine, raise the time limit, and print the log until the job ends
+jh job submit --cpu 8 --memory 32 --time-limit 4h --follow train.jl
+
+# Run on another Julia version (see 'jh job images'; NAME:TAG works too)
+jh job submit --image "Julia 1.10" train.jl
+
+# Upload a directory, run a shell command inside it, and keep its output directory as the result
+# (uploaded as output.tar.gz, even when the command fails)
+jh job submit --bundle ./run1 --command './run.sh' --results output --wait
+jh job result download <job-name> output.tar.gz
+
+# Scripted use
+job=$(jh job submit --json script.jl | jq -r .job_name)
+jh job wait "$job" && jh job result download "$job"
+jh job status --json "$job" | jq -r .status
+jh job logs -f "$job"
+jh job kill "$job"
 ```
 
 ### Job Result Operations
