@@ -2972,7 +2972,7 @@ func init() {
 	authLoginCmd.Flags().Bool("with-token", false, "Read a long-term token (the JWT or a token.toml) from stdin and store it instead of logging in interactively")
 	authCmd.AddCommand(authLoginCmd, authRefreshCmd, authStatusCmd, authEnvCmd)
 	jobResultCmd.AddCommand(jobResultListCmd, jobResultDownloadCmd)
-	jobCmd.AddCommand(jobListCmd, jobStartCmd, jobUsageCmd, jobResultCmd)
+	jobCmd.AddCommand(jobListCmd, jobStartCmd, jobUsageCmd, jobResultCmd, newJobExecCmd(), newJobCommandsCmd(), newJobOutputCmd(), newJobShellCmd())
 	datasetCmd.AddCommand(datasetListCmd, datasetDownloadCmd, datasetUploadCmd, datasetStatusCmd)
 	packageRegisterCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	packageRegisterCmd.Flags().StringP("registry", "r", "", "Registry to register the package in (required)")
@@ -3031,6 +3031,10 @@ func init() {
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {
+		var remote *remoteExitError
+		if errors.As(err, &remote) {
+			os.Exit(remote.code)
+		}
 		fmt.Println(err)
 		os.Exit(1)
 	}
