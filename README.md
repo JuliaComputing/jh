@@ -427,7 +427,7 @@ jh job kill "$job"
 
 ### Job Result Operations
 
-A job produces a result file by setting `ENV["RESULTS_FILE"]` to a file path; JuliaHub uploads it when the job finishes.
+When a job finishes, JuliaHub uploads the files the job wrote to the directory in `ENV["JULIAHUB_RESULTS_UPLOAD_DIR"]` (older job images upload the single file whose path the job set in `ENV["RESULTS_FILE"]`). Jobs started with `jh job submit --results PATH` upload `PATH` this way, even when they fail. Results are limited to 5 GiB per job.
 
 ```bash
 # Check your compute usage against your limits (e.g. before submitting a job)
