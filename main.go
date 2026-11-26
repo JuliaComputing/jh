@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // Version information (set during build)
@@ -391,54 +392,274 @@ environment variables that can be used by other tools or scripts.`,
 var jobCmd = &cobra.Command{
 	Use:   "job",
 	Short: "Job management commands",
-	Long: `Manage jobs on JuliaHub.
+	Long: `Run Julia code as jobs on JuliaHub and manage them.
 
-Jobs are computational tasks that run on JuliaHub's infrastructure.
-Use "jh job result" to list and download a job's result files, and
-"jh job usage" to see your compute usage against your limits.
+"jh job submit" runs a script (or -e code) on a JuliaHub node, with the
+Project.toml and Manifest.toml of your environment. Follow it with
+"jh job status", "jh job logs" and "jh job wait", stop it with "jh job kill",
+and fetch the files it produced with "jh job result". "jh job nodes" lists the
+machines jobs can run on, and "jh job usage" your compute usage against your
+limits.`,
+}
 
-Note: "jh job list" and "jh job start" are placeholders, still in development.`,
+var jobSubmitCmd = &cobra.Command{
+	Use:     "submit [script.jl | -]",
+	Aliases: []string{"start"},
+	Short:   "Run Julia code or a shell command as a job",
+	Long: `Submit a batch job to run on JuliaHub.
+
+The job runs a Julia script, stdin when the script is "-", the -e
+expression, or with --command a shell command (run with sh -c).
+
+Without --bundle only that code is sent, with the Julia environment of
+--project (a directory or its Project.toml): by default, the script's
+directory (the current directory for -e and stdin) when it holds a
+Project.toml. Its Manifest.toml (or JuliaManifest.toml, or a versioned
+Manifest-v1.X.toml) and Artifacts.toml are sent with it; without a manifest
+the job resolves the dependencies itself. --no-project sends no environment.
+
+--bundle DIR uploads the whole directory (up to 2 GiB; .git is left out) and
+runs the job inside it, in the environment of DIR's Project.toml and
+Manifest.toml (an empty one when DIR has none). A script inside DIR is run
+from there, so it can include and read the files next to it.
+
+--results PATH (relative to the job's working directory: the bundle, with
+--bundle) is uploaded as the job's result file when the job ends, even if it
+fails; a directory is packed into NAME.tar.gz first (output/ becomes
+output.tar.gz). Download it with "jh job result download". Code in the job
+can also save files itself: current JuliaHub uploads whatever is in
+$JULIAHUB_RESULTS_UPLOAD_DIR, older versions the path in ENV["RESULTS_FILE"].
+
+Without --node the job runs on the smallest CPU-only node, or the smallest
+with at least --cpu vCPUs and --memory GB ("jh job nodes" lists them).
+--image picks the image, such as another Julia version: NAME, NAME:TAG or a
+description such as "Julia 1.10" ("jh job images" lists them).
+--time-limit takes whole hours ("4", "4h") or "unlimited"; the server's
+default is 2 hours. --env KEY=VALUE sets an environment variable in the job
+(a bare KEY copies the local value).
+
+--nodes, --procs-per-node, --elastic and --min-workers run a distributed job:
+the code runs on the main process, with Distributed.jl workers on the nodes.
+
+The job name (e.g. jr-abc123xyz) is printed when the job is accepted. --wait
+waits for the job to finish and prints its status; --follow prints its log
+until it finishes. Either way the command exits 1 if the job does not
+complete, and Ctrl+C stops waiting without stopping the job. --json prints
+{"job_name": ...}, or with --wait the finished job's document (as
+"jh job status --json").`,
+	Example: `  jh job submit script.jl
+  jh job submit --project=. --cpu=8 --memory=32 --time-limit=4h train.jl
+  jh job submit --image="Julia 1.10" script.jl
+  jh job submit -e 'using LinearAlgebra; println(norm(rand(1000)))' --follow
+  jh job submit --bundle=run1 --command='./run.sh' --results=output --wait
+  cat script.jl | jh job submit - --env N=100 --wait
+  jh job submit --nodes=4 --procs-per-node=8 distributed.jl`,
+	Args: cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		opts := jobSubmitOptionsFromFlags(cmd.Flags(), args)
+		exitOnJobError("Failed to submit job", runJobSubmit(server, opts))
+	},
+}
+
+// jobSubmitOptionsFromFlags reads "jh job submit"'s flags and arguments.
+// Scripts drive jh with these flags, so keep them stable.
+func jobSubmitOptionsFromFlags(f *pflag.FlagSet, args []string) jobSubmitOptions {
+	var opts jobSubmitOptions
+	if len(args) == 1 {
+		opts.Script = args[0]
+	}
+	opts.Expr, _ = f.GetString("eval")
+	opts.Command, _ = f.GetString("command")
+	opts.Bundle, _ = f.GetString("bundle")
+	opts.Results, _ = f.GetString("results")
+	opts.CPU, _ = f.GetInt("cpu")
+	opts.Memory, _ = f.GetInt("memory")
+	opts.Project, _ = f.GetString("project")
+	opts.NoProject, _ = f.GetBool("no-project")
+	opts.Product, _ = f.GetString("product")
+	opts.Node, _ = f.GetString("node")
+	opts.NodeCount, _ = f.GetInt("nodes")
+	opts.ProcsPerNode, _ = f.GetInt("procs-per-node")
+	opts.Elastic, _ = f.GetBool("elastic")
+	opts.MinWorkers, _ = f.GetInt("min-workers")
+	opts.MinWorkersSet = f.Changed("min-workers")
+	opts.Image, _ = f.GetString("image")
+	opts.Alias, _ = f.GetString("name")
+	opts.Env, _ = f.GetStringArray("env")
+	opts.TimeLimit, _ = f.GetString("time-limit")
+	opts.Wait, _ = f.GetBool("wait")
+	opts.Follow, _ = f.GetBool("follow")
+	opts.JSON, _ = f.GetBool("json")
+	opts.Timestamps, _ = f.GetBool("timestamps")
+	return opts
+}
+
+// exitOnJobError exits 1 after printing err, if any. A job that ran but did
+// not complete is reported as it is, without the prefix.
+func exitOnJobError(prefix string, err error) {
+	if err == nil {
+		return
+	}
+	var notCompleted *errJobNotCompleted
+	if errors.As(err, &notCompleted) {
+		fmt.Fprintf(os.Stderr, "%s\n", err)
+	} else {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", prefix, err)
+	}
+	os.Exit(1)
 }
 
 var jobListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List jobs",
-	Long: `List all jobs on JuliaHub.
+	Short: "List your recent jobs",
+	Long: `List your most recent jobs, newest first, with their status, submission
+time and run time. Jobs still being set up (SubmitInitialized) and jobs that
+failed to submit are not listed.
 
-Displays information about your submitted jobs including status,
-creation time, and resource usage.
-
-Note: This functionality is currently in development.`,
-	Example: "  jh job list",
+For administrators the listing covers every user's jobs, with a USER column.`,
+	Example: `  jh job list
+  jh job list --limit 100
+  jh job list --json | jq -r '.jobs[] | select(.status == "Running") | .jobname'`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
 		if err != nil {
-			fmt.Printf("Failed to get server config: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Failed to get server config: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Listing jobs from %s...\n", server)
-		fmt.Println("This is a placeholder for the job list functionality")
+		limit, _ := cmd.Flags().GetInt("limit")
+		asJSON, _ := cmd.Flags().GetBool("json")
+		exitOnJobError("Failed to list jobs", listJobs(server, limit, asJSON))
 	},
 }
 
-var jobStartCmd = &cobra.Command{
-	Use:   "start",
-	Short: "Start a job",
-	Long: `Start a new job on JuliaHub.
+var jobStatusCmd = &cobra.Command{
+	Use:     "status <job-name>",
+	Aliases: []string{"show"},
+	Short:   "Show a job's status and details",
+	Long: `Show a job's status, resources, timing, cost and event history.
 
-Submit a computational job to run on JuliaHub's infrastructure.
-Jobs can include Julia scripts, notebooks, or other computational tasks.
-
-Note: This functionality is currently in development.`,
-	Example: "  jh job start",
+--json prints the server's job document unchanged.`,
+	Example: `  jh job status jr-abc123xyz
+  jh job status --json jr-abc123xyz | jq -r .status`,
+	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		server, err := getServerFromFlagOrConfig(cmd)
 		if err != nil {
-			fmt.Printf("Failed to get server config: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Failed to get server config: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Starting job on %s...\n", server)
-		fmt.Println("This is a placeholder for the job start functionality")
+		asJSON, _ := cmd.Flags().GetBool("json")
+		exitOnJobError("Failed to get job status", showJobStatus(server, args[0], asJSON))
+	},
+}
+
+var jobWaitCmd = &cobra.Command{
+	Use:   "wait <job-name>",
+	Short: "Wait for a job to finish",
+	Long: `Wait for a job to finish, reporting status changes on stderr, then print
+its details. Exits 1 unless the job completed. Ctrl+C stops waiting without
+stopping the job.`,
+	Example: `  jh job wait jr-abc123xyz && jh job result download jr-abc123xyz`,
+	Args:    cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		asJSON, _ := cmd.Flags().GetBool("json")
+		exitOnJobError("Failed to wait for job", watchJob(server, args[0], false, asJSON, false))
+	},
+}
+
+var jobLogsCmd = &cobra.Command{
+	Use:   "logs <job-name>",
+	Short: "Print a job's log",
+	Long: `Print a job's log: everything it printed, and JuliaHub's messages about it.
+
+--tail N prints only the last N entries. --follow (-f) keeps printing new
+entries until the job finishes; Ctrl+C stops following without stopping the
+job. --timestamps prefixes each line with its time and log level.
+
+A job's log is available once it starts running.`,
+	Example: `  jh job logs jr-abc123xyz
+  jh job logs -f jr-abc123xyz
+  jh job logs --tail 50 --timestamps jr-abc123xyz`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		follow, _ := cmd.Flags().GetBool("follow")
+		tail, _ := cmd.Flags().GetInt("tail")
+		timestamps, _ := cmd.Flags().GetBool("timestamps")
+		exitOnJobError("Failed to get job logs", showJobLogs(server, args[0], follow, tail, timestamps))
+	},
+}
+
+var jobKillCmd = &cobra.Command{
+	Use:     "kill <job-name>",
+	Aliases: []string{"stop"},
+	Short:   "Stop a running job",
+	Long: `Stop a job and release its resources. The job ends with status Stopped;
+files it already uploaded are kept.`,
+	Example: `  jh job kill jr-abc123xyz`,
+	Args:    cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		exitOnJobError("Failed to stop job", runJobKill(server, args[0]))
+	},
+}
+
+var jobNodesCmd = &cobra.Command{
+	Use:   "nodes",
+	Short: "List the nodes jobs can run on",
+	Long: `List the machine types jobs can run on, smallest first: vCPUs, memory in GB,
+GPUs and hourly price. Pass a NODE name to "jh job submit --node".`,
+	Example: `  jh job nodes
+  jh job nodes --json`,
+	Args: cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		asJSON, _ := cmd.Flags().GetBool("json")
+		exitOnJobError("Failed to list nodes", showJobNodes(server, asJSON))
+	},
+}
+
+var jobImagesCmd = &cobra.Command{
+	Use:   "images",
+	Short: "List the images batch jobs can run in",
+	Long: `List the job images of a product (default: standard-batch). Pass an IMAGE
+name to "jh job submit --image"; without one, jobs run in the base image for
+their node (CPU or GPU).`,
+	Example: `  jh job images
+  jh job images --json`,
+	Args: cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		server, err := getServerFromFlagOrConfig(cmd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to get server config: %v\n", err)
+			os.Exit(1)
+		}
+		product, _ := cmd.Flags().GetString("product")
+		asJSON, _ := cmd.Flags().GetBool("json")
+		exitOnJobError("Failed to list images", showJobImages(server, product, asJSON))
 	},
 }
 
@@ -2873,8 +3094,46 @@ The update process will replace the current installation with the latest version
 
 func init() {
 	authLoginCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	jobSubmitCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	jobSubmitCmd.Flags().StringP("eval", "e", "", "Julia code to run instead of a script")
+	jobSubmitCmd.Flags().String("command", "", "Shell command to run (with sh -c) instead of Julia code")
+	jobSubmitCmd.Flags().String("bundle", "", "Directory to upload and run the job in")
+	jobSubmitCmd.Flags().String("results", "", "File or directory to upload as the job's result when it ends")
+	jobSubmitCmd.Flags().Int("cpu", 0, "Minimum vCPUs of the node (picks the smallest CPU-only node that fits)")
+	jobSubmitCmd.Flags().Int("memory", 0, "Minimum memory of the node in GB")
+	jobSubmitCmd.Flags().String("project", "", "Julia environment to send: a directory or its Project.toml (default: the script's directory if it has one)")
+	jobSubmitCmd.Flags().Bool("no-project", false, "Send no environment; the job uses the image's default one")
+	jobSubmitCmd.Flags().String("node", "", "Node to run on (default: the smallest CPU-only node that fits --cpu/--memory; see 'jh job nodes')")
+	jobSubmitCmd.Flags().String("time-limit", "", "Time limit in whole hours (e.g. 4 or 4h) or 'unlimited' (default: the server's, 2 hours)")
+	jobSubmitCmd.Flags().StringArray("env", nil, "Environment variable for the job, KEY=VALUE or KEY to copy the local value (repeatable)")
+	jobSubmitCmd.Flags().String("name", "", "Display name for the job (default: the script's file name)")
+	jobSubmitCmd.Flags().String("image", "", "Job image: NAME, NAME:TAG or a description such as \"Julia 1.10\" (default: the base image for the node; see 'jh job images')")
+	jobSubmitCmd.Flags().String("product", defaultJobProduct, "JuliaHub product to run the job under")
+	jobSubmitCmd.Flags().Int("nodes", 0, "Number of nodes for a distributed job (default 1)")
+	jobSubmitCmd.Flags().Int("procs-per-node", 0, "Julia processes per node for a distributed job (default 1)")
+	jobSubmitCmd.Flags().Bool("elastic", false, "Let workers join a distributed job as they become available")
+	jobSubmitCmd.Flags().Int("min-workers", 0, "Workers a distributed job waits for before starting (default: all of them)")
+	jobSubmitCmd.Flags().Bool("wait", false, "Wait for the job to finish and print its status")
+	jobSubmitCmd.Flags().BoolP("follow", "f", false, "Print the job's log until it finishes")
+	jobSubmitCmd.Flags().Bool("timestamps", false, "With --follow, prefix log lines with their time and level")
+	jobSubmitCmd.Flags().Bool("json", false, "Print only a JSON document on stdout ({\"job_name\"}, or the job's details with --wait)")
 	jobListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
-	jobStartCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	jobListCmd.Flags().Int("limit", 20, fmt.Sprintf("Number of jobs to list (at most %d)", maxJobListLimit))
+	jobListCmd.Flags().Bool("json", false, "Print only a JSON document ({\"jobs\": [...]}, the server's job rows) on stdout")
+	jobStatusCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	jobStatusCmd.Flags().Bool("json", false, "Print only the server's job document on stdout")
+	jobWaitCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	jobWaitCmd.Flags().Bool("json", false, "Print only the finished job's document on stdout")
+	jobLogsCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	jobLogsCmd.Flags().BoolP("follow", "f", false, "Keep printing new log entries until the job finishes")
+	jobLogsCmd.Flags().Int("tail", 0, "Print only the last N entries")
+	jobLogsCmd.Flags().Bool("timestamps", false, "Prefix each line with its time and log level")
+	jobKillCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	jobNodesCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	jobNodesCmd.Flags().Bool("json", false, "Print only a JSON document ({\"nodes\": [...]}) on stdout")
+	jobImagesCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
+	jobImagesCmd.Flags().String("product", defaultJobProduct, "Product whose images to list")
+	jobImagesCmd.Flags().Bool("json", false, "Print only the product's JSON document on stdout")
 	jobUsageCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	jobUsageCmd.Flags().Bool("json", false, "Print only a JSON document ({\"jobs\", \"vcpus\", \"gpus\"}, each {\"used\", \"limit\"}) on stdout")
 	jobResultListCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
@@ -2972,7 +3231,7 @@ func init() {
 	authLoginCmd.Flags().Bool("with-token", false, "Read a long-term token (the JWT or a token.toml) from stdin and store it instead of logging in interactively")
 	authCmd.AddCommand(authLoginCmd, authRefreshCmd, authStatusCmd, authEnvCmd)
 	jobResultCmd.AddCommand(jobResultListCmd, jobResultDownloadCmd)
-	jobCmd.AddCommand(jobListCmd, jobStartCmd, jobUsageCmd, jobResultCmd)
+	jobCmd.AddCommand(jobSubmitCmd, jobListCmd, jobStatusCmd, jobWaitCmd, jobLogsCmd, jobKillCmd, jobNodesCmd, jobImagesCmd, jobUsageCmd, jobResultCmd)
 	datasetCmd.AddCommand(datasetListCmd, datasetDownloadCmd, datasetUploadCmd, datasetStatusCmd)
 	packageRegisterCmd.Flags().StringP("server", "s", "juliahub.com", "JuliaHub server")
 	packageRegisterCmd.Flags().StringP("registry", "r", "", "Registry to register the package in (required)")
